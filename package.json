@@ -1,0 +1,31 @@
+{
+  "name": "gipity",
+  "version": "1.0.54",
+  "description": "Connect AI coding agents like Claude Code to the Gipity platform",
+  "bin": {
+    "gipity": "./dist/index.js",
+    "gipcc": "./dist/gipcc.js",
+    "gipccd": "./dist/gipccd.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "tsc && node --test dist/__tests__/*.test.js"
+  },
+  "dependencies": {
+    "commander": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "hooks"
+  ],
+  "license": "MIT"
+}
