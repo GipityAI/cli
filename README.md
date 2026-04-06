@@ -1,10 +1,8 @@
 # Gipity CLI
 
-Connect AI coding agents to [Gipity](https://gipity.ai) — the AI-native app platform. Built for [Claude Code](https://claude.ai/claude-code) and works great from your terminal too.
+An AI agent with 64+ built-in tools and its own cloud infrastructure. [Gipity](https://gipity.ai) can write code, run it, deploy it, manage databases, browse the web, generate images, send emails, and more — autonomously. Use all of it or just the parts you need.
 
-Gipity is a platform where your AI agent builds and deploys apps for you. Every project gets its own cloud infrastructure — hosting, databases, file storage, sandboxed code execution, multiplayer rooms, workflows, and a personal AI agent — with zero setup. There's no IDE. The AI agent is the interface.
-
-This CLI is the bridge between your local environment and the Gipity cloud. It syncs files, deploys apps, manages databases, and connects Claude Code so you get the best of both: hands-on coding locally, autonomous agent work in the cloud.
+This CLI connects [Claude Code](https://claude.ai/claude-code) to Gipity's tools and infrastructure — databases, deployment, browser testing, image gen, and 30+ other capabilities your local agent doesn't have. It also syncs files so Claude Code and the Gipity web agent share the same project.
 
 ## Getting Started
 
