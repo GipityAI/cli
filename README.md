@@ -1,8 +1,10 @@
 # Gipity CLI
 
-Connect AI coding agents to the Gipity platform. Built for [Claude Code](https://claude.ai/claude-code) and works great from your terminal too.
+Connect AI coding agents to [Gipity](https://gipity.ai) — the AI-native app platform. Built for [Claude Code](https://claude.ai/claude-code) and works great from your terminal too.
 
-Gipity gives your AI agent a persistent workspace with file storage, databases, code execution, deployment, memory, workflows, and more. This CLI is the bridge.
+Gipity is a platform where your AI agent builds and deploys apps for you. Every project gets its own cloud infrastructure — hosting, databases, file storage, sandboxed code execution, multiplayer rooms, workflows, and a personal AI agent — with zero setup. There's no IDE. The AI agent is the interface.
+
+This CLI is the bridge between your local environment and the Gipity cloud. It syncs files, deploys apps, manages databases, and connects Claude Code so you get the best of both: hands-on coding locally, autonomous agent work in the cloud.
 
 ## Getting Started
 
@@ -125,7 +127,7 @@ gipity sync down     # Pull remote changes
 | `gipity agent` | List, create, switch, or configure agents |
 | `gipity workflow` | Manage and trigger automated workflows |
 | `gipity file` | Browse remote files (ls, cat, tree) |
-| `gipity scaffold [title]` | Create app structure (`--type web` or `--type brixa`) |
+| `gipity scaffold [title]` | Create app structure (`--type web` or `--type 3d-world`) |
 | `gipity checkpoint` | List or restore file snapshots (undo) |
 | `gipity logs fn <name>` | View function execution logs |
 | `gipity browser <url>` | Inspect a URL: console errors, performance, failed resources |
