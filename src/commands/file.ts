@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { get } from '../api.js';
+import { get, del } from '../api.js';
 import { requireConfig } from '../config.js';
 import { formatSize } from '../utils.js';
 
@@ -89,6 +89,28 @@ fileCommand
       }
     } catch (err: any) {
       console.error(`Tree failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+fileCommand
+  .command('rm <path>')
+  .description('Delete a remote file or directory')
+  .option('--json', 'Output as JSON')
+  .action(async (path: string, opts) => {
+    try {
+      const config = requireConfig();
+      const res = await del<{ success: boolean }>(
+        `/projects/${config.projectGuid}/files?path=${encodeURIComponent(path)}`
+      );
+
+      if (opts.json) {
+        console.log(JSON.stringify(res));
+      } else {
+        console.log(`Deleted: ${path}`);
+      }
+    } catch (err: any) {
+      console.error(`Delete failed: ${err.message}`);
       process.exit(1);
     }
   });

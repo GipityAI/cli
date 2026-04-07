@@ -81,6 +81,24 @@ export async function sendMessage(message: string): Promise<string> {
   return res.data.content;
 }
 
+/** Download a file as raw bytes (no JSON parsing) */
+export async function download(path: string): Promise<Buffer> {
+  await refreshTokenIfNeeded();
+  const auth = getAuth();
+  if (!auth) throw new Error('Not authenticated. Run: gipity login');
+
+  const url = `${baseUrl()}${path}`;
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${auth.accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new ApiError(res.status, 'DOWNLOAD_ERROR', `Download failed: ${res.statusText}`);
+  }
+
+  return Buffer.from(await res.arrayBuffer());
+}
+
 /** Unauthenticated request (for login/verify) */
 export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   const url = `${baseUrl()}${path}`;

@@ -73,20 +73,21 @@ Log out: \`gipity logout\`
 `;
 
 
+// Cross-platform hooks using node -e (no bash/jq dependency)
 export const HOOKS_SETTINGS = {
   hooks: {
     PostToolUse: [{
       matcher: 'Write|Edit',
       hooks: [{
         type: 'command',
-        command: 'bash -c \'INPUT=$(cat); FILE_PATH=$(echo "$INPUT" | jq -r ".tool_input.file_path // empty"); [ -z "$FILE_PATH" ] && exit 0; [ ! -f ".gipity.json" ] && exit 0; gipity push "$FILE_PATH" --quiet & disown; exit 0\'',
+        command: `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d).tool_input?.file_path;if(!p||!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').spawn('gipity',['push',p,'--quiet'],{stdio:'ignore',detached:true,shell:true}).unref()}catch{}})"`,
       }],
     }],
     UserPromptSubmit: [{
       matcher: '',
       hooks: [{
         type: 'command',
-        command: 'bash -c \'[ ! -f ".gipity.json" ] && exit 0; RESULT=$(gipity sync down --json 2>/dev/null); PULLED=$(echo "$RESULT" | jq -r ".pulled // 0" 2>/dev/null); if [ "$PULLED" -gt 0 ]; then SUMMARY=$(echo "$RESULT" | jq -r ".summary // empty" 2>/dev/null); echo "{\\\"systemMessage\\\": \\\"Gipity sync: $SUMMARY\\\"}"; fi; exit 0\'',
+        command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync down --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.pulled>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed remotely.')}))}catch{}})"`,
       }],
     }],
   },

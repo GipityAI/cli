@@ -196,7 +196,8 @@ export const startCcCommand = new Command('start-cc')
 
       // Check claude is installed
       try {
-        execSync('which claude', { stdio: 'ignore' });
+        const checkCmd = process.platform === 'win32' ? 'where claude' : 'which claude';
+        execSync(checkCmd, { stdio: 'ignore' });
       } catch {
         console.log('  Claude Code not found. Install it: npm install -g @anthropic-ai/claude-code');
         console.log(`  Then: cd ${process.cwd()} && claude`);
@@ -220,8 +221,14 @@ export const startCcCommand = new Command('start-cc')
       }
 
       console.log('  Launching Claude Code...\n');
-      const allArgs = initialPrompt ? [initialPrompt, ...claudeArgs] : claudeArgs;
-      const child = spawn('claude', allArgs, { stdio: 'inherit', cwd: process.cwd() });
+      const allArgs = initialPrompt
+        ? [initialPrompt, ...claudeArgs]
+        : claudeArgs;
+      const child = spawn('claude', allArgs, {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+        shell: process.platform === 'win32',
+      });
       child.on('exit', (code) => process.exit(code ?? 0));
 
     } catch (err: any) {

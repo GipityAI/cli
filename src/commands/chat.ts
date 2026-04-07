@@ -24,7 +24,7 @@ export const chatCommand = new Command('chat')
         : '/conversations';
 
       const body = useExisting
-        ? { content: message }
+        ? { content: message, projectGuid: config.projectGuid }
         : { agentGuid: config.agentGuid, content: message, projectGuid: config.projectGuid };
 
       const res = await post<{

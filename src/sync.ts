@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync } from 'fs';
 import { join, relative, dirname } from 'path';
-import { get, put, del } from './api.js';
+import { get, put, del, download } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
 import { isBinaryFile, formatSize, prompt } from './utils.js';
 
@@ -238,6 +238,8 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
     }
   }
 
+  const remoteByPath = new Map(remoteFiles.filter(f => f.type === 'file').map(f => [f.path, f]));
+
   let pulled = 0;
   let deleted = 0;
   for (const change of changes) {
@@ -250,13 +252,13 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
       continue;
     }
 
-    // added or modified — download from remote
-    const res = await get<{ data: { content: string } }>(
-      `/projects/${config.projectGuid}/files/read?path=${encodeURIComponent(change.path)}`
-    );
+    // added or modified — download raw bytes from VFS
+    const remoteFile = remoteByPath.get(change.path);
+    if (!remoteFile) continue;
+    const bytes = await download(`/files/vfs/${remoteFile.guid}`);
     const fullPath = join(root, change.path);
     mkdirSync(dirname(fullPath), { recursive: true });
-    writeFileSync(fullPath, res.data.content);
+    writeFileSync(fullPath, bytes);
     pulled++;
   }
 
@@ -302,6 +304,30 @@ export async function syncUp(): Promise<SyncResult> {
     pushed++;
   }
 
+  // Delete remote directories that no longer exist locally (shallowest first, recursive)
+  let deleted = 0;
+  const remoteDirs = remoteFiles
+    .filter(f => f.type === 'dir')
+    .map(f => f.path)
+    .sort((a, b) => a.length - b.length);
+
+  const deletedDirs = new Set<string>();
+  for (const dirPath of remoteDirs) {
+    // Skip if a parent was already deleted (recursive delete covers children)
+    if ([...deletedDirs].some(d => dirPath.startsWith(d + '/'))) continue;
+    const localPath = join(root, dirPath);
+    if (!existsSync(localPath)) {
+      try {
+        await del(`/projects/${config.projectGuid}/files?path=${encodeURIComponent(dirPath)}`);
+        deletedDirs.add(dirPath);
+        deleted++;
+        pushed++;
+      } catch {
+        // already gone
+      }
+    }
+  }
+
   // Update sync state
   const updatedLocal = walkLocal(root, root, config.ignore);
   const stateFiles: Record<string, { size: number; modified: string }> = {};
@@ -311,7 +337,7 @@ export async function syncUp(): Promise<SyncResult> {
   saveSyncState({ lastSync: new Date().toISOString(), files: stateFiles });
 
   const summary = formatDiff(changes.filter(c => c.type !== 'deleted'), 'up');
-  return { changes, pushed, pulled: 0, deleted: 0, skippedDeletions: 0, summary };
+  return { changes, pushed, pulled: 0, deleted, skippedDeletions: 0, summary };
 }
 
 /** Check for changes without pulling/pushing */

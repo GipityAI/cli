@@ -29,6 +29,7 @@ import { recordsCommand } from './commands/records.js';
 import { fnCommand } from './commands/fn.js';
 import { rbacCommand } from './commands/rbac.js';
 import { auditCommand } from './commands/audit.js';
+import { emailCommand } from './commands/email.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
@@ -61,7 +62,7 @@ const setupGroup = [loginCommand, logoutCommand, initCommand, startCcCommand];
 // ── Project commands ────────────────────────────────────────────────────
 const projectGroup = [statusCommand, syncCommand, pushCommand, deployCommand, scaffoldCommand, checkpointCommand];
 // ── Resource commands ───────────────────────────────────────────────────
-const resourceGroup = [dbCommand, memoryCommand, fileCommand, sandboxCommand, apiCommand, logsCommand, browserCommand, recordsCommand, fnCommand, rbacCommand, auditCommand];
+const resourceGroup = [dbCommand, memoryCommand, fileCommand, sandboxCommand, apiCommand, logsCommand, browserCommand, recordsCommand, fnCommand, rbacCommand, auditCommand, emailCommand];
 // ── Agent commands ──────────────────────────────────────────────────────
 const agentGroup = [chatCommand, projectCommand, agentCommand, workflowCommand, creditsCommand];
 
