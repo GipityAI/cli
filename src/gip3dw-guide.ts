@@ -13,4 +13,6 @@ Scaffold a 3D World project with \`app_scaffold type=3d-world\` (web agent) or \
 
 **Genres:** obby/parkour, tycoon, simulator, PvP combat, shooter, tower defense, horror, racing, RPG, social.
 
+**Features:** Opt-in gameplay modules enabled via \`config.features\`. Available: \`rocket-launcher\` (projectile weapon with physics explosions). Example: \`features: { 'rocket-launcher': true }\` in config.js. Features are template-level and auto-initialize during boot.
+
 Regular game requests ("make a wordle", "build a quiz") should use the standard web scaffold — they don't need the 3D template.`;

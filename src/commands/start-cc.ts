@@ -3,6 +3,18 @@ import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
+
+/** On Windows, spawn without shell:true needs an explicit extension (.exe or .cmd) */
+function resolveCommand(cmd: string): string {
+  if (process.platform !== 'win32') return cmd;
+  try {
+    const lines = execSync(`where ${cmd}`, { encoding: 'utf-8' }).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    // Prefer .exe (native) over .cmd (npm shim)
+    return lines.find(l => l.endsWith('.exe')) || lines.find(l => l.endsWith('.cmd')) || cmd;
+  } catch {
+    return `${cmd}.cmd`;
+  }
+}
 import { getAuth, saveAuth } from '../auth.js';
 import { get, post, publicPost } from '../api.js';
 import { getConfig, saveConfig, clearConfigCache } from '../config.js';
@@ -224,10 +236,12 @@ export const startCcCommand = new Command('start-cc')
       const allArgs = initialPrompt
         ? [initialPrompt, ...claudeArgs]
         : claudeArgs;
-      const child = spawn('claude', allArgs, {
+      // Resolve full path on Windows so we can avoid shell:true, which
+      // passes args through cmd.exe and mangles quotes/special chars.
+      const claudeCmd = resolveCommand('claude');
+      const child = spawn(claudeCmd, allArgs, {
         stdio: 'inherit',
         cwd: process.cwd(),
-        shell: process.platform === 'win32',
       });
       child.on('exit', (code) => process.exit(code ?? 0));
 
@@ -280,16 +294,16 @@ const PROJECT_TYPE_OPTIONS: ProjectTypeChoice[] = [
   {
     label: 'Web app',
     scaffoldType: 'web',
-    initialPrompt: 'This is a new web app project on Gipity. It\'s been scaffolded with starter HTML/CSS/JS. Deploy it to dev so I can see it live. Then briefly introduce yourself — mention that I have access to databases, server-side API endpoints, image generation, web search, and cloud hosting — and ask me what I want to build.',
+    initialPrompt: 'This is a new web app project on Gipity. The project has been scaffolded with starter HTML/CSS/JS. Deploy it to dev so I can see it live. Then briefly introduce yourself, mention that I have access to databases, server-side API endpoints, image generation, web search, and cloud hosting, and ask me what I want to build.',
   },
   {
     label: '3D World game',
     scaffoldType: '3d-world',
-    initialPrompt: 'This is a new 3D World game on Gipity. Deploy it to dev so I can play it right away. Then briefly introduce yourself — mention that I can customize the world, objects, physics, game logic, and multiplayer — and ask me what kind of game I want to make.',
+    initialPrompt: 'This is a new 3D World game on Gipity. Deploy it to dev so I can play it right away. Then briefly introduce yourself, mention that I can customize the world, objects, physics, game logic, and multiplayer, and ask me what kind of game I want to make.',
   },
   {
     label: 'Start empty',
-    initialPrompt: 'This is a new empty project on Gipity. Briefly introduce yourself — mention that I have access to cloud hosting, databases, server-side API endpoints, sandboxed code execution, image generation, speech, and web search — and ask me what I want to build.',
+    initialPrompt: 'This is a new empty project on Gipity. Briefly introduce yourself, mention that I have access to cloud hosting, databases, server-side API endpoints, sandboxed code execution, image generation, speech, and web search, and ask me what I want to build.',
   },
 ];
 
