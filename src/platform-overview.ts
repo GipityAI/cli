@@ -7,23 +7,27 @@
 
 export const PLATFORM_SERVICES = `## Platform Services
 
-Gipity capabilities beyond local file editing — use \`gipity chat\` (CLI) or the built-in tools (web agent):
+Capabilities beyond local file editing — use \`gipity chat\` (CLI) or the built-in tools (web agent):
 
 - **Image generation**: OpenAI (gpt-image-1, DALL-E 3) and BFL/Flux
 - **Speech / TTS**: ElevenLabs and OpenAI voices (streaming and batch)
 - **Sound effects / Music**: ElevenLabs audio generation
+- **Audio processing**: Transcription, source isolation
 - **Web search**: Brave API
 - **Twitter/X search**: v2 API, last 7 days
-- **Browser interaction**: Open URLs, screenshot, click, fill forms, read console
+- **Browser automation**: Open URLs, screenshot, click, fill forms, read console
 - **Workflow automation**: Cron-scheduled or webhook-triggered multi-step AI pipelines
 - **Email**: SendGrid transactional email
-- **Cross-model queries**: Ask GPT-5, Claude, etc. for second opinions`;
+- **Google services**: Gmail, Google Calendar integration
+- **External services**: Slack, GitHub, Todoist, Notion via service connectors
+- **Cross-model queries**: Ask GPT-5, Claude, etc. for second opinions
+- **Serverless functions**: JavaScript functions callable via REST`;
 
 export const CLI_COMMANDS = `## CLI Commands
 
 | Command | Purpose |
 |---------|---------|
-| \`gipity scaffold [title]\` | Create app structure (\`--type web\` default, or \`--type brixa\` for 3D voxel games) |
+| \`gipity scaffold [title]\` | Create app structure (\`--type web\` default, or \`--type 3d-world\` for 3D games) |
 | \`gipity deploy [dev\\|prod]\` | Deploy and get live URL |
 | \`gipity sync [up\\|down\\|check]\` | Manual file sync |
 | \`gipity db create <name>\` | Create a project database |

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, unlinkSyn
 import { join, relative, dirname } from 'path';
 import { get, put, del } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
-import { isBinaryFile, formatSize } from './utils.js';
+import { isBinaryFile, formatSize, prompt } from './utils.js';
 
 interface RemoteFile {
   path: string;
@@ -28,7 +28,14 @@ export interface SyncResult {
   changes: SyncChange[];
   pulled: number;
   pushed: number;
+  deleted: number;
+  skippedDeletions: number;
   summary: string;
+}
+
+export interface SyncDownOptions {
+  /** If true, prompt user to confirm before deleting files. Default: false (skip deletions silently). */
+  confirmDeletions?: boolean;
 }
 
 function syncStatePath(): string {
@@ -177,20 +184,68 @@ export function formatDiff(changes: SyncChange[], direction: 'down' | 'up'): str
   return lines.join('\n');
 }
 
+/** Confirm file deletions with the user. Returns true if deletions should proceed. */
+async function confirmFileDeletions(deletions: SyncChange[]): Promise<boolean> {
+  const count = deletions.length;
+
+  if (count <= 10) {
+    // Show each file, simple y/n
+    console.log(`\nSync will delete ${count} local file${count > 1 ? 's' : ''}:`);
+    for (const d of deletions) {
+      console.log(`  - ${d.path}`);
+    }
+    const answer = await prompt(`\nDelete ${count} file${count > 1 ? 's' : ''}? (y/n) `);
+    return answer.trim().toLowerCase() === 'y';
+  }
+
+  // 10+ files — show summary + sample, require typing "delete"
+  console.log(`\nSync will delete ${count} local files. Examples:`);
+  for (const d of deletions.slice(0, 5)) {
+    console.log(`  - ${d.path}`);
+  }
+  console.log(`  ... and ${count - 5} more`);
+  const answer = await prompt(`\nType "delete" to confirm, or anything else to skip: `);
+  return answer.trim().toLowerCase() === 'delete';
+}
+
 /** Sync down: pull remote changes to local */
-export async function syncDown(): Promise<SyncResult> {
+export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> {
   const config = requireConfig();
   const root = projectDir();
   const remoteFiles = await fetchManifest(config.projectGuid);
   const localFiles = walkLocal(root, root, config.ignore);
   const changes = diffManifest(remoteFiles, localFiles, 'down');
 
+  const remoteFileCount = remoteFiles.filter(f => f.type === 'file').length;
+  const deletions = changes.filter(c => c.type === 'deleted');
+
+  // Decide whether to execute deletions
+  let executeDeletions = false;
+  let skippedDeletions = 0;
+
+  if (deletions.length > 0) {
+    if (remoteFileCount === 0) {
+      // Remote is empty — never delete local files (prevents wiping on fresh init)
+      executeDeletions = false;
+      skippedDeletions = deletions.length;
+    } else if (opts.confirmDeletions) {
+      // Interactive mode — ask user
+      executeDeletions = await confirmFileDeletions(deletions);
+      if (!executeDeletions) skippedDeletions = deletions.length;
+    } else {
+      // Non-interactive (hooks, automation) — skip deletions for safety
+      skippedDeletions = deletions.length;
+    }
+  }
+
   let pulled = 0;
+  let deleted = 0;
   for (const change of changes) {
     if (change.type === 'deleted') {
-      // File deleted remotely — delete locally
+      if (!executeDeletions) continue;
       const fullPath = join(root, change.path);
       try { unlinkSync(fullPath); } catch { /* already gone */ }
+      deleted++;
       pulled++;
       continue;
     }
@@ -214,7 +269,7 @@ export async function syncDown(): Promise<SyncResult> {
   saveSyncState({ lastSync: new Date().toISOString(), files: stateFiles });
 
   const summary = formatDiff(changes, 'down');
-  return { changes, pulled, pushed: 0, summary };
+  return { changes, pulled, pushed: 0, deleted, skippedDeletions, summary };
 }
 
 /** Sync up: push local changes to remote */
@@ -256,7 +311,7 @@ export async function syncUp(): Promise<SyncResult> {
   saveSyncState({ lastSync: new Date().toISOString(), files: stateFiles });
 
   const summary = formatDiff(changes.filter(c => c.type !== 'deleted'), 'up');
-  return { changes, pushed, pulled: 0, summary };
+  return { changes, pushed, pulled: 0, deleted: 0, skippedDeletions: 0, summary };
 }
 
 /** Check for changes without pulling/pushing */
@@ -269,7 +324,7 @@ export async function syncCheck(): Promise<SyncResult> {
   const downChanges = diffManifest(remoteFiles, localFiles, 'down');
   const summary = formatDiff(downChanges, 'down');
 
-  return { changes: downChanges, pulled: 0, pushed: 0, summary };
+  return { changes: downChanges, pulled: 0, pushed: 0, deleted: 0, skippedDeletions: 0, summary };
 }
 
 /** Push a single file to remote */

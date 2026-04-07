@@ -6,7 +6,7 @@ import { homedir } from 'os';
 import { getAuth, saveAuth } from '../auth.js';
 import { get, post, publicPost } from '../api.js';
 import { getConfig, saveConfig, clearConfigCache } from '../config.js';
-import { syncDown } from '../sync.js';
+import { syncDown, syncUp } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
 import { prompt, decodeJwtExp } from '../utils.js';
 
@@ -145,11 +145,15 @@ export const startCcCommand = new Command('start-cc')
 
         console.log(`\n  Using ${projectDir}`);
 
-        // Sync down remote files (non-fatal — project is set up either way)
+        // Sync: push local files up first, then pull any remote-only files down (non-fatal)
         try {
-          const result = await syncDown();
-          if (result.pulled > 0) {
-            console.log(`  Pulled ${result.pulled} file${result.pulled > 1 ? 's' : ''} from Gipity.`);
+          const upResult = await syncUp();
+          if (upResult.pushed > 0) {
+            console.log(`  Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
+          }
+          const downResult = await syncDown({ confirmDeletions: true });
+          if (downResult.pulled > 0) {
+            console.log(`  Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''} from Gipity.`);
           }
         } catch {
           console.log('  Could not sync files (will retry on next prompt).');
@@ -272,9 +276,9 @@ const PROJECT_TYPE_OPTIONS: ProjectTypeChoice[] = [
     initialPrompt: 'This is a new web app project on Gipity. It\'s been scaffolded with starter HTML/CSS/JS. Deploy it to dev so I can see it live. Then briefly introduce yourself — mention that I have access to databases, server-side API endpoints, image generation, web search, and cloud hosting — and ask me what I want to build.',
   },
   {
-    label: 'Brixa game',
-    scaffoldType: 'brixa',
-    initialPrompt: 'This is a new Brixa game on Gipity. Deploy it to dev so I can play it right away. Then briefly introduce yourself — mention that I can customize the world, objects, physics, game logic, and multiplayer — and ask me what kind of game I want to make.',
+    label: '3D World game',
+    scaffoldType: '3d-world',
+    initialPrompt: 'This is a new 3D World game on Gipity. Deploy it to dev so I can play it right away. Then briefly introduce yourself — mention that I can customize the world, objects, physics, game logic, and multiplayer — and ask me what kind of game I want to make.',
   },
   {
     label: 'Start empty',
@@ -287,8 +291,8 @@ async function pickProjectType(): Promise<ProjectTypeChoice> {
   console.log('  What kind of project?\n');
   console.log('    1. Web app');
   console.log('       Website, dashboard, tool, or browser game — scaffolds HTML/CSS/JS starter files.\n');
-  console.log('    2. Brixa game');
-  console.log('       3D multiplayer voxel game with Three.js + Rapier physics — scaffolds a playable starter world.\n');
+  console.log('    2. 3D World game');
+  console.log('       3D multiplayer game with Three.js + Rapier physics — scaffolds a playable starter world.\n');
   console.log('    3. Start empty');
   console.log('       No scaffolding. Begin with a blank project and build everything from scratch.\n');
 

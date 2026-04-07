@@ -6,7 +6,7 @@ import { syncDown } from '../sync.js';
 export const scaffoldCommand = new Command('scaffold')
   .description('Create app structure (src/ with HTML, CSS, JS, favicons)')
   .argument('[title]', 'App title (defaults to project name)')
-  .option('--type <type>', 'Project type: web (default) or brixa')
+  .option('--type <type>', 'Project type: web (default) or 3d-world')
   .option('--description <desc>', 'App description for meta tags')
   .option('--json', 'Output as JSON')
   .action(async (title: string | undefined, opts) => {

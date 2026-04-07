@@ -28,7 +28,7 @@ All commands support `--json` for structured output.
 
 URL pattern: `https://dev.gipity.ai/{accountSlug}/{projectSlug}/`
 
-## Delegate via `gipity chat` (full 64-tool Gipity agent)
+## Delegate via `gipity chat` (full 90+ tool Gipity agent)
 
 For operations beyond the core commands, delegate to the Gipity agent:
 

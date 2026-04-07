@@ -4,12 +4,12 @@
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { CODING_GUIDELINES } from './coding-guidelines.js';
-import { BRIXA_GUIDE } from './brixa-guide.js';
+import { GIP_3DW_GUIDE } from './gip3dw-guide.js';
 import { CLI_COMMANDS, PLATFORM_SERVICES } from './platform-overview.js';
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
-This is a Gipity-powered project. Gipity gives every project its own cloud infrastructure — hosting, databases, file storage, deployment, sandboxed code execution, and a 64-tool AI agent — with zero setup. You write code here, it runs there.
+Most AI tools give you a chatbot. We gave ours a computer. Gipity is an AI agent with 90+ tools and a full cloud platform — app hosting, databases, file storage, deployment, workflows, code execution, and more. Use it standalone or plug it into Claude Code to give your local agent cloud superpowers.
 
 **You are the developer.** Write HTML, JS, CSS, Python — whatever the project needs — directly in this directory. Files auto-sync to Gipity's cloud via hooks. There is no local runtime; do NOT run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally.
 
@@ -43,7 +43,7 @@ ${PLATFORM_SERVICES}
 
 Use \`gipity chat\` to access these from the CLI. Example: \`gipity chat "generate a hero image for the landing page"\`
 
-${BRIXA_GUIDE}
+${GIP_3DW_GUIDE}
 
 ${CODING_GUIDELINES}
 

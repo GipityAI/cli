@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { basename } from 'path';
 import { get, post } from '../api.js';
 import { saveConfig, getConfig } from '../config.js';
-import { syncDown } from '../sync.js';
+import { syncDown, syncUp } from '../sync.js';
 import { getAuth } from '../auth.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
 
@@ -104,10 +104,14 @@ export const initCommand = new Command('init')
         ignore: ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', 'CLAUDE.md', '*.log'],
       });
 
-      // 2. Pull existing files
-      const result = await syncDown();
-      if (result.pulled > 0) {
-        console.log(`Pulled ${result.pulled} file${result.pulled > 1 ? 's' : ''}.`);
+      // 2. Sync: push local files up first, then pull any remote-only files down
+      const upResult = await syncUp();
+      if (upResult.pushed > 0) {
+        console.log(`Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
+      }
+      const downResult = await syncDown({ confirmDeletions: true });
+      if (downResult.pulled > 0) {
+        console.log(`Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''}.`);
       }
 
       // 3. Write .claude/settings.json (CC hooks)

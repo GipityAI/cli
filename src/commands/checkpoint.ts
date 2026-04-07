@@ -58,8 +58,8 @@ checkpointCommand
         checkpoint_guid: guid,
       });
 
-      // Sync down restored files
-      const syncResult = await syncDown();
+      // Sync down restored files (confirm deletions — restore may remove files)
+      const syncResult = await syncDown({ confirmDeletions: true });
 
       if (opts.json) {
         console.log(JSON.stringify({ ...res.data, synced: syncResult.pulled }));

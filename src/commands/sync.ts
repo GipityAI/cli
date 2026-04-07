@@ -11,7 +11,7 @@ export const syncCommand = new Command('sync')
 
       switch (direction) {
         case 'down':
-          result = await syncDown();
+          result = await syncDown({ confirmDeletions: true });
           break;
         case 'up':
           result = await syncUp();
