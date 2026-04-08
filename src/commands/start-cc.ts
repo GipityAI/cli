@@ -17,7 +17,7 @@ function resolveCommand(cmd: string): string {
 }
 import { getAuth, saveAuth } from '../auth.js';
 import { get, post, publicPost } from '../api.js';
-import { getConfig, saveConfig, clearConfigCache } from '../config.js';
+import { getConfig, saveConfig, clearConfigCache, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
 import { prompt, decodeJwtExp } from '../utils.js';
@@ -48,7 +48,6 @@ function suggestProjectName(existingSlugs: string[]): string {
 export const startCcCommand = new Command('start-cc')
   .description('Log in, set up a project, and launch Claude Code')
   .option('--no-claude', 'Set up project but skip launching Claude Code')
-  .option('--api-base <url>', 'API base URL', 'https://a.gipity.ai')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (opts) => {
@@ -106,11 +105,22 @@ export const startCcCommand = new Command('start-cc')
       } else {
         // Fetch user's projects
         let projects: ProjectData[] = [];
+        let fetchFailed = false;
         try {
           const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
           projects = res.data;
-        } catch {
-          // Can't list — we'll create fresh
+        } catch (err: any) {
+          fetchFailed = true;
+          const isConnectionError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' ||
+            err?.code === 'ETIMEDOUT' || err?.cause?.code === 'ECONNREFUSED' ||
+            err?.cause?.code === 'ENOTFOUND' || err?.cause?.code === 'ETIMEDOUT';
+          if (isConnectionError) {
+            const apiBase = getApiBaseOverride() || 'https://a.gipity.ai';
+            console.error(`  Could not connect to ${apiBase}`);
+            console.error('  Check your connection and try again.');
+            process.exit(1);
+          }
+          // Non-connection error (e.g. 401) — fall through to create
         }
 
         const existingSlugs = projects.map(p => p.slug);
@@ -121,9 +131,12 @@ export const startCcCommand = new Command('start-cc')
           const result = await pickOrCreateProject(projects, existingSlugs);
           project = result.project;
           isNewProject = result.isNew;
-        } else {
+        } else if (!fetchFailed) {
           project = await createNewProject(existingSlugs);
           isNewProject = true;
+        } else {
+          console.error('  Could not load projects. Please try again.');
+          process.exit(1);
         }
 
         // Resolve project directory under ~/GipityProjects/{slug}
@@ -151,7 +164,7 @@ export const startCcCommand = new Command('start-cc')
           accountSlug,
           agentGuid,
           conversationGuid: null,
-          apiBase: opts.apiBase,
+          apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
           ignore: ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', 'CLAUDE.md', '*.log'],
         });
 
@@ -216,17 +229,18 @@ export const startCcCommand = new Command('start-cc')
         return;
       }
 
-      // Pass through all unknown args to claude
+      // Pass through all unknown args to claude (everything after 'start-cc')
+      const startCcIdx = process.argv.indexOf('start-cc');
       const knownFlags = ['--no-claude', '--api-base'];
-      const claudeArgs = process.argv.slice(3).filter(arg => {
+      const claudeArgs = process.argv.slice(startCcIdx + 1).filter(arg => {
         for (const flag of knownFlags) {
           if (arg === flag) return false;
           if (arg.startsWith('--api-base=')) return false;
         }
         return true;
       });
-      // Filter out the value after --api-base if space-separated
-      const apiBaseIdx = process.argv.indexOf('--api-base');
+      // Filter out the value after --api-base if space-separated and after start-cc
+      const apiBaseIdx = process.argv.indexOf('--api-base', startCcIdx);
       if (apiBaseIdx !== -1) {
         const valueIdx = claudeArgs.indexOf(process.argv[apiBaseIdx + 1]);
         if (valueIdx !== -1) claudeArgs.splice(valueIdx, 1);

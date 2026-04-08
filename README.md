@@ -127,7 +127,7 @@ gipity sync down     # Pull remote changes
 | `gipity agent` | List, create, switch, or configure agents |
 | `gipity workflow` | Manage and trigger automated workflows |
 | `gipity file` | Browse remote files (ls, cat, tree) |
-| `gipity scaffold [title]` | Create app structure (`--type web` or `--type 3d-world`) |
+| `gipity scaffold [title]` | Create app structure (`--type web`, `--type 2d-game`, or `--type 3d-world`) |
 | `gipity checkpoint` | List or restore file snapshots (undo) |
 | `gipity logs fn <name>` | View function execution logs |
 | `gipity browser <url>` | Inspect a URL: console errors, performance, failed resources |

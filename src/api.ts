@@ -1,5 +1,5 @@
 import { getAuth, refreshTokenIfNeeded } from './auth.js';
-import { getConfig, requireConfig, saveConfig } from './config.js';
+import { getConfig, getApiBaseOverride, requireConfig, saveConfig } from './config.js';
 
 export class ApiError extends Error {
   constructor(public statusCode: number, public code: string, message: string) {
@@ -19,8 +19,7 @@ async function getHeaders(): Promise<Record<string, string>> {
 }
 
 function baseUrl(): string {
-  const config = getConfig();
-  return config?.apiBase || 'https://a.gipity.ai';
+  return getApiBaseOverride() || getConfig()?.apiBase || 'https://a.gipity.ai';
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {

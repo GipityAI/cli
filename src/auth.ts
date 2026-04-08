@@ -63,8 +63,7 @@ export async function refreshTokenIfNeeded(): Promise<void> {
 
   try {
     const config = await import('./config.js');
-    const cfg = config.getConfig();
-    const apiBase = cfg?.apiBase || 'https://a.gipity.ai';
+    const apiBase = config.getApiBaseOverride() || config.getConfig()?.apiBase || 'https://a.gipity.ai';
 
     const res = await fetch(`${apiBase}/auth/refresh`, {
       method: 'POST',

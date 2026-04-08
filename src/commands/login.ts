@@ -7,7 +7,6 @@ export const loginCommand = new Command('login')
   .description('Authenticate with Gipity')
   .option('--email <email>', 'Email address')
   .option('--code <code>', 'Verification code')
-  .option('--api-base <url>', 'API base URL', 'https://a.gipity.ai')
   .action(async (opts) => {
     try {
       let email = opts.email;

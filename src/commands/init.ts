@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { basename } from 'path';
 import { get, post } from '../api.js';
-import { saveConfig, getConfig } from '../config.js';
+import { saveConfig, getConfig, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
 import { getAuth } from '../auth.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
@@ -22,7 +22,6 @@ export const initCommand = new Command('init')
   .description('Initialize a Gipity project (new or existing)')
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
-  .option('--api-base <url>', 'API base URL', 'https://a.gipity.ai')
   .action(async (name: string | undefined, opts) => {
     try {
       // Check auth
@@ -100,7 +99,7 @@ export const initCommand = new Command('init')
         accountSlug,
         agentGuid,
         conversationGuid: null,
-        apiBase: opts.apiBase,
+        apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
         ignore: ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', 'CLAUDE.md', '*.log'],
       });
 

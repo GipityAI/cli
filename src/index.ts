@@ -3,6 +3,7 @@ import { Command, Help } from 'commander';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import { setApiBaseOverride } from './config.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { initCommand } from './commands/init.js';
@@ -30,6 +31,7 @@ import { fnCommand } from './commands/fn.js';
 import { rbacCommand } from './commands/rbac.js';
 import { auditCommand } from './commands/audit.js';
 import { emailCommand } from './commands/email.js';
+import { generateCommand } from './commands/generate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
@@ -53,7 +55,13 @@ const program = new Command();
 program
   .name('gipity')
   .description(`${bold('Gipity CLI')} ${dim('—')} cloud infrastructure for every project\n\n  ${dim('Hosting, databases, deployment, sandboxed execution, and AI — zero setup.')}`)
-  .version(pkg.version, '-v, --version');
+  .version(pkg.version, '-v, --version')
+  .option('--api-base <url>', 'API base URL (e.g. http://localhost:7200)');
+
+program.hook('preAction', () => {
+  const apiBase = program.opts().apiBase;
+  if (apiBase) setApiBaseOverride(apiBase);
+});
 
 configureHelp(program);
 
@@ -62,7 +70,7 @@ const setupGroup = [loginCommand, logoutCommand, initCommand, startCcCommand];
 // ── Project commands ────────────────────────────────────────────────────
 const projectGroup = [statusCommand, syncCommand, pushCommand, deployCommand, scaffoldCommand, checkpointCommand];
 // ── Resource commands ───────────────────────────────────────────────────
-const resourceGroup = [dbCommand, memoryCommand, fileCommand, sandboxCommand, apiCommand, logsCommand, browserCommand, recordsCommand, fnCommand, rbacCommand, auditCommand, emailCommand];
+const resourceGroup = [dbCommand, memoryCommand, fileCommand, sandboxCommand, apiCommand, logsCommand, browserCommand, recordsCommand, fnCommand, rbacCommand, auditCommand, emailCommand, generateCommand];
 // ── Agent commands ──────────────────────────────────────────────────────
 const agentGroup = [chatCommand, projectCommand, agentCommand, workflowCommand, creditsCommand];
 

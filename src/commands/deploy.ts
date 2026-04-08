@@ -38,7 +38,6 @@ export const deployCommand = new Command('deploy')
           target: string;
           elapsedMs: number;
           projectType?: string;
-          frameworkVersion?: number;
           warning?: string;
         };
       }>(`/projects/${config.projectGuid}/deploy`, {
@@ -55,7 +54,6 @@ export const deployCommand = new Command('deploy')
           const d = res.data;
           const size = formatSize(d.totalBytes);
           const parts = [`${d.fileCount} files`, size, `${d.elapsedMs}ms`];
-          if (d.frameworkVersion) parts.push(`fw v${d.frameworkVersion}`);
           console.log(`${d.url}  (${parts.join(', ')})`);
         }
       }

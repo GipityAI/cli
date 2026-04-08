@@ -16,6 +16,17 @@ const CONFIG_FILE = '.gipity.json';
 let cached: GipityConfig | null = null;
 let cachedPath: string | null = null;
 
+/** Global --api-base override (set from root CLI option, takes precedence over config file) */
+let apiBaseOverride: string | null = null;
+
+export function setApiBaseOverride(url: string): void {
+  apiBaseOverride = url;
+}
+
+export function getApiBaseOverride(): string | null {
+  return apiBaseOverride;
+}
+
 /** Find .gipity.json starting from cwd and walking up */
 function findConfigPath(): string | null {
   let dir = process.cwd();

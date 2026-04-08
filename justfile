@@ -1,8 +1,14 @@
 # Gipity CLI
 
-# Build CLI (auto-bump patch version, compile TypeScript)
+# Sync shared docs from platform (provider models, voices, params)
+# Imports the platform module and writes resolved string values for the CLI
+sync-docs:
+    cd ../platform && node --import tsx scripts/export-provider-docs.ts > ../cli/src/provider-docs.ts
+    echo "✓ Synced provider-docs.ts from platform"
+
+# Build CLI (sync docs, auto-bump patch version, compile TypeScript)
 cli-build:
-    npm version patch --no-git-tag-version && npm run build
+    just sync-docs && npm version patch --no-git-tag-version && npm run build
 
 # Publish CLI to npm (build bumps version, then publish)
 cli-publish:
