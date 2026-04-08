@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError } from '../colors.js';
 
 const LANG_MAP: Record<string, string> = {
   js: 'javascript',
@@ -26,7 +27,7 @@ sandboxCommand
       const language = LANG_MAP[opts.lang] || opts.lang;
 
       if (!['javascript', 'python', 'bash'].includes(language)) {
-        console.error(`Invalid language: ${opts.lang}. Use: js, py, or bash`);
+        console.error(clrError(`Invalid language: ${opts.lang}. Use: js, py, or bash`));
         process.exit(1);
       }
 
@@ -55,7 +56,7 @@ sandboxCommand
         if (res.data.exitCode !== 0) process.exit(res.data.exitCode);
       }
     } catch (err: any) {
-      console.error(`Sandbox failed: ${err.message}`);
+      console.error(clrError(`Sandbox failed: ${err.message}`));
       process.exit(1);
     }
   });

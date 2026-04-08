@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, post } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError, bold, muted, success } from '../colors.js';
 
 export const fnCommand = new Command('fn')
   .description('Manage sandboxed functions');
@@ -20,12 +21,12 @@ fnCommand
         console.log('No functions defined.');
       } else {
         for (const f of res.data) {
-          console.log(`${f.name}  v${f.version}  ${f.auth_level}  timeout=${f.timeout_ms}ms`);
-          if (f.description) console.log(`  ${f.description}`);
+          console.log(`${bold(f.name)}  ${muted(`v${f.version}`)}  ${muted(f.auth_level)}  ${muted(`timeout=${f.timeout_ms}ms`)}`);
+          if (f.description) console.log(`  ${muted(f.description)}`);
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -50,12 +51,13 @@ fnCommand
         for (const log of res.data) {
           const dur = log.duration_ms != null ? `${log.duration_ms}ms` : '?';
           const ts = new Date(log.created_at).toLocaleString();
-          console.log(`${log.status}  ${dur}  ${log.trigger_type || 'http'}  ${ts}`);
-          if (log.error_message) console.log(`  error: ${log.error_message}`);
+          const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : muted;
+          console.log(`${statusColor(log.status)}  ${dur}  ${muted(log.trigger_type || 'http')}  ${muted(ts)}`);
+          if (log.error_message) console.log(`  ${clrError(`error: ${log.error_message}`)}`);
         }
       }
     } catch (err: any) {
-      console.error(`Logs failed: ${err.message}`);
+      console.error(clrError(`Logs failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -82,7 +84,7 @@ fnCommand
       );
       console.log(opts.json ? JSON.stringify(res.data) : res.data.content);
     } catch (err: any) {
-      console.error(`Call failed: ${err.message}`);
+      console.error(clrError(`Call failed: ${err.message}`));
       process.exit(1);
     }
   });

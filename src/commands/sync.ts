@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { syncDown, syncUp, syncCheck } from '../sync.js';
+import { error as clrError } from '../colors.js';
 
 export const syncCommand = new Command('sync')
   .description('Sync files between local and Gipity')
@@ -20,7 +21,7 @@ export const syncCommand = new Command('sync')
           result = await syncCheck();
           break;
         default:
-          console.error(`Unknown direction: ${direction}. Use: up, down, or check`);
+          console.error(clrError(`Unknown direction: ${direction}. Use: up, down, or check`));
           process.exit(1);
       }
 
@@ -35,7 +36,7 @@ export const syncCommand = new Command('sync')
         console.log(result.summary);
       }
     } catch (err: any) {
-      console.error(`Sync failed: ${err.message}`);
+      console.error(clrError(`Sync failed: ${err.message}`));
       process.exit(1);
     }
   });

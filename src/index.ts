@@ -32,13 +32,10 @@ import { rbacCommand } from './commands/rbac.js';
 import { auditCommand } from './commands/audit.js';
 import { emailCommand } from './commands/email.js';
 import { generateCommand } from './commands/generate.js';
+import { bold, dim, brand } from './colors.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
-
-// ── ANSI helpers ────────────────────────────────────────────────────────
-const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
-const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
 // ── Custom help formatting (match Claude Code style) ────────────────────
 function configureHelp(cmd: Command): void {
@@ -54,7 +51,7 @@ const program = new Command();
 
 program
   .name('gipity')
-  .description(`${bold('Gipity CLI')} ${dim('—')} cloud infrastructure for every project\n\n  ${dim('Hosting, databases, deployment, sandboxed execution, and AI — zero setup.')}`)
+  .description(`${brand(bold('Gipity CLI'))} ${dim('—')} cloud infrastructure for every project\n\n  ${dim('Hosting, databases, deployment, sandboxed execution, and AI — zero setup.')}`)
   .version(pkg.version, '-v, --version')
   .option('--api-base <url>', 'API base URL (e.g. http://localhost:7200)');
 

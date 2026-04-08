@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { get, post, del } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
 import { slugify } from '../setup.js';
+import { error as clrError, success, brand, muted } from '../colors.js';
 
 interface ProjectData {
   short_guid: string;
@@ -25,7 +26,7 @@ export const projectCommand = new Command('project')
         const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
         const match = res.data.find(p => p.slug === name || p.name === name || p.short_guid === name);
         if (!match) {
-          console.error(`Project "${name}" not found.`);
+          console.error(clrError(`Project "${name}" not found.`));
           process.exit(1);
         }
         saveConfig({ ...config, projectGuid: match.short_guid, projectSlug: match.slug, conversationGuid: null });
@@ -46,14 +47,14 @@ export const projectCommand = new Command('project')
           console.log('No projects.');
         } else {
           for (const p of res.data) {
-            const active = p.short_guid === config.projectGuid ? ' *' : '';
-            const def = p.is_default ? ' (default)' : '';
+            const active = p.short_guid === config.projectGuid ? ` ${brand('*')}` : '';
+            const def = p.is_default ? ` ${muted('(default)')}` : '';
             console.log(`${p.slug}${active}${def}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`Failed: ${err.message}`);
+      console.error(clrError(`Failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -81,7 +82,7 @@ projectCommand
         if (opts.switch) console.log('Switched.');
       }
     } catch (err: any) {
-      console.error(`Create failed: ${err.message}`);
+      console.error(clrError(`Create failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -107,7 +108,7 @@ projectCommand
         console.log(`Deleted "${match.name}".`);
       }
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -131,7 +132,7 @@ projectCommand
         if (p.description) console.log(`Desc:    ${p.description}`);
       }
     } catch (err: any) {
-      console.error(`Info failed: ${err.message}`);
+      console.error(clrError(`Info failed: ${err.message}`));
       process.exit(1);
     }
   });

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { syncDown } from '../sync.js';
+import { error as clrError, success } from '../colors.js';
 
 export const scaffoldCommand = new Command('scaffold')
   .description('Create app structure (src/ with HTML, CSS, JS, favicons)')
@@ -28,7 +29,7 @@ export const scaffoldCommand = new Command('scaffold')
       if (opts.json) {
         console.log(JSON.stringify({ ...res.data, synced: syncResult.pulled }));
       } else {
-        console.log(`Scaffolded "${res.data.title}" with ${res.data.files.length} files:`);
+        console.log(success(`Scaffolded "${res.data.title}" with ${res.data.files.length} files:`));
         for (const f of res.data.files) {
           console.log(`  ${f}`);
         }
@@ -37,7 +38,7 @@ export const scaffoldCommand = new Command('scaffold')
         }
       }
     } catch (err: any) {
-      console.error(`Scaffold failed: ${err.message}`);
+      console.error(clrError(`Scaffold failed: ${err.message}`));
       process.exit(1);
     }
   });

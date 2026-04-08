@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
+import { error as clrError, success, muted, bold } from '../colors.js';
 
 interface AgentData {
   short_guid: string;
@@ -24,7 +25,7 @@ export const agentCommand = new Command('agent')
         const res = await get<{ data: AgentData[] }>('/agents');
         const match = res.data.find(a => a.name === name || a.short_guid === name);
         if (!match) {
-          console.error(`Agent "${name}" not found.`);
+          console.error(clrError(`Agent "${name}" not found.`));
           process.exit(1);
         }
         const config = requireConfig();
@@ -55,7 +56,7 @@ export const agentCommand = new Command('agent')
         }
       }
     } catch (err: any) {
-      console.error(`Failed: ${err.message}`);
+      console.error(clrError(`Failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -84,7 +85,7 @@ agentCommand
         if (opts.switch) console.log('Switched.');
       }
     } catch (err: any) {
-      console.error(`Create failed: ${err.message}`);
+      console.error(clrError(`Create failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -100,7 +101,7 @@ agentCommand
       if (field === 'model') body.modelPreference = value;
       else if (field === 'temp' || field === 'temperature') body.temperature = parseFloat(value);
       else {
-        console.error(`Unknown field: ${field}. Use: model, temp`);
+        console.error(clrError(`Unknown field: ${field}. Use: model, temp`));
         process.exit(1);
       }
 
@@ -111,7 +112,7 @@ agentCommand
         console.log(`Set ${field} = ${value}`);
       }
     } catch (err: any) {
-      console.error(`Set failed: ${err.message}`);
+      console.error(clrError(`Set failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -136,7 +137,7 @@ agentCommand
         console.log(`Created: ${new Date(a.created_at).toLocaleDateString()}`);
       }
     } catch (err: any) {
-      console.error(`Info failed: ${err.message}`);
+      console.error(clrError(`Info failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -160,7 +161,7 @@ agentCommand
         console.log(`Deleted "${match.name}".`);
       }
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { get, put, del } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError, bold, muted } from '../colors.js';
 
 interface ProcedureParam {
   name: string;
@@ -41,13 +42,13 @@ apiCommand
             const paramStr = p.params.length > 0
               ? ` (${p.params.map(pr => `${pr.name}:${pr.type}`).join(', ')})`
               : '';
-            console.log(`${p.name}  ${p.method}/${p.auth_level}  → ${p.database_name}${paramStr}`);
-            if (p.description) console.log(`  ${p.description}`);
+            console.log(`${bold(p.name)}  ${muted(`${p.method}/${p.auth_level}`)}  → ${p.database_name}${paramStr}`);
+            if (p.description) console.log(`  ${muted(p.description)}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -76,7 +77,7 @@ apiCommand
         console.log(`SQL:\n${p.sql_text}`);
       }
     } catch (err: any) {
-      console.error(`Get failed: ${err.message}`);
+      console.error(clrError(`Get failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -105,7 +106,7 @@ apiCommand
       try {
         params = JSON.parse(opts.params);
       } catch {
-        console.error('Invalid --params JSON. Example: \'[{"name":"color","type":"string"},{"name":"count","type":"int"}]\'');
+        console.error(clrError('Invalid --params JSON. Example: \'[{"name":"color","type":"string"},{"name":"count","type":"int"}]\''));
         process.exit(1);
       }
 
@@ -130,7 +131,7 @@ apiCommand
         console.log(`URL: https://a.gipity.ai/api/${config.projectGuid}/call/${name}`);
       }
     } catch (err: any) {
-      console.error(`Define failed: ${err.message}`);
+      console.error(clrError(`Define failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -150,7 +151,7 @@ apiCommand
         console.log(`Deleted "${name}".`);
       }
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });

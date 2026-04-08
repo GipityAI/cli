@@ -1,4 +1,5 @@
 import { createInterface } from 'readline';
+import { bold } from './colors.js';
 
 /** Safely decode a JWT payload without signature validation */
 export function decodeJwtExp(token: string): number | null {
@@ -19,6 +20,38 @@ export function prompt(question: string): Promise<string> {
     rl.question(question, answer => {
       rl.close();
       resolve(answer.trim());
+    });
+  });
+}
+
+/**
+ * Single-keypress picker for 1–9 options.
+ * Returns the 1-based index chosen, or `defaultIdx` on Enter.
+ */
+export function pickOne(
+  label: string,
+  max: number,
+  defaultIdx = 1,
+): Promise<number> {
+  return new Promise(resolve => {
+    process.stdout.write(`  ${bold(label)} (1-${max}) [${bold(String(defaultIdx))}]: `);
+    const { stdin } = process;
+    const wasRaw = stdin.isRaw ?? false;
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.once('data', (key: Buffer) => {
+      if (stdin.isTTY) stdin.setRawMode(wasRaw);
+      stdin.pause();
+      const ch = key.toString();
+      // Ctrl-C
+      if (ch === '\x03') { console.log(''); process.exit(0); }
+      // Enter → default
+      if (ch === '\r' || ch === '\n') { console.log(String(defaultIdx)); return resolve(defaultIdx); }
+      const n = parseInt(ch, 10);
+      if (n >= 1 && n <= max) { console.log(String(n)); return resolve(n); }
+      // Invalid key → default
+      console.log(String(defaultIdx));
+      resolve(defaultIdx);
     });
   });
 }

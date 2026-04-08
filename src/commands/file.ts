@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { get, del } from '../api.js';
 import { requireConfig } from '../config.js';
 import { formatSize } from '../utils.js';
+import { info, error as clrError, muted, success } from '../colors.js';
 
 interface FileEntry {
   name: string;
@@ -31,12 +32,13 @@ fileCommand
         } else {
           for (const f of res.data) {
             const size = f.type === 'directory' ? '<DIR>' : formatSize(Number(f.size));
-            console.log(`${size.padStart(10)}  ${f.name}${f.type === 'directory' ? '/' : ''}`);
+            const name = f.type === 'directory' ? info(`${f.name}/`) : f.name;
+            console.log(`${muted(size.padStart(10))}  ${name}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -58,7 +60,7 @@ fileCommand
         process.stdout.write(res.data.content);
       }
     } catch (err: any) {
-      console.error(`Read failed: ${err.message}`);
+      console.error(clrError(`Read failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -88,7 +90,7 @@ fileCommand
         }
       }
     } catch (err: any) {
-      console.error(`Tree failed: ${err.message}`);
+      console.error(clrError(`Tree failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -110,7 +112,7 @@ fileCommand
         console.log(`Deleted: ${path}`);
       }
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });

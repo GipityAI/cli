@@ -3,6 +3,7 @@ import { get, post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { syncDown } from '../sync.js';
 import { formatAge } from '../utils.js';
+import { error as clrError, muted, success } from '../colors.js';
 
 interface Checkpoint {
   guid: string;
@@ -35,12 +36,12 @@ checkpointCommand
           for (const cp of res.data) {
             const age = formatAge(cp.created_at);
             const branch = cp.branched ? ' (branched)' : '';
-            console.log(`  ${cp.guid}  ${cp.label || '(auto)'}  ${cp.fileCount} files  ${age}${branch}`);
+            console.log(`  ${muted(cp.guid)}  ${cp.label || muted('(auto)')}  ${cp.fileCount} files  ${muted(age)}${branch}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -64,14 +65,14 @@ checkpointCommand
       if (opts.json) {
         console.log(JSON.stringify({ ...res.data, synced: syncResult.pulled }));
       } else {
-        console.log(`Restored to ${res.data.restoredTo}`);
+        console.log(success(`Restored to ${res.data.restoredTo}`));
         console.log(`Backup created: ${res.data.backupCheckpoint}`);
         if (syncResult.pulled > 0) {
           console.log(`Pulled ${syncResult.pulled} files to local.`);
         }
       }
     } catch (err: any) {
-      console.error(`Restore failed: ${err.message}`);
+      console.error(clrError(`Restore failed: ${err.message}`));
       process.exit(1);
     }
   });

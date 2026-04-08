@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { formatSize } from '../utils.js';
+import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
 
 interface DebugBundle {
   url: string;
@@ -51,41 +52,41 @@ export const browserCommand = new Command('browser')
       const timing = b.timing || { ttfb: 0, domReady: 0, load: 0 };
 
       // ── Page Info ──
-      console.log(`\nInspecting ${b.url || url}`);
-      console.log(`  Title: ${b.title || '(none)'}`);
-      console.log(`  Elements: ${b.elementCount || 0}`);
-      console.log(`  Page weight: ${formatSize(b.totalBytes || 0)}`);
+      console.log(`\n${brand('Inspecting')} ${bold(b.url || url)}`);
+      console.log(`  ${muted('Title:')} ${b.title || '(none)'}`);
+      console.log(`  ${muted('Elements:')} ${b.elementCount || 0}`);
+      console.log(`  ${muted('Page weight:')} ${info(formatSize(b.totalBytes || 0))}`);
 
       // ── Timing ──
-      console.log(`\n  Timing:`);
-      console.log(`    TTFB: ${timing.ttfb}ms`);
-      console.log(`    DOM ready: ${timing.domReady}ms`);
-      console.log(`    Load: ${timing.load}ms`);
+      console.log(`\n  ${bold('Timing:')}`);
+      console.log(`    ${muted('TTFB:')} ${timing.ttfb}ms`);
+      console.log(`    ${muted('DOM ready:')} ${timing.domReady}ms`);
+      console.log(`    ${muted('Load:')} ${timing.load}ms`);
       if (b.lcp) {
         console.log(`    LCP: ${b.lcp.time}ms (${b.lcp.element}${b.lcp.url ? ' ' + shortUrl(b.lcp.url) : ''})`);
       }
 
       // ── Console ──
       if (b.console?.length > 0) {
-        console.log(`\n  Console (${b.console.length}):`);
+        console.log(`\n  ${bold('Console')} ${muted(`(${b.console.length})`)}:`);
         for (const line of b.console) {
-          console.log(`    ${line}`);
+          console.log(`    ${warning(line)}`);
         }
       } else {
-        console.log('\n  Console: (clean)');
+        console.log(`\n  ${bold('Console:')} ${muted('(clean)')}`);
       }
 
       // ── Failed Resources ──
       if (b.failedResources?.length > 0) {
-        console.log(`\n  Failed resources (${b.failedResources.length}):`);
+        console.log(`\n  ${clrError(`Failed resources (${b.failedResources.length}):`)}`);
         for (const r of b.failedResources) {
-          console.log(`    ${r}`);
+          console.log(`    ${clrError(r)}`);
         }
       }
 
       // ── Render Blocking ──
       if (b.renderBlocking?.length > 0) {
-        console.log(`\n  Render-blocking (${b.renderBlocking.length}):`);
+        console.log(`\n  ${warning(`Render-blocking (${b.renderBlocking.length}):`)}`);
         for (const r of b.renderBlocking) {
           console.log(`    ${shortUrl(r)}`);
         }
@@ -93,15 +94,15 @@ export const browserCommand = new Command('browser')
 
       // ── Large Resources ──
       if (b.largeResources?.length > 0) {
-        console.log(`\n  Large resources >100KB (${b.largeResources.length}):`);
+        console.log(`\n  ${warning(`Large resources >100KB (${b.largeResources.length}):`)}`);
         for (const r of b.largeResources) {
-          console.log(`    ${formatSize(r.size).padEnd(10)} ${r.type.padEnd(8)} ${shortUrl(r.url)}`);
+          console.log(`    ${info(formatSize(r.size).padEnd(10))} ${muted(r.type.padEnd(8))} ${shortUrl(r.url)}`);
         }
       }
 
       // ── Oversized Images ──
       if (b.oversizedImages?.length > 0) {
-        console.log(`\n  Oversized images (${b.oversizedImages.length}):`);
+        console.log(`\n  ${warning(`Oversized images (${b.oversizedImages.length}):`)}`);
         for (const img of b.oversizedImages) {
           console.log(`    ${img.natural} served, ${img.displayed} displayed — ${shortUrl(img.src)}`);
         }
@@ -109,7 +110,7 @@ export const browserCommand = new Command('browser')
 
       console.log('');
     } catch (err: any) {
-      console.error(`Browser inspect failed: ${err.message}`);
+      console.error(clrError(`Browser inspect failed: ${err.message}`));
       process.exit(1);
     }
   });

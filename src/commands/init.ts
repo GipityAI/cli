@@ -5,6 +5,7 @@ import { saveConfig, getConfig, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
 import { getAuth } from '../auth.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
+import { success, error as clrError, info, muted } from '../colors.js';
 
 interface ProjectData {
   short_guid: string;
@@ -27,19 +28,19 @@ export const initCommand = new Command('init')
       // Check auth
       const auth = getAuth();
       if (!auth) {
-        console.error('Not logged in. Run: gipity login');
+        console.error(clrError('Not logged in. Run: gipity login'));
         process.exit(1);
       }
 
       // Check if already initialized
       const existing = getConfig();
       if (existing) {
-        console.log(`Already linked to "${existing.projectSlug}" (${existing.projectGuid})`);
+        console.log(`Already linked to ${info(`"${existing.projectSlug}"`)} ${muted(`(${existing.projectGuid})`)}`);
         // Re-run setup in case hooks/skills are missing
         setupClaudeHooks();
         setupClaudeMd();
         setupGitignore();
-        console.log('Configuring Claude Code... done.');
+        console.log(success('Configuring Claude Code... done.'));
         return;
       }
 
@@ -48,7 +49,7 @@ export const initCommand = new Command('init')
       const projectSlug = slugify(projectName);
 
       if (!projectSlug) {
-        console.error('Could not derive a valid project slug. Provide a name: gipity init my-app');
+        console.error(clrError('Could not derive a valid project slug. Provide a name: gipity init my-app'));
         process.exit(1);
       }
 
@@ -67,7 +68,7 @@ export const initCommand = new Command('init')
       }
 
       if (project) {
-        console.log(`Found existing project "${project.name}" (${project.slug})`);
+        console.log(`Found existing project ${info(`"${project.name}"`)} ${muted(`(${project.slug})`)}`);
       } else {
         // Create new project
         const res = await post<{ data: ProjectData }>('/projects', {
@@ -76,7 +77,7 @@ export const initCommand = new Command('init')
         });
         project = res.data;
         accountSlug = project.user?.account_slug || '';
-        console.log(`Created project "${project.name}" (${project.slug})`);
+        console.log(success(`Created project "${project.name}" (${project.slug})`));
       }
 
       // Find agent for the project
@@ -122,10 +123,10 @@ export const initCommand = new Command('init')
       // 5. Update .gitignore
       setupGitignore();
 
-      console.log('Configuring Claude Code... done.');
-      console.log('Ready! Run `claude` to start.');
+      console.log(success('Configuring Claude Code... done.'));
+      console.log(success('Ready! Run `claude` to start.'));
     } catch (err: any) {
-      console.error(`Init failed: ${err.message}`);
+      console.error(clrError(`Init failed: ${err.message}`));
       process.exit(1);
     }
   });

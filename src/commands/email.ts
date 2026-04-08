@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError, success } from '../colors.js';
 
 export const emailCommand = new Command('email')
   .description('Send an email to yourself')
@@ -20,10 +21,10 @@ export const emailCommand = new Command('email')
       if (opts.json) {
         console.log(JSON.stringify(res.data));
       } else {
-        console.log(`Email sent to ${res.data.to}: ${res.data.subject}`);
+        console.log(success(`Email sent to ${res.data.to}: ${res.data.subject}`));
       }
     } catch (err: any) {
-      console.error(`Email failed: ${err.message}`);
+      console.error(clrError(`Email failed: ${err.message}`));
       process.exit(1);
     }
   });

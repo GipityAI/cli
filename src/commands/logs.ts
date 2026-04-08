@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get } from '../api.js';
 import { requireConfig } from '../config.js';
+import { success, error as clrError, warning, muted, bold } from '../colors.js';
 
 interface FnLog {
   id: string;
@@ -38,17 +39,18 @@ logsCommand
         return;
       }
 
-      console.log(`Logs for "${name}" (last ${res.data.length}):`);
+      console.log(`Logs for ${bold(`"${name}"`)} ${muted(`(last ${res.data.length})`)}:`);
       for (const log of res.data) {
         const time = new Date(log.created_at).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
         const dur = log.duration_ms !== null ? `${log.duration_ms}ms`.padEnd(8) : ''.padEnd(8);
-        const status = log.status.padEnd(8);
-        const trigger = log.trigger_type.padEnd(8);
-        const err = log.error ? `  "${log.error}"` : '';
-        console.log(`  ${time}  ${status} ${dur} ${trigger}${err}`);
+        const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : warning;
+        const status = statusColor(log.status.padEnd(8));
+        const trigger = muted(log.trigger_type.padEnd(8));
+        const err = log.error ? `  ${clrError(`"${log.error}"`)}` : '';
+        console.log(`  ${muted(time)}  ${status} ${dur} ${trigger}${err}`);
       }
     } catch (err: any) {
-      console.error(`Logs failed: ${err.message}`);
+      console.error(clrError(`Logs failed: ${err.message}`));
       process.exit(1);
     }
   });

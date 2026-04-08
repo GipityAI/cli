@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, put, del } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError, muted } from '../colors.js';
 
 interface MemorySummary {
   topic: string;
@@ -32,12 +33,12 @@ memoryCommand
           console.log('No memory topics.');
         } else {
           for (const m of res.data) {
-            console.log(`${m.topic}  (${new Date(m.updated_at).toLocaleDateString()})`);
+            console.log(`${m.topic}  ${muted(`(${new Date(m.updated_at).toLocaleDateString()})`)}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -58,7 +59,7 @@ memoryCommand
       const match = res.data.find(m => m.topic === topic);
 
       if (!match) {
-        console.error(`Topic "${topic}" not found.`);
+        console.error(clrError(`Topic "${topic}" not found.`));
         process.exit(1);
       }
 
@@ -68,7 +69,7 @@ memoryCommand
         console.log(match.content);
       }
     } catch (err: any) {
-      console.error(`Read failed: ${err.message}`);
+      console.error(clrError(`Read failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -93,7 +94,7 @@ memoryCommand
         console.log(`Wrote "${topic}".`);
       }
     } catch (err: any) {
-      console.error(`Write failed: ${err.message}`);
+      console.error(clrError(`Write failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -118,7 +119,7 @@ memoryCommand
         console.log(`Deleted "${topic}".`);
       }
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });

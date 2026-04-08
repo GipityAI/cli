@@ -20,7 +20,8 @@ import { get, post, publicPost } from '../api.js';
 import { getConfig, saveConfig, clearConfigCache, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
-import { prompt, decodeJwtExp } from '../utils.js';
+import { prompt, pickOne, decodeJwtExp } from '../utils.js';
+import { brand, bold, faint, info, success, error as clrError, muted } from '../colors.js';
 
 const PROJECTS_ROOT = join(homedir(), 'GipityProjects');
 
@@ -52,9 +53,8 @@ export const startCcCommand = new Command('start-cc')
   .allowExcessArguments(true)
   .action(async (opts) => {
     try {
-      console.log('');
-      console.log('  Welcome to Gipity');
-      console.log('  ─────────────────');
+      console.log(`\n  ${brand(bold('Welcome to Gipity'))}`);
+      console.log(`  ${faint('─────────────────')}`);
       console.log('');
 
       // ── Step 1: Auth ──────────────────────────────────────────────────
@@ -66,13 +66,13 @@ export const startCcCommand = new Command('start-cc')
         console.log('  Let\'s get you logged in.\n');
 
         const email = await prompt('  Email: ');
-        if (!email) { console.error('\n  Email required.'); process.exit(1); }
+        if (!email) { console.error(`\n  ${clrError('Email required.')}`); process.exit(1); }
 
         await publicPost('/auth/login', { email });
         console.log('  Check your email for a 6-digit code.\n');
 
         const code = await prompt('  Code: ');
-        if (!code) { console.error('\n  Code required.'); process.exit(1); }
+        if (!code) { console.error(`\n  ${clrError('Code required.')}`); process.exit(1); }
 
         const res = await publicPost<{
           accessToken: string;
@@ -81,12 +81,12 @@ export const startCcCommand = new Command('start-cc')
         }>('/auth/verify', { email, code });
 
         const exp = decodeJwtExp(res.accessToken);
-        if (!exp) { console.error('\n  Invalid token received.'); process.exit(1); }
+        if (!exp) { console.error(`\n  ${clrError('Invalid token received.')}`); process.exit(1); }
         const expiresAt = new Date(exp * 1000).toISOString();
 
         saveAuth({ accessToken: res.accessToken, refreshToken: res.refreshToken, email, expiresAt });
         auth = getAuth();
-        console.log(`\n  Authenticated as ${email}`);
+        console.log(`  ${success(`Logged in as ${email}`)}`);
       }
 
       console.log('');
@@ -97,8 +97,8 @@ export const startCcCommand = new Command('start-cc')
       // If cwd already has .gipity.json, use it (user ran from inside a project)
       const existing = getConfig();
       if (existing) {
-        console.log(`  Project: ${existing.projectSlug} (${existing.projectGuid})`);
-        console.log('  Already set up.\n');
+        console.log(`  Project: ${brand(existing.projectSlug)} ${muted(`(${existing.projectGuid})`)}`);
+        console.log(`  ${success('Already set up.')}\n`);
         setupClaudeHooks();
         setupClaudeMd();
         setupGitignore();
@@ -116,8 +116,8 @@ export const startCcCommand = new Command('start-cc')
             err?.cause?.code === 'ENOTFOUND' || err?.cause?.code === 'ETIMEDOUT';
           if (isConnectionError) {
             const apiBase = getApiBaseOverride() || 'https://a.gipity.ai';
-            console.error(`  Could not connect to ${apiBase}`);
-            console.error('  Check your connection and try again.');
+            console.error(`  ${clrError(`Could not connect to ${apiBase}`)}`);
+            console.error(`  ${muted('Check your connection and try again.')}`);
             process.exit(1);
           }
           // Non-connection error (e.g. 401) — fall through to create
@@ -135,7 +135,7 @@ export const startCcCommand = new Command('start-cc')
           project = await createNewProject(existingSlugs);
           isNewProject = true;
         } else {
-          console.error('  Could not load projects. Please try again.');
+          console.error(`  ${clrError('Could not load projects. Please try again.')}`);
           process.exit(1);
         }
 
@@ -210,7 +210,7 @@ export const startCcCommand = new Command('start-cc')
         setupClaudeMd();
         setupGitignore();
 
-        console.log(`  Project "${project.name}" ready.\n`);
+        console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
       }
 
       // ── Step 3: Launch Claude Code ────────────────────────────────────
@@ -246,7 +246,7 @@ export const startCcCommand = new Command('start-cc')
         if (valueIdx !== -1) claudeArgs.splice(valueIdx, 1);
       }
 
-      console.log('  Launching Claude Code...\n');
+      console.log(`  ${info('Launching Claude Code...')}\n`);
       const allArgs = initialPrompt
         ? [initialPrompt, ...claudeArgs]
         : claudeArgs;
@@ -260,7 +260,7 @@ export const startCcCommand = new Command('start-cc')
       child.on('exit', (code) => process.exit(code ?? 0));
 
     } catch (err: any) {
-      console.error(`\n  Error: ${err.message}`);
+      console.error(`\n  ${clrError(`Error: ${err.message}`)}`);
       process.exit(1);
     }
   });
@@ -269,32 +269,51 @@ async function pickOrCreateProject(
   projects: ProjectData[],
   existingSlugs: string[],
 ): Promise<{ project: ProjectData; isNew: boolean }> {
-  console.log('  Your projects:');
-  projects.forEach((p, i) => console.log(`    ${i + 1}. ${p.name} (${p.slug})`));
-  console.log(`    ${projects.length + 1}. Create new project`);
+  const recent = projects.slice(0, 7);
+  const hasMore = projects.length > 7;
+
+  console.log(`  ${bold('Choose project to open:')}\n`);
+  console.log(`    ${bold('1.')} Create new project`);
+  recent.forEach((p, i) => console.log(`    ${bold(`${i + 2}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
+  if (hasMore) console.log(`    ${bold(`${recent.length + 2}.`)} Show all projects`);
   console.log('');
 
-  const choice = await prompt(`  Choose (1-${projects.length + 1}): `);
-  const idx = parseInt(choice, 10);
+  const maxOption = hasMore ? recent.length + 2 : recent.length + 1;
+  const idx = await pickOne('Choose', maxOption, 1);
 
-  if (idx >= 1 && idx <= projects.length) return { project: projects[idx - 1], isNew: false };
+  // Selected a recent project
+  if (idx >= 2 && idx <= recent.length + 1) return { project: recent[idx - 2], isNew: false };
+
+  // Show all projects
+  if (hasMore && idx === recent.length + 2) {
+    console.log('');
+    console.log(`  ${bold('All projects:')}`);
+    projects.forEach((p, i) => console.log(`    ${bold(`${i + 1}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
+    console.log('');
+    const allChoice = await prompt(`  Choose (1-${projects.length}): `);
+    const allIdx = parseInt(allChoice, 10);
+    if (allIdx >= 1 && allIdx <= projects.length) return { project: projects[allIdx - 1], isNew: false };
+  }
+
+  // Default (Enter) or 1 = create new project
   return { project: await createNewProject(existingSlugs), isNew: true };
 }
 
 async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
   const suggested = suggestProjectName(existingSlugs);
-  const name = await prompt(`  Project name [${suggested}]: `);
+  console.log('');
+  const name = await prompt(`  ${bold('Project name')} [${bold(suggested)}]: `);
   const projectName = name || suggested;
   const projectSlug = slugify(projectName);
 
   if (!projectSlug) {
-    console.error('  Invalid project name.');
+    console.error(`  ${clrError('Invalid project name.')}`);
     process.exit(1);
   }
 
-  console.log(`  Creating "${projectName}"...`);
+  console.log(`  ${info(`Creating "${projectName}"...`)}`);
   const res = await post<{ data: ProjectData }>('/projects', { name: projectName, slug: projectSlug });
-  console.log('  Created.');
+  console.log(`  ${success('Created.')}`);
   return res.data;
 }
 
@@ -306,6 +325,10 @@ interface ProjectTypeChoice {
 
 const PROJECT_TYPE_OPTIONS: ProjectTypeChoice[] = [
   {
+    label: 'Start empty',
+    initialPrompt: 'This is a new empty project on Gipity. Briefly introduce yourself, mention that I have access to cloud hosting, databases, server-side API endpoints, sandboxed code execution, image generation, speech, and web search, and ask me what I want to build.',
+  },
+  {
     label: 'Web app',
     scaffoldType: 'web',
     initialPrompt: 'This is a new web app project on Gipity. The project has been scaffolded with starter HTML/CSS/JS. Deploy it to dev so I can see it live. Then briefly introduce yourself, mention that I have access to databases, server-side API endpoints, image generation, web search, and cloud hosting, and ask me what I want to build.',
@@ -315,26 +338,16 @@ const PROJECT_TYPE_OPTIONS: ProjectTypeChoice[] = [
     scaffoldType: '3d-world',
     initialPrompt: 'This is a new 3D World game on Gipity. Deploy it to dev so I can play it right away. Then briefly introduce yourself, mention that I can customize the world, objects, physics, game logic, and multiplayer, and ask me what kind of game I want to make.',
   },
-  {
-    label: 'Start empty',
-    initialPrompt: 'This is a new empty project on Gipity. Briefly introduce yourself, mention that I have access to cloud hosting, databases, server-side API endpoints, sandboxed code execution, image generation, speech, and web search, and ask me what I want to build.',
-  },
 ];
 
 async function pickProjectType(): Promise<ProjectTypeChoice> {
   console.log('');
-  console.log('  What kind of project?\n');
-  console.log('    1. Web app');
-  console.log('       Website, dashboard, tool, or browser game — scaffolds HTML/CSS/JS starter files.\n');
-  console.log('    2. 3D World game');
-  console.log('       3D multiplayer game with Three.js + Rapier physics — scaffolds a playable starter world.\n');
-  console.log('    3. Start empty');
-  console.log('       No scaffolding. Begin with a blank project and build everything from scratch.\n');
+  console.log(`  ${bold('What kind of project?')}\n`);
+  console.log(`    ${bold('1.')} Start empty. ${muted('Build everything from scratch.')}`);
+  console.log(`    ${bold('2.')} Web app or game. ${muted('Scaffolds basic HTML/CSS/JS starter files.')}`);
+  console.log(`    ${bold('3.')} 3D World game. ${muted('Scaffolds a playable starter world.')}`);
+  console.log('');
 
-  const choice = await prompt('  Choose (1-3): ');
-  const idx = parseInt(choice, 10);
-
-  if (idx >= 1 && idx <= 3) return PROJECT_TYPE_OPTIONS[idx - 1];
-  // Default to empty on invalid input
-  return PROJECT_TYPE_OPTIONS[2];
+  const idx = await pickOne('Choose', 3, 1);
+  return PROJECT_TYPE_OPTIONS[idx - 1];
 }

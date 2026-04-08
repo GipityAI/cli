@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError, muted } from '../colors.js';
 
 export const auditCommand = new Command('audit')
   .description('Query audit logs');
@@ -36,11 +37,11 @@ auditCommand
         for (const e of res.data) {
           const ts = new Date(e.created_at).toLocaleString();
           const entity = e.entity_type ? `${e.entity_type}${e.entity_id ? ':' + e.entity_id : ''}` : '';
-          console.log(`${ts}  ${e.event_type}  ${e.action}  ${entity}`);
+          console.log(`${muted(ts)}  ${e.event_type}  ${e.action}  ${muted(entity)}`);
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -64,7 +65,7 @@ auditCommand
 
       console.log(opts.json ? JSON.stringify(res.data) : `${res.data.count} events`);
     } catch (err: any) {
-      console.error(`Count failed: ${err.message}`);
+      console.error(clrError(`Count failed: ${err.message}`));
       process.exit(1);
     }
   });

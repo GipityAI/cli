@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolve } from 'path';
 import { pushFile } from '../sync.js';
+import { error as clrError } from '../colors.js';
 
 export const pushCommand = new Command('push')
   .description('Push a single file to Gipity')
@@ -29,7 +30,7 @@ export const pushCommand = new Command('push')
       }
     } catch (err: any) {
       if (!opts.quiet) {
-        console.error(`Push failed: ${err.message}`);
+        console.error(clrError(`Push failed: ${err.message}`));
       }
       process.exit(1);
     }

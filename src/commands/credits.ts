@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { get } from '../api.js';
+import { error as clrError, brand, muted } from '../colors.js';
 
 interface BalanceData {
   totalCredits: number;
@@ -23,16 +24,16 @@ export const creditsCommand = new Command('credits')
       if (opts.json) {
         console.log(JSON.stringify(res.data));
       } else {
-        console.log(`Credits: ${res.data.totalCredits.toLocaleString()}`);
+        console.log(`Credits: ${brand(res.data.totalCredits.toLocaleString())}`);
         if (res.data.balances.length > 0) {
           for (const b of res.data.balances) {
             const exp = new Date(b.expiresAt).toLocaleDateString();
-            console.log(`  ${b.source}: ${b.credits.toLocaleString()}  expires ${exp}`);
+            console.log(`  ${b.source}: ${b.credits.toLocaleString()}  ${muted(`expires ${exp}`)}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`Failed: ${err.message}`);
+      console.error(clrError(`Failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -60,7 +61,7 @@ creditsCommand
         }
       }
     } catch (err: any) {
-      console.error(`Usage failed: ${err.message}`);
+      console.error(clrError(`Usage failed: ${err.message}`));
       process.exit(1);
     }
   });

@@ -2,10 +2,11 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
 import { syncDown } from '../sync.js';
+import { error as clrError, muted } from '../colors.js';
 
 const FILE_TOOLS = new Set([
   'file_write', 'file_edit', 'file_delete', 'file_copy', 'file_move',
-  'file_rename', 'dir_create', 'dir_delete',
+  'file_rename', 'dir_create', 'dir_delete', 'browser',
 ]);
 
 export const chatCommand = new Command('chat')
@@ -54,23 +55,34 @@ export const chatCommand = new Command('chat')
       // Check if file tools were used — auto sync-down
       const fileToolsUsed = res.data.toolsUsed?.filter(t => FILE_TOOLS.has(t.toolName)) || [];
       let syncSummary = '';
+      let syncChanges: { path: string; type: string; size?: number }[] = [];
 
       if (fileToolsUsed.length > 0) {
         const syncResult = await syncDown();
         if (syncResult.pulled > 0) {
           syncSummary = `\nPulled ${syncResult.pulled} file${syncResult.pulled > 1 ? 's' : ''}:\n${syncResult.summary}`;
         }
+        syncChanges = syncResult.changes.map(c => ({
+          path: c.path,
+          type: c.type,
+          ...(c.remoteSize != null ? { size: c.remoteSize } : {}),
+        }));
       }
 
       if (opts.json) {
         console.log(JSON.stringify({
           content: res.data.content,
-          toolsUsed: res.data.toolsUsed?.map(t => t.toolName) || [],
+          toolsUsed: res.data.toolsUsed?.map(t => ({
+            tool: t.toolName,
+            success: t.success,
+            output: t.outputPreview || '',
+          })) || [],
           model: res.data.model,
           tokens: res.data.inputTokens + res.data.outputTokens,
           cost: res.data.costUsd,
           conversationGuid: res.data.conversationGuid,
-          filesSynced: fileToolsUsed.length > 0,
+          filesSynced: syncChanges.length > 0,
+          syncedFiles: syncChanges,
         }));
       } else {
         // Show agent response
@@ -79,7 +91,7 @@ export const chatCommand = new Command('chat')
         // Show tools used
         if (res.data.toolsUsed && res.data.toolsUsed.length > 0) {
           const toolNames = [...new Set(res.data.toolsUsed.map(t => t.toolName))];
-          console.log(`\nTools: ${toolNames.join(', ')}`);
+          console.log(`\n${muted('Tools:')} ${toolNames.join(', ')}`);
         }
 
         // Show sync results
@@ -88,7 +100,7 @@ export const chatCommand = new Command('chat')
         }
       }
     } catch (err: any) {
-      console.error(`Chat failed: ${err.message}`);
+      console.error(clrError(`Chat failed: ${err.message}`));
       process.exit(1);
     }
   });

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, post, sendMessage } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError } from '../colors.js';
 
 interface DatabaseEntry {
   friendlyName: string;
@@ -25,7 +26,7 @@ dbCommand
       if (!dbName) {
         const listRes = await get<{ data: DatabaseEntry[] }>(`/projects/${config.projectGuid}/databases`);
         if (listRes.data.length === 0) {
-          console.error('No databases found. Create one first: gipity db create <name>');
+          console.error(clrError('No databases found. Create one first: gipity db create <name>'));
           process.exit(1);
         }
         dbName = listRes.data[0].friendlyName;
@@ -56,7 +57,7 @@ dbCommand
         }
       }
     } catch (err: any) {
-      console.error(`Query failed: ${err.message}`);
+      console.error(clrError(`Query failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -82,7 +83,7 @@ dbCommand
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -102,7 +103,7 @@ dbCommand
         console.log(response);
       }
     } catch (err: any) {
-      console.error(`Create failed: ${err.message}`);
+      console.error(clrError(`Create failed: ${err.message}`));
       process.exit(1);
     }
   });

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, post, del } from '../api.js';
 import { requireConfig } from '../config.js';
+import { error as clrError } from '../colors.js';
 
 export const rbacCommand = new Command('rbac')
   .description('Manage RBAC policies');
@@ -28,7 +29,7 @@ rbacCommand
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -57,7 +58,7 @@ rbacCommand
       const res = await post<{ data: any }>(`/projects/${config.projectGuid}/rbac`, body);
       console.log(opts.json ? JSON.stringify(res.data) : 'Policy created.');
     } catch (err: any) {
-      console.error(`Create failed: ${err.message}`);
+      console.error(clrError(`Create failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -77,7 +78,7 @@ rbacCommand
       });
       console.log('Policy deleted.');
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });

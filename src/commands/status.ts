@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { getAuth, getTimeRemaining } from '../auth.js';
 import { getConfig } from '../config.js';
+import { brand, success, warning, muted, error as clrError } from '../colors.js';
 
 export const statusCommand = new Command('status')
   .description('Show project and auth status')
@@ -27,17 +28,17 @@ export const statusCommand = new Command('status')
     }
 
     if (!config) {
-      console.log('Not a Gipity project. Run: gipity init');
+      console.log(warning('Not a Gipity project. Run: gipity init'));
     } else {
-      console.log(`Project: ${config.projectSlug} (${config.projectGuid})`);
-      console.log(`Account: ${config.accountSlug}`);
-      console.log(`API: ${config.apiBase}`);
-      if (config.agentGuid) console.log(`Agent: ${config.agentGuid}`);
+      console.log(`${muted('Project:')} ${brand(config.projectSlug)} ${muted(`(${config.projectGuid})`)}`);
+      console.log(`${muted('Account:')} ${config.accountSlug}`);
+      console.log(`${muted('API:')} ${config.apiBase}`);
+      if (config.agentGuid) console.log(`${muted('Agent:')} ${config.agentGuid}`);
     }
 
     if (!auth) {
-      console.log('Auth: not logged in. Run: gipity login');
+      console.log(`${muted('Auth:')} ${warning('not logged in. Run: gipity login')}`);
     } else {
-      console.log(`Auth: ${auth.email} (${getTimeRemaining()})`);
+      console.log(`${muted('Auth:')} ${success(auth.email)} ${muted(`(${getTimeRemaining()})`)}`);
     }
   });

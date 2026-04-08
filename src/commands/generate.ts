@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { writeFileSync } from 'fs';
+import { error as clrError, success, muted, info } from '../colors.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
 interface GenerateResult {
@@ -67,11 +68,11 @@ Examples:
         console.log(JSON.stringify({ ...result, saved: filename }));
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`);
-        console.log(`Saved to ${filename}`);
+        console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
+        console.log(success(`Saved to ${filename}`));
       }
     } catch (err: any) {
-      console.error(`Image generation failed: ${err.message}`);
+      console.error(clrError(`Image generation failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -105,7 +106,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const config = requireConfig();
-      console.log('Generating video (this may take 30-120 seconds)...');
+      console.log(info('Generating video (this may take 30-120 seconds)...'));
 
       const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/video`, {
         prompt,
@@ -121,11 +122,11 @@ Examples:
         console.log(JSON.stringify({ ...result, saved: filename }));
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`);
-        console.log(`Saved to ${filename}`);
+        console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
+        console.log(success(`Saved to ${filename}`));
       }
     } catch (err: any) {
-      console.error(`Video generation failed: ${err.message}`);
+      console.error(clrError(`Video generation failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -161,7 +162,7 @@ Examples:
       let speakers;
       if (opts.speakers) {
         try { speakers = JSON.parse(opts.speakers); }
-        catch { console.error('Invalid --speakers JSON'); process.exit(1); }
+        catch { console.error(clrError('Invalid --speakers JSON')); process.exit(1); }
       }
 
       const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/speech`, {
@@ -179,11 +180,11 @@ Examples:
         console.log(JSON.stringify({ ...result, saved: filename }));
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`Generated with ${result.provider} (${sizeKb}KB)`);
-        console.log(`Saved to ${filename}`);
+        console.log(`${muted(`Generated with ${result.provider} (${sizeKb}KB)`)}`);
+        console.log(success(`Saved to ${filename}`));
       }
     } catch (err: any) {
-      console.error(`Speech generation failed: ${err.message}`);
+      console.error(clrError(`Speech generation failed: ${err.message}`));
       process.exit(1);
     }
   });

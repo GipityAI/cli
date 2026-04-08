@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { requireConfig } from '../config.js';
+import { bold, error as clrError, muted } from '../colors.js';
 
 export const recordsCommand = new Command('records')
   .description('Query and manage Records API');
@@ -20,11 +21,11 @@ recordsCommand
         console.log('No tables configured for Records API.');
       } else {
         for (const t of res.data) {
-          console.log(`${t.table_name}  ${t.auth_level}  pk=${t.primary_key_column}  db=${t.database_name}`);
+          console.log(`${bold(t.table_name)}  ${muted(t.auth_level)}  ${muted(`pk=${t.primary_key_column}`)}  ${muted(`db=${t.database_name}`)}`);
         }
       }
     } catch (err: any) {
-      console.error(`List failed: ${err.message}`);
+      console.error(clrError(`List failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -61,7 +62,7 @@ recordsCommand
         }
       }
     } catch (err: any) {
-      console.error(`Query failed: ${err.message}`);
+      console.error(clrError(`Query failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -76,7 +77,7 @@ recordsCommand
       const res = await get<{ data: any }>(`/projects/${config.projectGuid}/records/${table}/${id}`);
       console.log(opts.json ? JSON.stringify(res.data) : JSON.stringify(res.data, null, 2));
     } catch (err: any) {
-      console.error(`Get failed: ${err.message}`);
+      console.error(clrError(`Get failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -93,7 +94,7 @@ recordsCommand
       const res = await post<{ data: any }>(`/projects/${config.projectGuid}/records/${table}`, data);
       console.log(opts.json ? JSON.stringify(res.data) : `Created: ${JSON.stringify(res.data)}`);
     } catch (err: any) {
-      console.error(`Create failed: ${err.message}`);
+      console.error(clrError(`Create failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -110,7 +111,7 @@ recordsCommand
       const res = await put<{ data: any }>(`/projects/${config.projectGuid}/records/${table}/${id}`, data);
       console.log(opts.json ? JSON.stringify(res.data) : `Updated: ${JSON.stringify(res.data)}`);
     } catch (err: any) {
-      console.error(`Update failed: ${err.message}`);
+      console.error(clrError(`Update failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -124,7 +125,7 @@ recordsCommand
       await del(`/projects/${config.projectGuid}/records/${table}/${id}`);
       console.log('Deleted.');
     } catch (err: any) {
-      console.error(`Delete failed: ${err.message}`);
+      console.error(clrError(`Delete failed: ${err.message}`));
       process.exit(1);
     }
   });

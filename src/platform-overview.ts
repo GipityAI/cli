@@ -49,4 +49,6 @@ Use the browser tool to verify deploys when it matters — first deploy, structu
 
 To verify: \`browser action=open url=<deployed-url>\` — waits for async modules, captures console errors automatically. Check output for \`[Console errors captured after page load]\`. Use \`browser action=screenshot\` to confirm visual correctness.
 
-**Debugging in production:** Add \`console.error()\` calls to app code for diagnostics, redeploy, then use \`browser action=console\` to read the output. Remove debug logging when done.`;
+**Debugging in production:** Add \`console.error()\` calls to app code for diagnostics, redeploy, then use \`browser action=console\` to read the output. Remove debug logging when done.
+
+**Screenshots via \`gipity chat\`**: For 3D games and pages with async rendering (WebGL, canvas, dynamic content), tell the agent to wait a few seconds after opening before capturing so the scene renders. The saved filename may differ from what you requested (collision-free naming). Always check the tool output for the actual saved path.`;

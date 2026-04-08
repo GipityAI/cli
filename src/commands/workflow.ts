@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { get, post, put } from '../api.js';
 import { requireConfig } from '../config.js';
+import { success, error as clrError, muted, bold } from '../colors.js';
 
 interface WorkflowData {
   short_guid: string;
@@ -33,15 +34,15 @@ export const workflowCommand = new Command('workflow')
           console.log('No workflows.');
         } else {
           for (const w of res.data) {
-            const status = w.is_active ? 'on' : 'off';
-            const cron = w.cron_expression ? `  cron: ${w.cron_expression}` : '';
-            console.log(`${w.name}  [${status}]  ${w.trigger_type}${cron}`);
-            if (w.description) console.log(`  ${w.description}`);
+            const statusText = w.is_active ? success('on') : clrError('off');
+            const cron = w.cron_expression ? `  ${muted(`cron: ${w.cron_expression}`)}` : '';
+            console.log(`${bold(w.name)}  [${statusText}]  ${muted(w.trigger_type)}${cron}`);
+            if (w.description) console.log(`  ${muted(w.description)}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`Failed: ${err.message}`);
+      console.error(clrError(`Failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -71,7 +72,7 @@ workflowCommand
         }
       }
     } catch (err: any) {
-      console.error(`Info failed: ${err.message}`);
+      console.error(clrError(`Info failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -90,7 +91,7 @@ workflowCommand
         console.log(`Triggered "${wf.name}".`);
       }
     } catch (err: any) {
-      console.error(`Run failed: ${err.message}`);
+      console.error(clrError(`Run failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -113,12 +114,13 @@ workflowCommand
             const dur = r.completed_at
               ? `${((new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000).toFixed(1)}s`
               : 'running';
-            console.log(`${r.short_guid}  ${r.status}  ${dur}  ${r.total_tokens} tokens  ${new Date(r.started_at).toLocaleString()}`);
+            const statusColor = r.status === 'completed' ? success : r.status === 'failed' ? clrError : muted;
+            console.log(`${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${r.total_tokens} tokens  ${muted(new Date(r.started_at).toLocaleString())}`);
           }
         }
       }
     } catch (err: any) {
-      console.error(`Runs failed: ${err.message}`);
+      console.error(clrError(`Runs failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -137,7 +139,7 @@ workflowCommand
         console.log(`Enabled "${wf.name}".`);
       }
     } catch (err: any) {
-      console.error(`Enable failed: ${err.message}`);
+      console.error(clrError(`Enable failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -156,7 +158,7 @@ workflowCommand
         console.log(`Disabled "${wf.name}".`);
       }
     } catch (err: any) {
-      console.error(`Disable failed: ${err.message}`);
+      console.error(clrError(`Disable failed: ${err.message}`));
       process.exit(1);
     }
   });
@@ -165,7 +167,7 @@ async function resolveWorkflow(name: string): Promise<WorkflowData> {
   const res = await get<{ data: WorkflowData[] }>('/workflows');
   const match = res.data.find(w => w.name === name || w.short_guid === name);
   if (!match) {
-    console.error(`Workflow "${name}" not found.`);
+    console.error(clrError(`Workflow "${name}" not found.`));
     process.exit(1);
   }
   return match;

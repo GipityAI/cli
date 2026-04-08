@@ -14,6 +14,10 @@ cli-build:
 cli-publish:
     just cli-build && npm publish --access public
 
+# Run CLI locally without linking (compile + execute, passes args through)
+cli-dev *ARGS:
+    npm run build && node dist/index.js {{ARGS}}
+
 # Build and link CLI globally for local dev
 cli-link:
     just cli-build && npm link
