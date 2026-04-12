@@ -25,17 +25,17 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt in
 npm install -g gipity @anthropic-ai/claude-code
 
 # 3. Go
-gipity start-cc
+gipity claude
 ```
 
-That's it. `start-cc` walks you through login, project setup, and launches Claude Code.
+That's it. `claude` walks you through login, project setup, and launches Claude Code.
 
 ## Quick Start
 
 One command. It walks you through login, project setup, and drops you into Claude Code.
 
 ```bash
-gipity start-cc --dangerously-skip-permissions
+gipity claude --dangerously-skip-permissions
 ```
 
 That's it. You'll see:
@@ -111,7 +111,7 @@ gipity sync down     # Pull remote changes
 
 | Command | What it does |
 |---------|-------------|
-| `gipity start-cc` | Log in, pick a project, and launch Claude Code — all in one |
+| `gipity claude` | Log in, pick a project, and launch Claude Code — all in one |
 | `gipity login` | Authenticate with email + verification code |
 | `gipity init` | Set up a Gipity project and configure Claude Code |
 | `gipity status` | Show project, agent, and auth info |
@@ -119,23 +119,27 @@ gipity sync down     # Pull remote changes
 | `gipity push <file>` | Push a single file |
 | `gipity deploy [dev\|prod]` | Deploy your project to the web |
 | `gipity chat <message>` | Send a message to your Gipity agent |
-| `gipity db` | Query, list, or create project databases |
+| `gipity db` | Query, list, create, or drop project databases |
 | `gipity memory` | Read/write agent and project memory |
 | `gipity sandbox run <code>` | Execute code in a sandboxed container |
-| `gipity api` | Define and manage API procedures |
 | `gipity project` | List, create, switch, or delete projects |
 | `gipity agent` | List, create, switch, or configure agents |
 | `gipity workflow` | Manage and trigger automated workflows |
 | `gipity file` | Browse remote files (ls, cat, tree) |
 | `gipity scaffold [title]` | Create app structure (`--type web`, `--type 2d-game`, or `--type 3d-world`) |
-| `gipity checkpoint` | List or restore file snapshots (undo) |
+| `gipity test` | Run project tests in sandboxed containers |
 | `gipity logs fn <name>` | View function execution logs |
 | `gipity browser <url>` | Inspect a URL: console errors, performance, failed resources |
 | `gipity records` | Query and manage Records API tables |
-| `gipity fn` | Manage and call sandboxed functions |
+| `gipity fn` | Manage and call serverless functions |
 | `gipity rbac` | Manage RBAC policies |
 | `gipity audit` | Query audit logs |
 | `gipity credits` | Check your balance and usage |
+| `gipity skills` | List and manage agent skills |
+| `gipity domain` | Manage custom domains for deployed apps |
+| `gipity email` | Send emails via your agent |
+| `gipity generate` | Generate images, audio, or video via your agent |
+| `gipity logout` | Sign out and clear local tokens |
 
 Every command supports `--json` for scripted/programmatic use.
 
@@ -150,7 +154,7 @@ Your project gets a live URL at `https://dev.gipity.ai/{account}/{project}/`.
 
 ### chat
 
-Talk to your Gipity agent from the terminal. If the agent creates or modifies files, they sync back automatically.
+Talk to your Gipity agent from the terminal. If the agent creates or modifies files (including generated images, audio, video, and sandbox outputs), they sync back automatically.
 
 ```bash
 gipity chat "Build me a landing page"
@@ -160,9 +164,12 @@ gipity chat "Add a contact form" --new    # Start a fresh conversation
 ### db
 
 ```bash
-gipity db list
+gipity db list                # List databases in current project
+gipity db list --all          # List all databases across all projects (shows usage/limit)
 gipity db query "SELECT * FROM users LIMIT 10"
 gipity db query "SELECT * FROM orders" --database my_app_db
+gipity db drop old_db         # Drop a database in current project (with confirmation)
+gipity db drop old_db --project my-old-app  # Drop from another project (no cd needed)
 ```
 
 ### memory
@@ -184,16 +191,6 @@ Run code in a sandboxed Docker container with no network access. JavaScript, Pyt
 gipity sandbox run "console.log('Hello')"
 gipity sandbox run "import pandas; print(pandas.__version__)" --lang py
 gipity sandbox run "echo hello" --lang bash
-```
-
-### api
-
-Define SQL-backed API endpoints that your deployed apps can call.
-
-```bash
-gipity api list
-gipity api define get_users --sql "SELECT * FROM users" --database mydb --auth public
-gipity api define create_post --sql @queries/create_post.sql --database mydb --method write
 ```
 
 ### workflow

@@ -24,6 +24,22 @@ export function prompt(question: string): Promise<string> {
   });
 }
 
+let _autoConfirm = false;
+export function setAutoConfirm(val: boolean): void { _autoConfirm = val; }
+export function getAutoConfirm(): boolean { return _autoConfirm; }
+
+/** Ask for y/N confirmation. Skips if auto-confirm is set or `skip` is true.
+ *  Rejects safely in non-TTY environments without --yes. */
+export async function confirm(question: string, skip?: boolean): Promise<boolean> {
+  if (skip ?? _autoConfirm) return true;
+  if (!process.stdin.isTTY) {
+    console.error('Confirmation required. Use --yes to skip prompts.');
+    return false;
+  }
+  const answer = await prompt(question);
+  return answer.toLowerCase() === 'y';
+}
+
 /**
  * Single-keypress picker for 1–9 options.
  * Returns the 1-based index chosen, or `defaultIdx` on Enter.

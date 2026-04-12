@@ -82,6 +82,20 @@ describe('formatDiff', () => {
     assert.equal(formatDiff([], 'down'), 'No changes detected.');
   });
 
+  it('shows recent pull info when no changes and lastPull provided', () => {
+    const lastPull = { timestamp: new Date().toISOString(), count: 2, summary: '2 changes:' };
+    const result = formatDiff([], 'down', lastPull);
+    assert.ok(result.startsWith('Already up to date.'));
+    assert.ok(result.includes('2 files pulled'));
+  });
+
+  it('shows singular file in recent pull message', () => {
+    const lastPull = { timestamp: new Date().toISOString(), count: 1, summary: '1 change:' };
+    const result = formatDiff([], 'down', lastPull);
+    assert.ok(result.includes('1 file pulled'));
+    assert.ok(!result.includes('1 files'));
+  });
+
   it('formats changes with counts', () => {
     const changes: SyncChange[] = [
       { type: 'added', path: 'src/new.js', remoteSize: 100 },

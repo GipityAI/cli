@@ -4,11 +4,6 @@ import { requireConfig, saveConfig } from '../config.js';
 import { syncDown } from '../sync.js';
 import { error as clrError, muted } from '../colors.js';
 
-const FILE_TOOLS = new Set([
-  'file_write', 'file_edit', 'file_delete', 'file_copy', 'file_move',
-  'file_rename', 'dir_create', 'dir_delete', 'browser',
-]);
-
 export const chatCommand = new Command('chat')
   .description('Send a message to the Gipity agent')
   .argument('<message>', 'Message to send')
@@ -37,6 +32,7 @@ export const chatCommand = new Command('chat')
           inputTokens: number;
           outputTokens: number;
           costUsd: number;
+          filesChanged?: boolean;
           toolsUsed?: {
             toolCallId: string;
             toolName: string;
@@ -52,12 +48,11 @@ export const chatCommand = new Command('chat')
         saveConfig({ ...config, conversationGuid: res.data.conversationGuid });
       }
 
-      // Check if file tools were used — auto sync-down
-      const fileToolsUsed = res.data.toolsUsed?.filter(t => FILE_TOOLS.has(t.toolName)) || [];
+      // Auto sync-down when server reports file changes
       let syncSummary = '';
       let syncChanges: { path: string; type: string; size?: number }[] = [];
 
-      if (fileToolsUsed.length > 0) {
+      if (res.data.filesChanged) {
         const syncResult = await syncDown();
         if (syncResult.pulled > 0) {
           syncSummary = `\nPulled ${syncResult.pulled} file${syncResult.pulled > 1 ? 's' : ''}:\n${syncResult.summary}`;

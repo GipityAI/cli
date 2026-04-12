@@ -40,7 +40,7 @@ export const underline: StyleFn = makeStyle(4, 24);
 // Colors sourced from platform/client/src/css/styles.css and
 // platform/apps/gipitsm/src/css/tokens.css
 
-export const brand: StyleFn   = makeFg(242, 101, 34);   // Gipity orange #f26522
+export const brand: StyleFn   = makeFg(254, 166, 14);   // Gipity orange #fea60e
 export const error: StyleFn   = makeFg(239, 68, 68);    // #ef4444
 export const warning: StyleFn = makeFg(245, 158, 11);   // #f59e0b
 export const success: StyleFn = makeFg(34, 197, 94);    // #22c55e

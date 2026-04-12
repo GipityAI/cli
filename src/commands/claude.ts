@@ -1,8 +1,9 @@
 import { Command } from 'commander';
-import { join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { join, dirname, resolve } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 
 /** On Windows, spawn without shell:true needs an explicit extension (.exe or .cmd) */
 function resolveCommand(cmd: string): string {
@@ -22,13 +23,31 @@ import { syncDown, syncUp } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
 import { prompt, pickOne, decodeJwtExp } from '../utils.js';
 import { brand, bold, faint, info, success, error as clrError, muted } from '../colors.js';
+import { printBanner } from '../banner.js';
 
-const PROJECTS_ROOT = join(homedir(), 'GipityProjects');
+const __clDir = dirname(fileURLToPath(import.meta.url));
+const __clPkg = JSON.parse(readFileSync(resolve(__clDir, '../../package.json'), 'utf-8'));
+
+function getProjectsRoot(): string {
+  const settingsPath = join(homedir(), '.gipity', 'settings.json');
+  const defaultDir = join(homedir(), 'GipityProjects');
+  try {
+    if (existsSync(settingsPath)) {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      if (settings.projectsDir) return resolve(settings.projectsDir);
+    } else {
+      mkdirSync(join(homedir(), '.gipity'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ projectsDir: defaultDir }, null, 2) + '\n');
+    }
+  } catch { /* fall through */ }
+  return defaultDir;
+}
 
 interface ProjectData {
   short_guid: string;
   name: string;
   slug: string;
+  is_default?: number;
   user?: { account_slug: string };
 }
 
@@ -46,19 +65,17 @@ function suggestProjectName(existingSlugs: string[]): string {
   return `project-${Date.now().toString(36).slice(-6)}`;
 }
 
-export const startCcCommand = new Command('start-cc')
+export const claudeCommand = new Command('claude')
   .description('Log in, set up a project, and launch Claude Code')
   .option('--no-claude', 'Set up project but skip launching Claude Code')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (opts) => {
     try {
-      console.log(`\n  ${brand(bold('Welcome to Gipity'))}`);
-      console.log(`  ${faint('─────────────────')}`);
-      console.log('');
-
       // ── Step 1: Auth ──────────────────────────────────────────────────
       let auth = getAuth();
+
+      printBanner({ version: __clPkg.version, email: auth?.email, cwd: process.cwd() });
 
       if (auth) {
         console.log(`  Logged in as ${auth.email}`);
@@ -140,7 +157,7 @@ export const startCcCommand = new Command('start-cc')
         }
 
         // Resolve project directory under ~/GipityProjects/{slug}
-        const projectDir = join(PROJECTS_ROOT, project.slug);
+        const projectDir = join(getProjectsRoot(), project.slug);
 
         mkdirSync(projectDir, { recursive: true });
         process.chdir(projectDir);
@@ -184,25 +201,31 @@ export const startCcCommand = new Command('start-cc')
           console.log('  Could not sync files (will retry on next prompt).');
         }
 
-        // ── Step 2b: Project type (new projects only) ───────────────────
+        // ── Step 2b: What do you want to build? (new projects only) ────
         if (isNewProject) {
-          const projectType = await pickProjectType();
-          initialPrompt = projectType.initialPrompt;
+          console.log('');
+          console.log(`  ${bold('What would you like to build?')}\n`);
+          console.log(`  ${muted('Examples: a landing page, a Pac-Man game, a helpdesk app,')}`);
+          console.log(`  ${muted('an API that returns random facts, or anything you can describe.')}`);
+          console.log(`  ${muted('Press Enter for a blank project.')}\n`);
 
-          if (projectType.scaffoldType) {
-            console.log(`  Scaffolding ${projectType.label}...`);
-            try {
-              await post(`/projects/${project.short_guid}/scaffold`, {
-                title: project.name,
-                type: projectType.scaffoldType,
-              });
-              const scaffoldSync = await syncDown();
-              if (scaffoldSync.pulled > 0) {
-                console.log(`  Created ${scaffoldSync.pulled} starter file${scaffoldSync.pulled > 1 ? 's' : ''}.`);
-              }
-            } catch {
-              console.log('  Scaffolding failed — starting with empty project.');
-            }
+          const buildIdea = (await prompt('  → ')).trim();
+
+          const projectContext = [
+            `You are starting a new project called "${project.name}" on Gipity — an AI agent platform with cloud hosting, databases, serverless functions, sandboxed code execution, image generation, TTS, and web search.`,
+            ``,
+            `Project directory: ${process.cwd()}`,
+            `Deploy URL: https://dev.gipity.ai/${accountSlug}/${project.slug}/`,
+            ``,
+            `Read CLAUDE.md for full platform docs, CLI commands, and scaffold types.`,
+            `Key commands: gipity scaffold --type <web|2d-game|3d-world|app-itsm|api>, gipity deploy dev, gipity test, gipity fn call <name> [body].`,
+            `Files auto-sync to the cloud on every save. Deploy gives a live URL instantly.`,
+          ].join('\n');
+
+          if (buildIdea) {
+            initialPrompt = `${projectContext}\n\nThe user's first message: "${buildIdea}"\n\nGet started on their request. Scaffold if appropriate, or build from scratch — use your judgment. Deploy to dev when you have something working.`;
+          } else {
+            initialPrompt = `${projectContext}\n\nThe user started a blank project with no specific request. Briefly introduce yourself, highlight a few key capabilities, and ask what they want to build.`;
           }
         }
 
@@ -229,18 +252,18 @@ export const startCcCommand = new Command('start-cc')
         return;
       }
 
-      // Pass through all unknown args to claude (everything after 'start-cc')
-      const startCcIdx = process.argv.indexOf('start-cc');
+      // Pass through all unknown args to claude (everything after 'claude')
+      const claudeIdx = process.argv.indexOf('claude');
       const knownFlags = ['--no-claude', '--api-base'];
-      const claudeArgs = process.argv.slice(startCcIdx + 1).filter(arg => {
+      const claudeArgs = process.argv.slice(claudeIdx + 1).filter(arg => {
         for (const flag of knownFlags) {
           if (arg === flag) return false;
           if (arg.startsWith('--api-base=')) return false;
         }
         return true;
       });
-      // Filter out the value after --api-base if space-separated and after start-cc
-      const apiBaseIdx = process.argv.indexOf('--api-base', startCcIdx);
+      // Filter out the value after --api-base if space-separated and after claude
+      const apiBaseIdx = process.argv.indexOf('--api-base', claudeIdx);
       if (apiBaseIdx !== -1) {
         const valueIdx = claudeArgs.indexOf(process.argv[apiBaseIdx + 1]);
         if (valueIdx !== -1) claudeArgs.splice(valueIdx, 1);
@@ -269,8 +292,9 @@ async function pickOrCreateProject(
   projects: ProjectData[],
   existingSlugs: string[],
 ): Promise<{ project: ProjectData; isNew: boolean }> {
-  const recent = projects.slice(0, 7);
-  const hasMore = projects.length > 7;
+  const filtered = projects.filter(p => !p.is_default);
+  const recent = filtered.slice(0, 7);
+  const hasMore = filtered.length > 7;
 
   console.log(`  ${bold('Choose project to open:')}\n`);
   console.log(`    ${bold('1.')} Create new project`);
@@ -287,12 +311,13 @@ async function pickOrCreateProject(
   // Show all projects
   if (hasMore && idx === recent.length + 2) {
     console.log('');
-    console.log(`  ${bold('All projects:')}`);
-    projects.forEach((p, i) => console.log(`    ${bold(`${i + 1}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
+    console.log(`  ${bold('All projects:')}\n`);
+    console.log(`    ${bold('1.')} Create new project`);
+    filtered.forEach((p, i) => console.log(`    ${bold(`${i + 2}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
     console.log('');
-    const allChoice = await prompt(`  Choose (1-${projects.length}): `);
+    const allChoice = await prompt(`  Choose (1-${filtered.length + 1}): `);
     const allIdx = parseInt(allChoice, 10);
-    if (allIdx >= 1 && allIdx <= projects.length) return { project: projects[allIdx - 1], isNew: false };
+    if (allIdx >= 2 && allIdx <= filtered.length + 1) return { project: filtered[allIdx - 2], isNew: false };
   }
 
   // Default (Enter) or 1 = create new project
@@ -317,37 +342,3 @@ async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
   return res.data;
 }
 
-interface ProjectTypeChoice {
-  label: string;
-  scaffoldType?: string;
-  initialPrompt: string;
-}
-
-const PROJECT_TYPE_OPTIONS: ProjectTypeChoice[] = [
-  {
-    label: 'Start empty',
-    initialPrompt: 'This is a new empty project on Gipity. Briefly introduce yourself, mention that I have access to cloud hosting, databases, server-side API endpoints, sandboxed code execution, image generation, speech, and web search, and ask me what I want to build.',
-  },
-  {
-    label: 'Web app',
-    scaffoldType: 'web',
-    initialPrompt: 'This is a new web app project on Gipity. The project has been scaffolded with starter HTML/CSS/JS. Deploy it to dev so I can see it live. Then briefly introduce yourself, mention that I have access to databases, server-side API endpoints, image generation, web search, and cloud hosting, and ask me what I want to build.',
-  },
-  {
-    label: '3D World game',
-    scaffoldType: '3d-world',
-    initialPrompt: 'This is a new 3D World game on Gipity. Deploy it to dev so I can play it right away. Then briefly introduce yourself, mention that I can customize the world, objects, physics, game logic, and multiplayer, and ask me what kind of game I want to make.',
-  },
-];
-
-async function pickProjectType(): Promise<ProjectTypeChoice> {
-  console.log('');
-  console.log(`  ${bold('What kind of project?')}\n`);
-  console.log(`    ${bold('1.')} Start empty. ${muted('Build everything from scratch.')}`);
-  console.log(`    ${bold('2.')} Web app or game. ${muted('Scaffolds basic HTML/CSS/JS starter files.')}`);
-  console.log(`    ${bold('3.')} 3D World game. ${muted('Scaffolds a playable starter world.')}`);
-  console.log('');
-
-  const idx = await pickOne('Choose', 3, 1);
-  return PROJECT_TYPE_OPTIONS[idx - 1];
-}

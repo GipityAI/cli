@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import { get } from '../api.js';
 import { requireConfig } from '../config.js';
-import { error as clrError, muted } from '../colors.js';
+import { muted } from '../colors.js';
+import { run, printList } from '../helpers/index.js';
 
 export const auditCommand = new Command('audit')
   .description('Query audit logs');
@@ -15,36 +16,25 @@ auditCommand
   .option('--since <date>', 'Start date (ISO format)')
   .option('--limit <n>', 'Max entries', '20')
   .option('--json', 'Output as JSON')
-  .action(async (opts) => {
-    try {
-      const config = requireConfig();
-      const params = new URLSearchParams();
-      if (opts.type) params.set('type', opts.type);
-      if (opts.entity) params.set('entity_type', opts.entity);
-      if (opts.action) params.set('action', opts.action);
-      if (opts.since) params.set('since', opts.since);
-      params.set('limit', opts.limit);
+  .action((opts) => run('List', async () => {
+    const config = requireConfig();
+    const params = new URLSearchParams();
+    if (opts.type) params.set('type', opts.type);
+    if (opts.entity) params.set('entity_type', opts.entity);
+    if (opts.action) params.set('action', opts.action);
+    if (opts.since) params.set('since', opts.since);
+    params.set('limit', opts.limit);
 
-      const res = await get<{ data: any[] }>(
-        `/projects/${config.projectGuid}/audit?${params}`,
-      );
+    const res = await get<{ data: any[] }>(
+      `/projects/${config.projectGuid}/audit?${params}`,
+    );
 
-      if (opts.json) {
-        console.log(JSON.stringify(res.data));
-      } else if (res.data.length === 0) {
-        console.log('No audit events found.');
-      } else {
-        for (const e of res.data) {
-          const ts = new Date(e.created_at).toLocaleString();
-          const entity = e.entity_type ? `${e.entity_type}${e.entity_id ? ':' + e.entity_id : ''}` : '';
-          console.log(`${muted(ts)}  ${e.event_type}  ${e.action}  ${muted(entity)}`);
-        }
-      }
-    } catch (err: any) {
-      console.error(clrError(`List failed: ${err.message}`));
-      process.exit(1);
-    }
-  });
+    printList(res.data, opts, 'No audit events found.', e => {
+      const ts = new Date(e.created_at).toLocaleString();
+      const entity = e.entity_type ? `${e.entity_type}${e.entity_id ? ':' + e.entity_id : ''}` : '';
+      return `${muted(ts)}  ${e.event_type}  ${e.action}  ${muted(entity)}`;
+    });
+  }));
 
 auditCommand
   .command('count')
@@ -52,20 +42,15 @@ auditCommand
   .option('--type <type>', 'Filter by event type')
   .option('--entity <type>', 'Filter by entity type')
   .option('--json', 'Output as JSON')
-  .action(async (opts) => {
-    try {
-      const config = requireConfig();
-      const params = new URLSearchParams();
-      if (opts.type) params.set('type', opts.type);
-      if (opts.entity) params.set('entity_type', opts.entity);
+  .action((opts) => run('Count', async () => {
+    const config = requireConfig();
+    const params = new URLSearchParams();
+    if (opts.type) params.set('type', opts.type);
+    if (opts.entity) params.set('entity_type', opts.entity);
 
-      const res = await get<{ data: { count: number } }>(
-        `/projects/${config.projectGuid}/audit/count?${params}`,
-      );
+    const res = await get<{ data: { count: number } }>(
+      `/projects/${config.projectGuid}/audit/count?${params}`,
+    );
 
-      console.log(opts.json ? JSON.stringify(res.data) : `${res.data.count} events`);
-    } catch (err: any) {
-      console.error(clrError(`Count failed: ${err.message}`));
-      process.exit(1);
-    }
-  });
+    console.log(opts.json ? JSON.stringify(res.data) : `${res.data.count} events`);
+  }));

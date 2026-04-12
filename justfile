@@ -20,7 +20,7 @@ cli-dev *ARGS:
 
 # Build and link CLI globally for local dev
 cli-link:
-    just cli-build && npm link
+    npm unlink -g 2>/dev/null; just cli-build && npm link
 
 # Unlink CLI global dev install
 cli-unlink:

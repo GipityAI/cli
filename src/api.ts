@@ -98,6 +98,25 @@ export async function download(path: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** Download a response as a Node.js Readable stream */
+export async function downloadStream(path: string): Promise<import('stream').Readable> {
+  const { Readable } = await import('stream');
+  await refreshTokenIfNeeded();
+  const auth = getAuth();
+  if (!auth) throw new Error('Not authenticated. Run: gipity login');
+
+  const url = `${baseUrl()}${path}`;
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${auth.accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new ApiError(res.status, 'DOWNLOAD_ERROR', `Download failed: ${res.statusText}`);
+  }
+
+  return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
+}
+
 /** Unauthenticated request (for login/verify) */
 export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   const url = `${baseUrl()}${path}`;

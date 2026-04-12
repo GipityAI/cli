@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync } from 'fs';
 import { join, relative, dirname } from 'path';
-import { get, put, del, download } from './api.js';
+import { get, put, del, downloadStream } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
-import { isBinaryFile, formatSize, prompt } from './utils.js';
+import { isBinaryFile, formatSize, formatAge, prompt, getAutoConfirm } from './utils.js';
+import * as tar from 'tar-stream';
 
 interface RemoteFile {
   path: string;
@@ -15,6 +16,7 @@ interface RemoteFile {
 interface SyncState {
   lastSync: string;
   files: Record<string, { size: number; modified: string }>;
+  lastPull?: { timestamp: string; count: number; summary: string };
 }
 
 export interface SyncChange {
@@ -110,6 +112,28 @@ async function fetchManifest(projectGuid: string, prefix?: string): Promise<Remo
   return res.data;
 }
 
+/** Download all remote files as a tar stream, returning path → Buffer map */
+async function downloadAllFiles(projectGuid: string): Promise<Map<string, Buffer>> {
+  const stream = await downloadStream(`/projects/${projectGuid}/files/tree?content=tar`);
+  const extract = tar.extract();
+  const files = new Map<string, Buffer>();
+
+  return new Promise((resolve, reject) => {
+    extract.on('entry', (header, entryStream, next) => {
+      const chunks: Buffer[] = [];
+      entryStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      entryStream.on('end', () => {
+        files.set(header.name, Buffer.concat(chunks));
+        next();
+      });
+      entryStream.resume();
+    });
+    extract.on('finish', () => resolve(files));
+    extract.on('error', reject);
+    stream.pipe(extract);
+  });
+}
+
 /** Compare remote manifest against local files, detect changes */
 export function diffManifest(
   remoteFiles: RemoteFile[],
@@ -161,8 +185,18 @@ export function diffManifest(
   return changes;
 }
 
-export function formatDiff(changes: SyncChange[], direction: 'down' | 'up'): string {
-  if (changes.length === 0) return 'No changes detected.';
+export function formatDiff(
+  changes: SyncChange[],
+  direction: 'down' | 'up',
+  lastPull?: { timestamp: string; count: number; summary: string },
+): string {
+  if (changes.length === 0) {
+    if (direction === 'down' && lastPull) {
+      const age = formatAge(lastPull.timestamp);
+      return `Already up to date. (${lastPull.count} file${lastPull.count > 1 ? 's' : ''} pulled ${age})`;
+    }
+    return 'No changes detected.';
+  }
 
   const label = direction === 'down' ? 'remotely' : 'locally';
   const lines = [`${changes.length} change${changes.length > 1 ? 's' : ''}:`];
@@ -186,6 +220,7 @@ export function formatDiff(changes: SyncChange[], direction: 'down' | 'up'): str
 
 /** Confirm file deletions with the user. Returns true if deletions should proceed. */
 async function confirmFileDeletions(deletions: SyncChange[]): Promise<boolean> {
+  if (getAutoConfirm()) return true;
   const count = deletions.length;
 
   if (count <= 10) {
@@ -238,28 +273,77 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
     }
   }
 
-  const remoteByPath = new Map(remoteFiles.filter(f => f.type === 'file').map(f => [f.path, f]));
-
   let pulled = 0;
   let deleted = 0;
-  for (const change of changes) {
-    if (change.type === 'deleted') {
-      if (!executeDeletions) continue;
-      const fullPath = join(root, change.path);
-      try { unlinkSync(fullPath); } catch { /* already gone */ }
-      deleted++;
-      pulled++;
-      continue;
-    }
 
-    // added or modified — download raw bytes from VFS
-    const remoteFile = remoteByPath.get(change.path);
-    if (!remoteFile) continue;
-    const bytes = await download(`/files/vfs/${remoteFile.guid}`);
+  // Handle deletions
+  for (const change of changes) {
+    if (change.type !== 'deleted') continue;
+    if (!executeDeletions) continue;
     const fullPath = join(root, change.path);
-    mkdirSync(dirname(fullPath), { recursive: true });
-    writeFileSync(fullPath, bytes);
+    try { unlinkSync(fullPath); } catch { /* already gone */ }
+    deleted++;
     pulled++;
+  }
+
+  // Download all added/modified files in a single tar request
+  const downloads = changes.filter(c => c.type !== 'deleted');
+  if (downloads.length > 0) {
+    const allFiles = await downloadAllFiles(config.projectGuid);
+    for (const change of downloads) {
+      const bytes = allFiles.get(change.path);
+      if (!bytes) continue;
+      const fullPath = join(root, change.path);
+      mkdirSync(dirname(fullPath), { recursive: true });
+      writeFileSync(fullPath, bytes);
+      pulled++;
+    }
+  }
+
+  // Delete local directories that no longer exist on the remote (deepest first).
+  // The tree manifest only returns files (not dirs), so derive dir paths from file paths.
+  if (executeDeletions) {
+    const remoteDirSet = new Set<string>();
+    for (const rf of remoteFiles) {
+      let p = rf.path;
+      while (true) {
+        const slash = p.lastIndexOf('/');
+        if (slash <= 0) break;
+        p = p.substring(0, slash);
+        if (remoteDirSet.has(p)) break;
+        remoteDirSet.add(p);
+      }
+    }
+    const localDirs: string[] = [];
+
+    function collectDirs(dir: string) {
+      let entries;
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const fullPath = join(dir, entry.name);
+        const relPath = relative(root, fullPath).replace(/\\/g, '/');
+        if (shouldIgnore(relPath, config.ignore)) continue;
+        localDirs.push(relPath);
+        collectDirs(fullPath);
+      }
+    }
+    collectDirs(root);
+
+    // Sort deepest first so children are deleted before parents
+    localDirs.sort((a, b) => b.split('/').length - a.split('/').length);
+
+    for (const dirPath of localDirs) {
+      if (!remoteDirSet.has(dirPath)) {
+        const fullPath = join(root, dirPath);
+        try {
+          rmdirSync(fullPath);  // only succeeds if empty
+          deleted++;
+        } catch {
+          // not empty or already gone — skip
+        }
+      }
+    }
   }
 
   // Update sync state
@@ -268,9 +352,17 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
   for (const [path, info] of updatedLocal) {
     stateFiles[path] = info;
   }
-  saveSyncState({ lastSync: new Date().toISOString(), files: stateFiles });
+  const now = new Date().toISOString();
+  const previousState = loadSyncState();
+  const state: SyncState = { lastSync: now, files: stateFiles };
+  if (pulled > 0) {
+    state.lastPull = { timestamp: now, count: pulled, summary: formatDiff(changes, 'down') };
+  } else if (previousState.lastPull) {
+    state.lastPull = previousState.lastPull;
+  }
+  saveSyncState(state);
 
-  const summary = formatDiff(changes, 'down');
+  const summary = formatDiff(changes, 'down', state.lastPull);
   return { changes, pulled, pushed: 0, deleted, skippedDeletions, summary };
 }
 
@@ -304,16 +396,25 @@ export async function syncUp(): Promise<SyncResult> {
     pushed++;
   }
 
-  // Delete remote directories that no longer exist locally (shallowest first, recursive)
+  // Delete remote directories that no longer exist locally (shallowest first, recursive).
+  // The tree manifest only returns files (not dirs), so derive dir paths from file paths.
   let deleted = 0;
-  const remoteDirs = remoteFiles
-    .filter(f => f.type === 'dir')
-    .map(f => f.path)
-    .sort((a, b) => a.length - b.length);
+  const remoteDirPaths = new Set<string>();
+  for (const rf of remoteFiles) {
+    let p = rf.path;
+    while (true) {
+      const slash = p.lastIndexOf('/');
+      if (slash <= 0) break;
+      p = p.substring(0, slash);
+      if (remoteDirPaths.has(p)) break;
+      remoteDirPaths.add(p);
+    }
+  }
 
+  // Sort shallowest first so recursive deletes cover children
+  const sortedDirs = [...remoteDirPaths].sort((a, b) => a.length - b.length);
   const deletedDirs = new Set<string>();
-  for (const dirPath of remoteDirs) {
-    // Skip if a parent was already deleted (recursive delete covers children)
+  for (const dirPath of sortedDirs) {
     if ([...deletedDirs].some(d => dirPath.startsWith(d + '/'))) continue;
     const localPath = join(root, dirPath);
     if (!existsSync(localPath)) {
@@ -336,7 +437,7 @@ export async function syncUp(): Promise<SyncResult> {
   }
   saveSyncState({ lastSync: new Date().toISOString(), files: stateFiles });
 
-  const summary = formatDiff(changes.filter(c => c.type !== 'deleted'), 'up');
+  const summary = formatDiff(changes, 'up');
   return { changes, pushed, pulled: 0, deleted, skippedDeletions: 0, summary };
 }
 
