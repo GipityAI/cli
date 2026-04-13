@@ -1,6 +1,6 @@
 {
   "name": "gipity",
-  "version": "1.0.153",
+  "version": "1.0.156",
   "description": "Connect AI coding agents like Claude Code to the Gipity platform",
   "bin": {
     "gipity": "./dist/index.js",

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { join, dirname, resolve } from 'path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -16,8 +16,8 @@ function resolveCommand(cmd: string): string {
     return `${cmd}.cmd`;
   }
 }
-import { getAuth, saveAuth } from '../auth.js';
-import { get, post, publicPost } from '../api.js';
+import { getAuth, saveAuth, clearAuth } from '../auth.js';
+import { get, post, publicPost, ApiError } from '../api.js';
 import { getConfig, saveConfig, clearConfigCache, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
@@ -54,6 +54,46 @@ interface ProjectData {
 interface AgentData {
   short_guid: string;
   name: string;
+}
+
+function listProjectFiles(dir: string, limit = 40): string {
+  const skip = new Set(['node_modules', '.git', '.gipity', '.claude']);
+  const entries: string[] = [];
+  try {
+    for (const name of readdirSync(dir).sort()) {
+      if (skip.has(name) || name.startsWith('.')) continue;
+      try {
+        const isDir = statSync(join(dir, name)).isDirectory();
+        entries.push(isDir ? `${name}/` : name);
+      } catch { /* skip */ }
+      if (entries.length >= limit) { entries.push('…'); break; }
+    }
+  } catch { /* empty */ }
+  return entries.length ? entries.join(', ') : '(empty directory)';
+}
+
+function buildExistingProjectPrompt(opts: {
+  projectName: string;
+  projectSlug: string;
+  accountSlug: string;
+  cwd: string;
+}): string {
+  const deployUrl = opts.accountSlug
+    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
+    : '(not yet deployed)';
+  return [
+    `You are resuming work on an existing Gipity project "${opts.projectName}". Gipity is an AI agent platform with cloud hosting, databases, serverless functions, sandboxed code execution, image generation, TTS, and web search.`,
+    ``,
+    `Project directory: ${opts.cwd}`,
+    `Deploy URL: ${deployUrl}`,
+    `Top-level contents: ${listProjectFiles(opts.cwd)}`,
+    ``,
+    `Read CLAUDE.md for full platform docs, CLI commands, and scaffold types.`,
+    `Key commands: gipity scaffold --type <web|2d-game|3d-world|app-itsm|api>, gipity deploy dev, gipity test, gipity fn call <name> [body].`,
+    `Files auto-sync to the cloud on every save. Deploy gives a live URL instantly.`,
+    ``,
+    `Briefly greet the user, summarize what this project appears to be (based on the file listing and any README/CLAUDE.md/gipity.yaml you can see), and ask what they want to work on next.`,
+  ].join('\n');
 }
 
 function suggestProjectName(existingSlugs: string[]): string {
@@ -119,15 +159,33 @@ export const claudeCommand = new Command('claude')
         setupClaudeHooks();
         setupClaudeMd();
         setupGitignore();
+
+        try {
+          const upResult = await syncUp();
+          if (upResult.pushed > 0) {
+            console.log(`  Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
+          }
+          const downResult = await syncDown({ confirmDeletions: true });
+          if (downResult.pulled > 0) {
+            console.log(`  Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''} from Gipity.`);
+          }
+        } catch {
+          console.log('  Could not sync files (will retry on next prompt).');
+        }
+
+        initialPrompt = buildExistingProjectPrompt({
+          projectName: existing.projectSlug,
+          projectSlug: existing.projectSlug,
+          accountSlug: existing.accountSlug,
+          cwd: process.cwd(),
+        });
       } else {
         // Fetch user's projects
         let projects: ProjectData[] = [];
-        let fetchFailed = false;
         try {
           const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
           projects = res.data;
         } catch (err: any) {
-          fetchFailed = true;
           const isConnectionError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' ||
             err?.code === 'ETIMEDOUT' || err?.cause?.code === 'ECONNREFUSED' ||
             err?.cause?.code === 'ENOTFOUND' || err?.cause?.code === 'ETIMEDOUT';
@@ -137,7 +195,14 @@ export const claudeCommand = new Command('claude')
             console.error(`  ${muted('Check your connection and try again.')}`);
             process.exit(1);
           }
-          // Non-connection error (e.g. 401) — fall through to create
+          if (err instanceof ApiError && err.statusCode === 401) {
+            clearAuth();
+            console.error(`  ${clrError('Your session expired.')}`);
+            console.error(`  ${muted('Run: gipity login')}`);
+            process.exit(1);
+          }
+          console.error(`  ${clrError(`Could not load projects: ${err?.message || err}`)}`);
+          process.exit(1);
         }
 
         const existingSlugs = projects.map(p => p.slug);
@@ -148,12 +213,9 @@ export const claudeCommand = new Command('claude')
           const result = await pickOrCreateProject(projects, existingSlugs);
           project = result.project;
           isNewProject = result.isNew;
-        } else if (!fetchFailed) {
+        } else {
           project = await createNewProject(existingSlugs);
           isNewProject = true;
-        } else {
-          console.error(`  ${clrError('Could not load projects. Please try again.')}`);
-          process.exit(1);
         }
 
         // Resolve project directory under ~/GipityProjects/{slug}
@@ -227,6 +289,13 @@ export const claudeCommand = new Command('claude')
           } else {
             initialPrompt = `${projectContext}\n\nThe user started a blank project with no specific request. Briefly introduce yourself, highlight a few key capabilities, and ask what they want to build.`;
           }
+        } else {
+          initialPrompt = buildExistingProjectPrompt({
+            projectName: project.name,
+            projectSlug: project.slug,
+            accountSlug,
+            cwd: process.cwd(),
+          });
         }
 
         setupClaudeHooks();
