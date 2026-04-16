@@ -1,17 +1,16 @@
 import { Command } from 'commander';
 import { basename } from 'path';
-import { get, post } from '../api.js';
+import { get, post, getAccountSlug } from '../api.js';
 import { saveConfig, getConfig, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
 import { getAuth } from '../auth.js';
-import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
+import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
 import { success, error as clrError, info, muted } from '../colors.js';
 
 interface ProjectData {
   short_guid: string;
   name: string;
   slug: string;
-  user?: { account_slug: string };
 }
 
 interface AgentData {
@@ -55,14 +54,10 @@ export const initCommand = new Command('init')
 
       // Search for existing project by slug
       let project: ProjectData | null = null;
-      let accountSlug = '';
 
       try {
         const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
         project = res.data.find(p => p.slug === projectSlug) || null;
-        if (project) {
-          accountSlug = project.user?.account_slug || '';
-        }
       } catch {
         // List failed — we'll create a new project
       }
@@ -74,11 +69,13 @@ export const initCommand = new Command('init')
         const res = await post<{ data: ProjectData }>('/projects', {
           name: projectName,
           slug: projectSlug,
+          autoChat: 'claude_code',
         });
         project = res.data;
-        accountSlug = project.user?.account_slug || '';
         console.log(success(`Created project "${project.name}" (${project.slug})`));
       }
+
+      const accountSlug = await getAccountSlug();
 
       // Find agent for the project
       let agentGuid = opts.agent || '';
@@ -101,7 +98,7 @@ export const initCommand = new Command('init')
         agentGuid,
         conversationGuid: null,
         apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
-        ignore: ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', 'CLAUDE.md', '*.log'],
+        ignore: [...DEFAULT_SYNC_IGNORE],
       });
 
       // 2. Sync: push local files up first, then pull any remote-only files down

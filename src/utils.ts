@@ -1,5 +1,5 @@
 import { createInterface } from 'readline';
-import { bold } from './colors.js';
+import { bold, dim } from './colors.js';
 
 /** Safely decode a JWT payload without signature validation */
 export function decodeJwtExp(token: string): number | null {
@@ -13,8 +13,16 @@ export function decodeJwtExp(token: string): number | null {
   }
 }
 
-/** Prompt the user for input on stdin */
+/** Prompt the user for input on stdin.
+ *  Fails fast if stdin is not a TTY (e.g. when spawned by the relay
+ *  daemon with `stdio: ['ignore', ...]`) — otherwise `readline` blocks
+ *  indefinitely on a closed stdin, hanging the dispatch until the web
+ *  CLI's 8-second latch gives up. Turning that into a loud error lets
+ *  the daemon ack the dispatch cleanly and surface a real message. */
 export function prompt(question: string): Promise<string> {
+  if (!process.stdin.isTTY) {
+    return Promise.reject(new Error(`prompt() called without a TTY: ${question.trim()}`));
+  }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
     rl.question(question, answer => {
@@ -24,20 +32,63 @@ export function prompt(question: string): Promise<string> {
   });
 }
 
+/** Bordered free-text prompt matching Claude Code's input box:
+ *    ─────────────
+ *    ❯
+ *    ─────────────
+ *  Returns the user's trimmed input. */
+export async function promptBoxed(): Promise<string> {
+  const cols = process.stdout.columns || 80;
+  const rule = dim('─'.repeat(Math.max(40, Math.min(cols, 140))));
+  console.log(rule);
+  const answer = await prompt('❯ ');
+  console.log(rule);
+  return answer;
+}
+
 let _autoConfirm = false;
 export function setAutoConfirm(val: boolean): void { _autoConfirm = val; }
 export function getAutoConfirm(): boolean { return _autoConfirm; }
 
-/** Ask for y/N confirmation. Skips if auto-confirm is set or `skip` is true.
- *  Rejects safely in non-TTY environments without --yes. */
-export async function confirm(question: string, skip?: boolean): Promise<boolean> {
-  if (skip ?? _autoConfirm) return true;
+/** Ask for Y/n confirmation. Single-keypress — no Enter required.
+ *
+ *  - `opts.default` controls which answer Enter / unknown-key selects. Defaults to `'no'`.
+ *  - `opts.skip` (or the global `--yes` flag) auto-returns `true`.
+ *  - Renders a `[Y/n]` or `[y/N]` hint automatically — callers should NOT append
+ *    their own y/N suffix to `question`.
+ *  - In non-TTY environments without `--yes`, returns `false` and prints a hint. */
+export async function confirm(
+  question: string,
+  opts: { default?: 'yes' | 'no'; skip?: boolean } = {},
+): Promise<boolean> {
+  const defaultYes = opts.default === 'yes';
+  if (opts.skip ?? _autoConfirm) return true;
   if (!process.stdin.isTTY) {
     console.error('Confirmation required. Use --yes to skip prompts.');
     return false;
   }
-  const answer = await prompt(question);
-  return answer.toLowerCase() === 'y';
+  const hint = defaultYes ? dim('[Y/n]') : dim('[y/N]');
+  process.stdout.write(`${question} ${hint} `);
+
+  const { stdin } = process;
+  const wasRaw = stdin.isRaw ?? false;
+  stdin.setRawMode(true);
+  stdin.resume();
+  return new Promise<boolean>(resolve => {
+    stdin.once('data', (key: Buffer) => {
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+      const ch = key.toString();
+      if (ch === '\x03') { console.log(''); process.exit(130); }
+      const k = ch.toLowerCase();
+      let answer: boolean;
+      if (k === 'y') answer = true;
+      else if (k === 'n') answer = false;
+      else answer = defaultYes; // Enter or any other key → default
+      console.log(answer ? 'y' : 'n');
+      resolve(answer);
+    });
+  });
 }
 
 /**

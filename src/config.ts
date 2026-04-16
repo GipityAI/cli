@@ -66,6 +66,83 @@ export function requireConfig(): GipityConfig {
   return config;
 }
 
+export interface ResolvedContext {
+  config: GipityConfig;
+  /** True when the config wasn't found via cwd-walk and we fell back to the user's Home project (or an explicit --project override). No local file tree to sync; commands should print a one-off banner and download artifacts to cwd. */
+  oneOff: boolean;
+}
+
+/**
+ * Resolve project context for commands that opt into the Home-fallback behavior.
+ * Order: explicit projectOverride flag → cwd-walk for .gipity.json → server's default ("Home") project.
+ * Errors clearly when not logged in or when the server has no default project for the user.
+ */
+export async function resolveProjectContext(opts?: { projectOverride?: string }): Promise<ResolvedContext> {
+  const { getAuth } = await import('./auth.js');
+  const { get, getAccountSlug } = await import('./api.js');
+  const { dim } = await import('./colors.js');
+
+  // 1. Explicit --project override always wins.
+  if (opts?.projectOverride) {
+    if (!getAuth()) {
+      console.error('Not logged in. Run: gipity login');
+      process.exit(1);
+    }
+    const target = opts.projectOverride;
+    const res = await get<{ data: Array<{ short_guid: string; slug: string; name: string }> }>('/projects?limit=200');
+    const match = res.data.find(p => p.short_guid === target || p.slug === target);
+    if (!match) {
+      console.error(`Project not found: ${target}`);
+      process.exit(1);
+    }
+    const agents = await get<{ data: Array<{ short_guid: string }> }>(`/projects/${match.short_guid}/agents`);
+    const accountSlug = await getAccountSlug();
+    console.error(dim(`→ One-off mode: targeting project "${match.slug}" (--project override).`));
+    console.error(dim(`→ Files are not synced — outputs will also be downloaded to ./ for you.`));
+    return {
+      config: {
+        projectGuid: match.short_guid,
+        projectSlug: match.slug,
+        accountSlug,
+        agentGuid: agents.data[0]?.short_guid ?? '',
+        conversationGuid: null,
+        apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+        ignore: [],
+      },
+      oneOff: true,
+    };
+  }
+
+  // 2. Standard cwd-walk.
+  const local = getConfig();
+  if (local) return { config: local, oneOff: false };
+
+  // 3. Home fallback.
+  if (!getAuth()) {
+    console.error('Not logged in. Run: gipity login');
+    process.exit(1);
+  }
+  const res = await get<{ data: { projectGuid: string; projectSlug: string; projectName: string; accountSlug: string; agentGuid: string | null } }>('/projects/default');
+  if (!res.data?.projectGuid) {
+    console.error('Could not resolve your Home project — please contact support.');
+    process.exit(1);
+  }
+  console.error(dim(`→ One-off mode: no .gipity.json in cwd, using your Home project on the server.`));
+  console.error(dim(`→ Files are not synced — outputs will also be downloaded to ./ for you.`));
+  return {
+    config: {
+      projectGuid: res.data.projectGuid,
+      projectSlug: res.data.projectSlug,
+      accountSlug: res.data.accountSlug,
+      agentGuid: res.data.agentGuid ?? '',
+      conversationGuid: null,
+      apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+      ignore: [],
+    },
+    oneOff: true,
+  };
+}
+
 export function clearConfigCache(): void {
   cached = null;
   cachedPath = null;

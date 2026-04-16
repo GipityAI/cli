@@ -117,6 +117,50 @@ export async function downloadStream(path: string): Promise<import('stream').Rea
   return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
 }
 
+/**
+ * PUT raw bytes to a presigned URL (no auth header — the URL is signed).
+ * Supports a Buffer or a Readable stream body. Returns the response ETag header
+ * (without quotes), used for multipart upload completion.
+ */
+export async function putToPresignedUrl(
+  url: string, body: Buffer | NodeJS.ReadableStream, contentLength: number, contentType?: string,
+): Promise<string> {
+  const { Readable } = await import('stream');
+  const headers: Record<string, string> = { 'Content-Length': String(contentLength) };
+  if (contentType) headers['Content-Type'] = contentType;
+
+  // Node fetch needs duplex='half' for streaming bodies; Buffer must be
+  // narrowed to Uint8Array for the BodyInit type.
+  const isStream = typeof (body as NodeJS.ReadableStream).pipe === 'function';
+  const fetchBody: BodyInit = isStream
+    ? (Readable.toWeb(body as import('stream').Readable) as unknown as ReadableStream)
+    : new Uint8Array(body as Buffer);
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers,
+    body: fetchBody,
+    ...(isStream ? ({ duplex: 'half' } as RequestInit) : {}),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(res.status, 'S3_UPLOAD', `S3 PUT failed: ${res.status} ${text.slice(0, 200)}`);
+  }
+  const etag = (res.headers.get('etag') ?? '').replace(/^"|"$/g, '');
+  return etag;
+}
+
+let accountSlugCache: string | null = null;
+
+/** Fetch the current user's account_slug, cached for the CLI process lifetime. */
+export async function getAccountSlug(): Promise<string> {
+  if (accountSlugCache !== null) return accountSlugCache;
+  const res = await get<{ data: { accountSlug: string } }>('/users/me');
+  accountSlugCache = res.data.accountSlug;
+  return accountSlugCache;
+}
+
 /** Unauthenticated request (for login/verify) */
 export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   const url = `${baseUrl()}${path}`;

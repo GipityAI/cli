@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig, saveConfig } from '../config.js';
+import { resolveProjectContext, saveConfig } from '../config.js';
 import { syncDown } from '../sync.js';
 import { error as clrError, muted } from '../colors.js';
 
@@ -11,7 +11,7 @@ export const chatCommand = new Command('chat')
   .option('--json', 'Output as JSON')
   .action(async (message: string, opts) => {
     try {
-      const config = requireConfig();
+      const { config } = await resolveProjectContext();
 
       const useExisting = config.conversationGuid && !opts.new;
 

@@ -54,7 +54,7 @@ rbacCommand
   .requiredOption('--role <role>', 'Role')
   .requiredOption('--op <operation>', 'Operation')
   .action((table: string, opts) => run('Delete', async () => {
-    if (!await confirm(`Delete RBAC policy for "${table}"? (y/N) `)) {
+    if (!await confirm(`Delete RBAC policy for "${table}"?`)) {
       console.log('Cancelled.');
       return;
     }

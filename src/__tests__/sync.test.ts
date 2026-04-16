@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffManifest, formatDiff, type SyncChange } from '../sync.js';
+import { diffManifest, formatDiff, type SyncChange, type LocalFileInfo } from '../sync.js';
 
 const remoteFiles = [
   { path: 'src/index.html', size: 500, modified: '2024-01-01', type: 'file', guid: 'f1' },
@@ -49,6 +49,70 @@ describe('diffManifest — down', () => {
       ['src/styles.css', { size: 300, modified: '2024-01-01' }],
     ]);
     const changes = diffManifest(remoteFiles, local, 'down');
+    assert.equal(changes.length, 0);
+  });
+
+  it('detects same-size-different-content via hash (the bug)', () => {
+    // Remote and local both report size=500, but content hashes differ.
+    // Size-only diff used to silently skip this; now it's caught.
+    const remote = [
+      { path: 'src/index.html', size: 500, modified: '2024-01-01', type: 'file', guid: 'f1', contentHash: 'aaa' },
+    ];
+    const local = new Map<string, LocalFileInfo>([
+      ['src/index.html', { size: 500, modified: '2024-01-02', sha256: 'bbb' }],
+    ]);
+    // No baseline → no way to decide which side changed → conflict.
+    const changes = diffManifest(remote, local, 'down');
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].type, 'conflict');
+  });
+
+  it('pulls when local matches baseline but remote diverged', () => {
+    const remote = [
+      { path: 'src/index.html', size: 500, modified: '2024-02-01', type: 'file', guid: 'f1', contentHash: 'new-hash' },
+    ];
+    const local = new Map<string, LocalFileInfo>([
+      ['src/index.html', { size: 500, modified: '2024-01-01', sha256: 'old-hash' }],
+    ]);
+    const baseline = { 'src/index.html': { size: 500, modified: '2024-01-01', sha256: 'old-hash' } };
+    const changes = diffManifest(remote, local, 'down', baseline);
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].type, 'modified');
+  });
+
+  it('skips (no-op) when remote matches baseline but local diverged — protects local edits', () => {
+    const remote = [
+      { path: 'src/index.html', size: 500, modified: '2024-01-01', type: 'file', guid: 'f1', contentHash: 'base-hash' },
+    ];
+    const local = new Map<string, LocalFileInfo>([
+      ['src/index.html', { size: 500, modified: '2024-01-05', sha256: 'local-edit' }],
+    ]);
+    const baseline = { 'src/index.html': { size: 500, modified: '2024-01-01', sha256: 'base-hash' } };
+    const changes = diffManifest(remote, local, 'down', baseline);
+    assert.equal(changes.length, 0);
+  });
+
+  it('flags conflict when both sides diverged from baseline', () => {
+    const remote = [
+      { path: 'src/index.html', size: 500, modified: '2024-02-01', type: 'file', guid: 'f1', contentHash: 'remote-new' },
+    ];
+    const local = new Map<string, LocalFileInfo>([
+      ['src/index.html', { size: 500, modified: '2024-02-02', sha256: 'local-new' }],
+    ]);
+    const baseline = { 'src/index.html': { size: 500, modified: '2024-01-01', sha256: 'base-hash' } };
+    const changes = diffManifest(remote, local, 'down', baseline);
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].type, 'conflict');
+  });
+
+  it('treats matching hash as in-sync even when size/mtime metadata differs', () => {
+    const remote = [
+      { path: 'src/index.html', size: 500, modified: '2024-02-01', type: 'file', guid: 'f1', contentHash: 'same-hash' },
+    ];
+    const local = new Map<string, LocalFileInfo>([
+      ['src/index.html', { size: 500, modified: '2024-01-01', sha256: 'same-hash' }],
+    ]);
+    const changes = diffManifest(remote, local, 'down');
     assert.equal(changes.length, 0);
   });
 });

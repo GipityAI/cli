@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { formatSize } from '../utils.js';
 import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
 import { run } from '../helpers/index.js';
@@ -34,7 +34,7 @@ export const browserCommand = new Command('browser')
   .option('--wait <ms>', 'Wait before capture in ms', '3000')
   .option('--json', 'Output as JSON')
   .action((url: string, opts) => run('Browser inspect', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const waitMs = parseInt(opts.wait, 10) || 3000;
 
     const res = await post<{ data: DebugBundle }>(

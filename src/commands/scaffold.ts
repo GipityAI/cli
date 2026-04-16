@@ -5,10 +5,19 @@ import { syncDown } from '../sync.js';
 import { success } from '../colors.js';
 import { run } from '../helpers/index.js';
 
+// Visible scaffold types advertised to users. Mirrors VISIBLE_SCAFFOLD_TEMPLATES in
+// platform/packages/shared — kept inline here because the CLI is published as a
+// standalone npm package and can't depend on the private shared workspace. When
+// adding/removing a visible template, update both lists. Hidden types (e.g.
+// pre-release scaffolds) are still accepted by the server — the CLI just doesn't
+// advertise them.
+const VISIBLE_SCAFFOLD_TYPES = ['web-simple', 'web-fullstack', '2d-game', '3d-world', 'api'] as const;
+const visibleTypeList = VISIBLE_SCAFFOLD_TYPES.join(', ');
+
 export const scaffoldCommand = new Command('scaffold')
   .description('Create app structure (src/ with HTML, CSS, JS, favicons)')
   .argument('[title]', 'App title (defaults to project name)')
-  .requiredOption('--type <type>', 'Project type: web-simple, web-fullstack, 2d-game, 3d-world, app-itsm, or api')
+  .requiredOption('--type <type>', `Project type: ${visibleTypeList}`)
   .option('--description <desc>', 'App description for meta tags')
   .option('--json', 'Output as JSON')
   .action((title: string | undefined, opts) => run('Scaffold', async () => {

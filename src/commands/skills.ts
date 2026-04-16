@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { error as clrError, bold, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
@@ -23,7 +23,7 @@ skillsCommand
   .description('List available skills')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const res = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
 
     printList(res.data, opts, 'No skills available.', s =>
@@ -36,7 +36,7 @@ skillsCommand
   .description('Read a skill\'s full content by name')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Read', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const listRes = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
     const match = listRes.data.find(s => s.name.toLowerCase() === name.toLowerCase());
     if (!match) {

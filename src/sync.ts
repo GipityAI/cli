@@ -1,8 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync, readFileSync } from 'fs';
 import { join, relative, dirname } from 'path';
-import { get, put, del, downloadStream } from './api.js';
+import { createHash } from 'crypto';
+import { get, del, downloadStream } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
-import { isBinaryFile, formatSize, formatAge, prompt, getAutoConfirm } from './utils.js';
+import { formatSize, formatAge, prompt, getAutoConfirm } from './utils.js';
+import { uploadOneFile, UPLOAD_CONCURRENCY, hashFile } from './upload.js';
 import * as tar from 'tar-stream';
 
 interface RemoteFile {
@@ -11,16 +13,25 @@ interface RemoteFile {
   modified: string;
   type: string;
   guid: string;
+  contentHash?: string | null;
 }
+
+export interface LocalFileInfo {
+  size: number;
+  modified: string;
+  sha256?: string;
+}
+
+type BaselineEntry = LocalFileInfo;
 
 interface SyncState {
   lastSync: string;
-  files: Record<string, { size: number; modified: string }>;
+  files: Record<string, BaselineEntry>;
   lastPull?: { timestamp: string; count: number; summary: string };
 }
 
 export interface SyncChange {
-  type: 'added' | 'modified' | 'deleted';
+  type: 'added' | 'modified' | 'deleted' | 'conflict';
   path: string;
   localSize?: number;
   remoteSize?: number;
@@ -67,9 +78,17 @@ function saveSyncState(state: SyncState): void {
   writeFileSync(path, JSON.stringify(state, null, 2));
 }
 
-/** Walk local directory, returning relative paths and sizes */
-function walkLocal(dir: string, base: string, ignorePatterns: string[]): Map<string, { size: number; modified: string }> {
-  const result = new Map<string, { size: number; modified: string }>();
+/** Walk local directory, returning relative paths, sizes, and mtimes.
+ *  Reuses a cached sha256 from the baseline when (size, mtime) are unchanged,
+ *  so unchanged files are never rehashed. Does NOT compute hashes for changed
+ *  files — call {@link ensureLocalHashes} on-demand when a hash is needed. */
+function walkLocal(
+  dir: string,
+  base: string,
+  ignorePatterns: string[],
+  baseline: Record<string, BaselineEntry> = {},
+): Map<string, LocalFileInfo> {
+  const result = new Map<string, LocalFileInfo>();
 
   function walk(currentDir: string) {
     let entries;
@@ -90,10 +109,13 @@ function walkLocal(dir: string, base: string, ignorePatterns: string[]): Map<str
       } else if (entry.isFile()) {
         try {
           const stat = statSync(fullPath);
-          result.set(relPath, {
-            size: stat.size,
-            modified: stat.mtime.toISOString(),
-          });
+          const size = stat.size;
+          const modified = stat.mtime.toISOString();
+          const prior = baseline[relPath];
+          const sha256 = prior && prior.size === size && prior.modified === modified
+            ? prior.sha256
+            : undefined;
+          result.set(relPath, { size, modified, sha256 });
         } catch {
           // skip unreadable files
         }
@@ -103,6 +125,35 @@ function walkLocal(dir: string, base: string, ignorePatterns: string[]): Map<str
 
   walk(dir);
   return result;
+}
+
+/** Populate sha256 for the given local files by reading+hashing any that
+ *  don't already have one. Called on-demand when hashes are needed for
+ *  conflict resolution. */
+async function ensureLocalHashes(
+  root: string,
+  localFiles: Map<string, LocalFileInfo>,
+  paths: Iterable<string>,
+): Promise<void> {
+  for (const path of paths) {
+    const info = localFiles.get(path);
+    if (!info || info.sha256) continue;
+    try {
+      const { sha256 } = await hashFile(join(root, path));
+      info.sha256 = sha256;
+    } catch {
+      // skip unreadable files
+    }
+  }
+}
+
+/** Compare a local file to a remote file, preferring hash when both sides have it. */
+function sameContent(local: LocalFileInfo, remote: RemoteFile): boolean {
+  if (local.sha256 && remote.contentHash) {
+    return local.sha256 === remote.contentHash;
+  }
+  // Fallback when hashes aren't available: size-only (legacy behavior).
+  return local.size === remote.size;
 }
 
 /** Fetch remote file manifest */
@@ -134,47 +185,67 @@ async function downloadAllFiles(projectGuid: string): Promise<Map<string, Buffer
   });
 }
 
-/** Compare remote manifest against local files, detect changes */
+/** Compare remote manifest against local files, detect changes.
+ *  Prefers sha256 hash comparison when both sides have hashes. When a baseline
+ *  is provided, detects three-way conflicts (both sides changed since last sync)
+ *  and emits a `conflict` change instead of silently overwriting. */
 export function diffManifest(
   remoteFiles: RemoteFile[],
-  localFiles: Map<string, { size: number; modified: string }>,
+  localFiles: Map<string, LocalFileInfo>,
   direction: 'down' | 'up',
+  baseline: Record<string, BaselineEntry> = {},
 ): SyncChange[] {
   const changes: SyncChange[] = [];
+  const remoteMap = new Map(remoteFiles.filter(f => f.type === 'file').map(f => [f.path, f]));
 
   if (direction === 'down') {
-    // Detect remote changes: added/modified remotely, deleted remotely
-    const remoteMap = new Map(remoteFiles.filter(f => f.type === 'file').map(f => [f.path, f]));
-
     for (const [path, remote] of remoteMap) {
       const local = localFiles.get(path);
       if (!local) {
         changes.push({ type: 'added', path, remoteSize: remote.size });
-      } else if (local.size !== remote.size) {
+        continue;
+      }
+      if (sameContent(local, remote)) continue;
+
+      // Remote and local differ. Use baseline to decide: pull, no-op, or conflict.
+      const base = baseline[path];
+      const localMatchesBaseline = base?.sha256 && local.sha256 && base.sha256 === local.sha256;
+      const remoteMatchesBaseline = base?.sha256 && remote.contentHash && base.sha256 === remote.contentHash;
+
+      if (localMatchesBaseline) {
+        // Local unchanged since last sync → remote is newer, safe to pull.
         changes.push({ type: 'modified', path, localSize: local.size, remoteSize: remote.size });
+      } else if (remoteMatchesBaseline) {
+        // Remote unchanged since last sync, but local diverged. On a `down`,
+        // don't clobber local edits — skip silently.
+        continue;
+      } else {
+        // No baseline, or both sides moved. Fall back to the legacy size heuristic
+        // when we have no hash info, but on any hash-based divergence treat it as a conflict.
+        if (!local.sha256 || !remote.contentHash) {
+          changes.push({ type: 'modified', path, localSize: local.size, remoteSize: remote.size });
+        } else {
+          changes.push({ type: 'conflict', path, localSize: local.size, remoteSize: remote.size });
+        }
       }
     }
 
-    // Files that exist locally but not remotely → deleted remotely
-    for (const [path] of localFiles) {
+    for (const [path, local] of localFiles) {
       if (!remoteMap.has(path)) {
-        changes.push({ type: 'deleted', path, localSize: localFiles.get(path)!.size });
+        changes.push({ type: 'deleted', path, localSize: local.size });
       }
     }
   } else {
-    // Detect local changes: added/modified locally, deleted locally
-    const remoteMap = new Map(remoteFiles.filter(f => f.type === 'file').map(f => [f.path, f]));
-
     for (const [path, local] of localFiles) {
       const remote = remoteMap.get(path);
       if (!remote) {
         changes.push({ type: 'added', path, localSize: local.size });
-      } else if (local.size !== remote.size) {
-        changes.push({ type: 'modified', path, localSize: local.size, remoteSize: remote.size });
+        continue;
       }
+      if (sameContent(local, remote)) continue;
+      changes.push({ type: 'modified', path, localSize: local.size, remoteSize: remote.size });
     }
 
-    // Files that exist remotely but not locally → deleted locally
     for (const [path, remote] of remoteMap) {
       if (!localFiles.has(path)) {
         changes.push({ type: 'deleted', path, remoteSize: remote.size });
@@ -212,10 +283,42 @@ export function formatDiff(
       case 'deleted':
         lines.push(`  - ${c.path} (deleted ${label})`);
         break;
+      case 'conflict':
+        lines.push(`  ! ${c.path} (conflict — both sides changed; local ${formatSize(c.localSize || 0)}, remote ${formatSize(c.remoteSize || 0)})`);
+        break;
     }
   }
 
   return lines.join('\n');
+}
+
+/** Prompt the user to resolve sync-down conflicts. Returns the set of paths the
+ *  user elected to overwrite with the remote version. Paths not in the set keep
+ *  their local content. */
+async function resolveConflicts(conflicts: SyncChange[]): Promise<Set<string>> {
+  const takeRemote = new Set<string>();
+  const count = conflicts.length;
+
+  console.log(`\n${count} conflict${count > 1 ? 's' : ''} — both local and remote changed since the last sync:`);
+  for (const c of conflicts) {
+    console.log(`  ! ${c.path} (local ${formatSize(c.localSize || 0)}, remote ${formatSize(c.remoteSize || 0)})`);
+  }
+
+  if (getAutoConfirm()) {
+    // Auto-confirm mode: preserve local (safe default).
+    console.log('Auto-confirm: keeping local for all conflicts. Run interactively to choose per-file.');
+    return takeRemote;
+  }
+
+  const answer = (await prompt(
+    `\nFor each conflict: (l)ocal keeps, (r)emote overwrites, (s)kip all. [l/r/s] `,
+  )).trim().toLowerCase();
+
+  if (answer === 'r') {
+    for (const c of conflicts) takeRemote.add(c.path);
+  }
+  // 'l' or 's' or anything else → keep local (empty set)
+  return takeRemote;
 }
 
 /** Confirm file deletions with the user. Returns true if deletions should proceed. */
@@ -248,8 +351,39 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
   const config = requireConfig();
   const root = projectDir();
   const remoteFiles = await fetchManifest(config.projectGuid);
-  const localFiles = walkLocal(root, root, config.ignore);
-  const changes = diffManifest(remoteFiles, localFiles, 'down');
+  const previousState = loadSyncState();
+  const baseline = previousState.files;
+  const localFiles = walkLocal(root, root, config.ignore, baseline);
+
+  // For any file where remote content differs from cached local (size/mtime-based)
+  // or whose baseline doesn't have a cached hash, compute sha256 so we can make
+  // an accurate three-way decision. This is the only place we pay I/O for hashing.
+  const remoteByPath = new Map(remoteFiles.filter(f => f.type === 'file').map(f => [f.path, f]));
+  const needHash: string[] = [];
+  for (const [path, local] of localFiles) {
+    const remote = remoteByPath.get(path);
+    if (!remote) continue;
+    if (local.sha256) continue;
+    // Hash when (size matches remote but we can't tell) OR (size differs AND baseline existed — may be a conflict)
+    if (remote.contentHash) needHash.push(path);
+  }
+  await ensureLocalHashes(root, localFiles, needHash);
+
+  const changes = diffManifest(remoteFiles, localFiles, 'down', baseline);
+
+  // Resolve conflicts before any writes.
+  const conflicts = changes.filter(c => c.type === 'conflict');
+  let pullOverrides = new Set<string>(); // paths where user chose to take remote
+  if (conflicts.length > 0) {
+    if (opts.confirmDeletions) {
+      pullOverrides = await resolveConflicts(conflicts);
+    } else {
+      // Non-interactive (relay/hooks) — never clobber. Log and skip.
+      for (const c of conflicts) {
+        console.warn(`[sync] conflict: ${c.path} — local and remote both changed; keeping local. Run \`gipity sync\` interactively to resolve.`);
+      }
+    }
+  }
 
   const remoteFileCount = remoteFiles.filter(f => f.type === 'file').length;
   const deletions = changes.filter(c => c.type === 'deleted');
@@ -286,8 +420,13 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
     pulled++;
   }
 
-  // Download all added/modified files in a single tar request
-  const downloads = changes.filter(c => c.type !== 'deleted');
+  // Download all added/modified/conflict-accepted files in a single tar request.
+  // Conflicts are only included when the user explicitly chose "take remote".
+  const downloads = changes.filter(c =>
+    c.type === 'added' || c.type === 'modified' ||
+    (c.type === 'conflict' && pullOverrides.has(c.path))
+  );
+  const writtenHashes = new Map<string, string>();
   if (downloads.length > 0) {
     const allFiles = await downloadAllFiles(config.projectGuid);
     for (const change of downloads) {
@@ -296,6 +435,7 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
       const fullPath = join(root, change.path);
       mkdirSync(dirname(fullPath), { recursive: true });
       writeFileSync(fullPath, bytes);
+      writtenHashes.set(change.path, createHash('sha256').update(bytes).digest('hex'));
       pulled++;
     }
   }
@@ -346,14 +486,25 @@ export async function syncDown(opts: SyncDownOptions = {}): Promise<SyncResult> 
     }
   }
 
-  // Update sync state
-  const updatedLocal = walkLocal(root, root, config.ignore);
-  const stateFiles: Record<string, { size: number; modified: string }> = {};
+  // Update sync state. Seed the walk baseline with known hashes — pre-existing
+  // hashes we had on entry plus hashes of anything we just wrote — so the new
+  // baseline carries sha256 for every unchanged file without re-hashing.
+  const postBaseline: Record<string, BaselineEntry> = {};
+  for (const [path, info] of localFiles) {
+    if (info.sha256) postBaseline[path] = { size: info.size, modified: info.modified, sha256: info.sha256 };
+  }
+  for (const [path, sha256] of writtenHashes) {
+    try {
+      const stat = statSync(join(root, path));
+      postBaseline[path] = { size: stat.size, modified: stat.mtime.toISOString(), sha256 };
+    } catch { /* file gone */ }
+  }
+  const updatedLocal = walkLocal(root, root, config.ignore, postBaseline);
+  const stateFiles: Record<string, BaselineEntry> = {};
   for (const [path, info] of updatedLocal) {
     stateFiles[path] = info;
   }
   const now = new Date().toISOString();
-  const previousState = loadSyncState();
   const state: SyncState = { lastSync: now, files: stateFiles };
   if (pulled > 0) {
     state.lastPull = { timestamp: now, count: pulled, summary: formatDiff(changes, 'down') };
@@ -371,30 +522,45 @@ export async function syncUp(): Promise<SyncResult> {
   const config = requireConfig();
   const root = projectDir();
   const remoteFiles = await fetchManifest(config.projectGuid);
-  const localFiles = walkLocal(root, root, config.ignore);
-  const changes = diffManifest(remoteFiles, localFiles, 'up');
+  const baseline = loadSyncState().files;
+  const localFiles = walkLocal(root, root, config.ignore, baseline);
+  // Hash any local file whose remote has a hash, so sameContent() can use hashes.
+  const remoteWithHash = remoteFiles.filter(f => f.type === 'file' && f.contentHash).map(f => f.path);
+  await ensureLocalHashes(root, localFiles, remoteWithHash);
+  const changes = diffManifest(remoteFiles, localFiles, 'up', baseline);
 
   let pushed = 0;
-  for (const change of changes) {
-    if (change.type === 'deleted') {
-      // File deleted locally — delete on remote
-      try {
-        await del(`/projects/${config.projectGuid}/files?path=${encodeURIComponent(change.path)}`);
-        pushed++;
-      } catch {
-        // Remote file may already be gone
-      }
-      continue;
-    }
 
-    // added or modified — push to remote (skip binary files)
-    const fullPath = join(root, change.path);
-    const raw = readFileSync(fullPath);
-    if (isBinaryFile(raw)) continue;
-    const content = raw.toString('utf-8');
-    await put(`/projects/${config.projectGuid}/files`, { path: change.path, content });
-    pushed++;
+  // Deletions go first, serially — they're cheap and order matters less.
+  for (const change of changes) {
+    if (change.type !== 'deleted') continue;
+    try {
+      await del(`/projects/${config.projectGuid}/files?path=${encodeURIComponent(change.path)}`);
+      pushed++;
+    } catch {
+      // Remote file may already be gone
+    }
   }
+
+  // Uploads (added + modified) — every file goes through the presigned-S3
+  // flow regardless of size or content type. Run up to UPLOAD_CONCURRENCY
+  // in parallel.
+  const uploads = changes.filter(c => c.type !== 'deleted');
+  let cursor = 0;
+  const workers: Array<Promise<void>> = [];
+  for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, uploads.length); w++) {
+    workers.push((async () => {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= uploads.length) return;
+        const change = uploads[idx];
+        const fullPath = join(root, change.path);
+        await uploadOneFile(config.projectGuid, fullPath, change.path);
+        pushed++;
+      }
+    })());
+  }
+  await Promise.all(workers);
 
   // Delete remote directories that no longer exist locally (shallowest first, recursive).
   // The tree manifest only returns files (not dirs), so derive dir paths from file paths.
@@ -429,9 +595,15 @@ export async function syncUp(): Promise<SyncResult> {
     }
   }
 
-  // Update sync state
-  const updatedLocal = walkLocal(root, root, config.ignore);
-  const stateFiles: Record<string, { size: number; modified: string }> = {};
+  // Update sync state. Use current localFiles as baseline seed — its hashes
+  // reflect both pre-existing cached hashes and anything we just hashed for upload
+  // (any local path present in `uploads` was hashed via the upload flow).
+  const postBaseline: Record<string, BaselineEntry> = {};
+  for (const [path, info] of localFiles) {
+    if (info.sha256) postBaseline[path] = { size: info.size, modified: info.modified, sha256: info.sha256 };
+  }
+  const updatedLocal = walkLocal(root, root, config.ignore, postBaseline);
+  const stateFiles: Record<string, BaselineEntry> = {};
   for (const [path, info] of updatedLocal) {
     stateFiles[path] = info;
   }
@@ -446,9 +618,19 @@ export async function syncCheck(): Promise<SyncResult> {
   const config = requireConfig();
   const root = projectDir();
   const remoteFiles = await fetchManifest(config.projectGuid);
-  const localFiles = walkLocal(root, root, config.ignore);
+  const baseline = loadSyncState().files;
+  const localFiles = walkLocal(root, root, config.ignore, baseline);
+  // Hash any local file where remote has a hash and we don't yet have a cached one,
+  // so size-match-different-content is detected instead of silently passing.
+  const toHash: string[] = [];
+  for (const rf of remoteFiles) {
+    if (rf.type !== 'file' || !rf.contentHash) continue;
+    const local = localFiles.get(rf.path);
+    if (local && !local.sha256) toHash.push(rf.path);
+  }
+  await ensureLocalHashes(root, localFiles, toHash);
 
-  const downChanges = diffManifest(remoteFiles, localFiles, 'down');
+  const downChanges = diffManifest(remoteFiles, localFiles, 'down', baseline);
   const summary = formatDiff(downChanges, 'down');
 
   return { changes: downChanges, pulled: 0, pushed: 0, deleted: 0, skippedDeletions: 0, summary };
@@ -462,8 +644,5 @@ export async function pushFile(filePath: string): Promise<void> {
 
   if (shouldIgnore(relPath, config.ignore)) return;
 
-  const raw = readFileSync(filePath);
-  if (isBinaryFile(raw)) return;
-  const content = raw.toString('utf-8');
-  await put(`/projects/${config.projectGuid}/files`, { path: relPath, content });
+  await uploadOneFile(config.projectGuid, filePath, relPath);
 }

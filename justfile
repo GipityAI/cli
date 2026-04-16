@@ -20,8 +20,22 @@ cli-dev *ARGS:
 
 # Build and link CLI globally for local dev
 cli-link:
-    npm unlink -g 2>/dev/null; just cli-build && npm link
+    npm uninstall -g gipity 2>/dev/null; npm unlink -g 2>/dev/null; just cli-build && npm link
+    @echo ""
+    @echo "✓ Linked. If 'gipity' still points to a stale path in THIS shell, run: hash -r"
+
+# Reset to a clean first-run state: run `gipity uninstall` (stops daemon,
+# removes autostart, revokes device, wipes ~/.gipity/), then rebuild + relink.
+# Useful for testing the first-run flow end-to-end.
+cli-reinstall:
+    -gipity uninstall --yes
+    just cli-link
 
 # Unlink CLI global dev install
 cli-unlink:
-    npm unlink -g
+    npm uninstall -g gipity 2>/dev/null; npm unlink -g
+    @echo ""
+    @echo "✓ Unlinked the binary. Note: this does NOT stop the relay daemon, remove the"
+    @echo "  OS autostart service, or clear ~/.gipity/. For a true reset, run:"
+    @echo "    gipity uninstall"
+    @echo "  …BEFORE unlinking."

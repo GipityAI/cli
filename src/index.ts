@@ -11,6 +11,7 @@ import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { syncCommand } from './commands/sync.js';
 import { pushCommand } from './commands/push.js';
+import { uploadCommand } from './commands/upload.js';
 import { deployCommand } from './commands/deploy.js';
 import { dbCommand } from './commands/db.js';
 import { memoryCommand } from './commands/memory.js';
@@ -35,13 +36,19 @@ import { skillsCommand } from './commands/skills.js';
 import { domainCommand } from './commands/domain.js';
 import { testCommand } from './commands/test.js';
 import { locationCommand } from './commands/location.js';
+import { doctorCommand } from './commands/doctor.js';
+import { updateCommand } from './commands/update.js';
+import { hookCaptureCommand } from './commands/hook-capture.js';
+import { relayCommand } from './commands/relay.js';
+import { uninstallCommand } from './commands/uninstall.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
-import { bold, dim, brand } from './colors.js';
+import { bold, dim, brand, muted } from './colors.js';
+import { normalizeAliases } from './flag-aliases.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
 
-// ── Custom help formatting (match Claude Code style) ────────────────────
+// ── Custom help formatting (subcommand pages keep default look) ─────────
 function configureHelp(cmd: Command): void {
   cmd.configureHelp({
     formatHelp(cmd, helper) {
@@ -53,9 +60,27 @@ function configureHelp(cmd: Command): void {
 
 const program = new Command();
 
+// ── Command groups (logical ordering within each) ──────────────────────
+// Order within each group is intentional: Setup follows the user's first-run
+// path; Project follows the dev loop; Resources groups data → compute →
+// observability → access; Agent flows chat → run → manage → bill.
+const setupGroup     = [loginCommand, logoutCommand, initCommand, claudeCommand, relayCommand];
+const projectGroup   = [statusCommand, syncCommand, pushCommand, uploadCommand, deployCommand, testCommand, scaffoldCommand, domainCommand];
+const resourceGroup  = [dbCommand, memoryCommand, fileCommand, fnCommand, sandboxCommand, browserCommand, generateCommand, logsCommand, recordsCommand, auditCommand, rbacCommand, emailCommand, skillsCommand, locationCommand];
+const agentGroup     = [chatCommand, agentCommand, projectCommand, workflowCommand, creditsCommand];
+const maintenanceGroup = [doctorCommand, updateCommand, uninstallCommand];
+
+const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
+  { title: 'Setup',       cmds: setupGroup },
+  { title: 'Project',     cmds: projectGroup },
+  { title: 'Resources',   cmds: resourceGroup },
+  { title: 'Agent',       cmds: agentGroup },
+  { title: 'Maintenance', cmds: maintenanceGroup },
+];
+
 program
   .name('gipity')
-  .description(`${brand(bold('Gipity CLI'))} ${dim('—')} AI Agent Super Computer\n\n  ${dim('App hosting, databases, deployment, sandboxed execution, and 90+ AI tools — zero setup.')}`)
+  .description(`${brand(bold('Gipity CLI'))} ${dim('—')} Cloud agents for builders\n\n  ${dim('90+ tools, persistent memory, app hosting, databases, deploys. Pair with Claude Code or use standalone.')}`)
   .version(pkg.version, '-v, --version')
   .option('--api-base <url>', 'API base URL (e.g. http://localhost:7200)')
   .option('-y, --yes', 'Skip confirmation prompts');
@@ -66,21 +91,67 @@ program.hook('preAction', () => {
   if (globalOpts.yes) setAutoConfirm(true);
 });
 
-configureHelp(program);
+// ── Custom top-level help: version banner + grouped commands ────────────
+program.configureHelp({
+  formatHelp(cmd, helper) {
+    // Command column: tight to the longest command name (don't let long
+    // option terms like `--api-base <url>` blow out the gutter).
+    const cmdColWidth = Math.max(
+      ...HELP_SECTIONS.flatMap(s => s.cmds.map(c => c.name().length)),
+    );
+    const padCmd = (s: string) => s.padEnd(cmdColWidth);
+    // Options get their own narrower column based on their own widths.
+    const opts = helper.visibleOptions(cmd);
+    const optColWidth = opts.length ? Math.max(...opts.map(o => helper.optionTerm(o).length)) : 0;
+    const padOpt = (s: string) => s.padEnd(optColWidth);
+    const lines: string[] = [];
 
-// ── Setup commands ──────────────────────────────────────────────────────
-const setupGroup = [loginCommand, logoutCommand, initCommand, claudeCommand];
-// ── Project commands ────────────────────────────────────────────────────
-const projectGroup = [statusCommand, syncCommand, pushCommand, deployCommand, testCommand, scaffoldCommand, domainCommand];
-// ── Resource commands ───────────────────────────────────────────────────
-const resourceGroup = [dbCommand, memoryCommand, fileCommand, sandboxCommand, logsCommand, browserCommand, recordsCommand, fnCommand, rbacCommand, auditCommand, emailCommand, generateCommand, skillsCommand, locationCommand];
-// ── Agent commands ──────────────────────────────────────────────────────
-const agentGroup = [chatCommand, projectCommand, agentCommand, workflowCommand, creditsCommand];
+    lines.push('');
+    lines.push(`${brand(bold('Gipity CLI'))} ${muted(`v${pkg.version}`)}`);
+    lines.push(dim('Cloud agents for builders — 90+ tools, persistent memory, app hosting,'));
+    lines.push(dim('databases, deploys. Pair with Claude Code or use standalone.'));
+    lines.push('');
 
-for (const cmd of [...setupGroup, ...projectGroup, ...resourceGroup, ...agentGroup]) {
+    lines.push(bold('Quick start:'));
+    lines.push(`  ${brand('gipity claude')}   ${dim('— launch Claude Code with Gipity tools wired in')}`);
+    lines.push(`  ${brand('gipity login')}    ${dim('— authenticate first if you haven\'t already')}`);
+    lines.push('');
+
+    lines.push(bold('Usage:'));
+    lines.push(`  ${cmd.name()} [options] [command]`);
+    lines.push('');
+
+    if (opts.length) {
+      lines.push(bold('Options:'));
+      for (const o of opts) {
+        lines.push(`  ${padOpt(helper.optionTerm(o))}  ${helper.optionDescription(o)}`);
+      }
+      lines.push('');
+    }
+
+    for (const section of HELP_SECTIONS) {
+      lines.push(bold(`${section.title}:`));
+      for (const c of section.cmds) {
+        const term = c.name();
+        const desc = c.description();
+        lines.push(`  ${padCmd(term)}  ${desc}`);
+      }
+      lines.push('');
+    }
+
+    lines.push(dim(`Run "${cmd.name()} <command> --help" for details on a specific command.`));
+    lines.push('');
+    return lines.join('\n');
+  },
+});
+
+for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
   configureHelp(cmd);
   program.addCommand(cmd);
 }
+
+// Hidden: invoked by Claude Code hooks, not user-facing.
+program.addCommand(hookCaptureCommand, { hidden: true });
 
 // Auto-fetch related skill docs when --help is run on mapped commands
 const argv = process.argv.slice(2);
@@ -96,4 +167,4 @@ if (mappedCmd) {
   }
 }
 
-program.parse();
+program.parse(normalizeAliases(process.argv));

@@ -83,7 +83,7 @@ projectCommand
       console.error(`Project "${name}" not found.`);
       process.exit(1);
     }
-    if (!await confirm(`Delete project "${match.name}"? This cannot be undone. (y/N) `)) {
+    if (!await confirm(`Delete project "${match.name}"? This cannot be undone.`)) {
       console.log('Cancelled.');
       return;
     }

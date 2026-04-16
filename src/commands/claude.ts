@@ -17,38 +17,33 @@ function resolveCommand(cmd: string): string {
   }
 }
 import { getAuth, saveAuth, clearAuth } from '../auth.js';
-import { get, post, publicPost, ApiError } from '../api.js';
+import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfig, clearConfigCache, getApiBaseOverride } from '../config.js';
 import { syncDown, syncUp } from '../sync.js';
-import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
-import { prompt, pickOne, decodeJwtExp } from '../utils.js';
+import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
+import {
+  buildProjectContextBlock as buildProjectContextBlockText,
+  buildExistingProjectPrompt as buildExistingProjectPromptText,
+  buildNewProjectPrompt,
+  buildResumeWrap,
+  buildFreshWrap,
+} from '../prompts.js';
+import * as relayState from '../relay/state.js';
+import { maybeOfferRelayOn, ensureDaemonRunning } from '../relay/onboarding.js';
+import { prompt, promptBoxed, pickOne, decodeJwtExp, confirm } from '../utils.js';
 import { brand, bold, faint, info, success, error as clrError, muted } from '../colors.js';
 import { printBanner } from '../banner.js';
 
 const __clDir = dirname(fileURLToPath(import.meta.url));
 const __clPkg = JSON.parse(readFileSync(resolve(__clDir, '../../package.json'), 'utf-8'));
 
-function getProjectsRoot(): string {
-  const settingsPath = join(homedir(), '.gipity', 'settings.json');
-  const defaultDir = join(homedir(), 'GipityProjects');
-  try {
-    if (existsSync(settingsPath)) {
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-      if (settings.projectsDir) return resolve(settings.projectsDir);
-    } else {
-      mkdirSync(join(homedir(), '.gipity'), { recursive: true });
-      writeFileSync(settingsPath, JSON.stringify({ projectsDir: defaultDir }, null, 2) + '\n');
-    }
-  } catch { /* fall through */ }
-  return defaultDir;
-}
+import { getProjectsRoot } from '../relay/paths.js';
 
 interface ProjectData {
   short_guid: string;
   name: string;
   slug: string;
   is_default?: number;
-  user?: { account_slug: string };
 }
 
 interface AgentData {
@@ -56,66 +51,121 @@ interface AgentData {
   name: string;
 }
 
-function listProjectFiles(dir: string, limit = 40): string {
-  const skip = new Set(['node_modules', '.git', '.gipity', '.claude']);
+function listProjectFiles(dir: string, limit = 40): { contents: string; count: number } {
+  // `isSyncIgnored` is the single source of truth for "is this a workstation
+  // artifact?" — see setup.ts:DEFAULT_SYNC_IGNORE. Anything it ignores is not
+  // counted here so scaffolding and empty-state prompts see a "just-provisioned"
+  // project (with only CLAUDE.md / .gipity.json) as empty.
   const entries: string[] = [];
+  let count = 0;
+  let truncated = false;
   try {
     for (const name of readdirSync(dir).sort()) {
-      if (skip.has(name) || name.startsWith('.')) continue;
+      if (isSyncIgnored(name)) continue;
+      count++;
+      if (entries.length >= limit) { truncated = true; continue; }
       try {
         const isDir = statSync(join(dir, name)).isDirectory();
         entries.push(isDir ? `${name}/` : name);
       } catch { /* skip */ }
-      if (entries.length >= limit) { entries.push('…'); break; }
     }
   } catch { /* empty */ }
-  return entries.length ? entries.join(', ') : '(empty directory)';
+  if (truncated) entries.push('…');
+  return {
+    contents: entries.length ? entries.join(', ') : '(empty directory)',
+    count,
+  };
 }
 
-function buildExistingProjectPrompt(opts: {
+/** Thin wrappers that scan the filesystem for a top-level listing, then
+ *  delegate the actual prompt assembly to `prompts.ts`. All wording lives
+ *  in that module — keep it that way. */
+interface LocalCtxOpts {
   projectName: string;
   projectSlug: string;
+  projectGuid: string;
   accountSlug: string;
   cwd: string;
-}): string {
-  const deployUrl = opts.accountSlug
-    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
-    : '(not yet deployed)';
-  return [
-    `You are resuming work on an existing Gipity project "${opts.projectName}". Gipity is an AI agent platform with cloud hosting, databases, serverless functions, sandboxed code execution, image generation, TTS, and web search.`,
-    ``,
-    `Project directory: ${opts.cwd}`,
-    `Deploy URL: ${deployUrl}`,
-    `Top-level contents: ${listProjectFiles(opts.cwd)}`,
-    ``,
-    `Read CLAUDE.md for full platform docs, CLI commands, and scaffold types.`,
-    `Key commands: gipity scaffold --type <web|2d-game|3d-world|app-itsm|api>, gipity deploy dev, gipity test, gipity fn call <name> [body].`,
-    `Files auto-sync to the cloud on every save. Deploy gives a live URL instantly.`,
-    ``,
-    `Briefly greet the user, summarize what this project appears to be (based on the file listing and any README/CLAUDE.md/gipity.yaml you can see), and ask what they want to work on next.`,
-  ].join('\n');
 }
 
+function buildProjectContextBlock(opts: LocalCtxOpts): string {
+  const { contents, count } = listProjectFiles(opts.cwd);
+  return buildProjectContextBlockText({ ...opts, contents, fileCount: count });
+}
+
+function buildExistingProjectPrompt(opts: LocalCtxOpts): string {
+  const { contents, count } = listProjectFiles(opts.cwd);
+  return buildExistingProjectPromptText({ ...opts, contents, fileCount: count });
+}
+
+// First-run relay onboarding now lives in `relay/onboarding.ts`
+// (`maybeOfferRelayOn`). `gipity claude` invokes it after project
+// selection, and also calls `ensureDaemonRunning` unconditionally before
+// launching Claude Code so a paired user doesn't have to think about it.
+
 function suggestProjectName(existingSlugs: string[]): string {
+  // Canonical format: `project-NNN` (3-digit, zero-padded, hyphenated).
+  // Same shape the web "+ New Project" button uses, so both entry points
+  // produce identical-looking projects.
+  //
+  // We scan for both the canonical `project-NNN` and the legacy `projectNN`
+  // slugs so the suggested number stays monotonically ahead of whatever
+  // already exists in the user's account.
   const slugSet = new Set(existingSlugs);
-  for (let i = 1; i <= 99; i++) {
-    const candidate = `project${String(i).padStart(2, '0')}`;
+  let maxSeen = 0;
+  for (const slug of existingSlugs) {
+    const m = /^project-?(\d+)$/.exec(slug);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxSeen) maxSeen = n;
+    }
+  }
+  const start = maxSeen + 1;
+  for (let i = start; i <= 9999; i++) {
+    const candidate = `project-${String(i).padStart(3, '0')}`;
     if (!slugSet.has(candidate)) return candidate;
   }
   return `project-${Date.now().toString(36).slice(-6)}`;
 }
 
 export const claudeCommand = new Command('claude')
-  .description('Log in, set up a project, and launch Claude Code')
+  .description('Log in, set up a project, and launch Claude Code (pass -p "msg" / --resume <id> for non-interactive use)')
   .option('--no-claude', 'Set up project but skip launching Claude Code')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (opts) => {
     try {
+      // Non-interactive passthrough: `gipity claude -p "msg"` (and --print)
+      // route directly to `claude -p` after the normal setup (auth, hooks,
+      // sync). Used by the upcoming `gipity relay` daemon to dispatch
+      // messages from the web CLI into a local Claude Code session without
+      // a human at the terminal. Requires an existing .gipity.json — we
+      // can't interactively pick or create a project in this mode.
+      const rawArgs = process.argv.slice(process.argv.indexOf('claude') + 1);
+      const nonInteractive = rawArgs.some(a => a === '-p' || a === '--print' || a.startsWith('--print=') || a.startsWith('-p='));
+
+      // In non-interactive mode, route all banner/progress output to stderr
+      // so the child's stream-json on stdout stays clean.
+      if (nonInteractive) {
+        const origLog = console.log;
+        console.log = (...args: unknown[]) => { void origLog; console.error(...args); };
+      }
+
       // ── Step 1: Auth ──────────────────────────────────────────────────
       let auth = getAuth();
 
-      printBanner({ version: __clPkg.version, email: auth?.email, cwd: process.cwd() });
+      if (nonInteractive && !auth) {
+        console.error(`  ${clrError('Not logged in. Run: gipity login')}`);
+        process.exit(1);
+      }
+      if (nonInteractive && !getConfig()) {
+        console.error(`  ${clrError('No Gipity project in cwd. Run `gipity claude` (interactive) first to set one up.')}`);
+        process.exit(1);
+      }
+
+      if (!nonInteractive) {
+        printBanner({ version: __clPkg.version, email: auth?.email, cwd: process.cwd() });
+      }
 
       if (auth) {
         console.log(`  Logged in as ${auth.email}`);
@@ -148,6 +198,14 @@ export const claudeCommand = new Command('claude')
 
       console.log('');
 
+      // ── Step 1b: Relay first-run onboarding (account-scoped, runs before project) ──
+      if (!nonInteractive) {
+        await maybeOfferRelayOn();
+      }
+      if (!nonInteractive && relayState.isRelayEnabled() && !relayState.isPaused()) {
+        ensureDaemonRunning();
+      }
+
       // ── Step 2: Project ───────────────────────────────────────────────
       let initialPrompt = '';
 
@@ -165,7 +223,7 @@ export const claudeCommand = new Command('claude')
           if (upResult.pushed > 0) {
             console.log(`  Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
           }
-          const downResult = await syncDown({ confirmDeletions: true });
+          const downResult = await syncDown({ confirmDeletions: !nonInteractive });
           if (downResult.pulled > 0) {
             console.log(`  Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''} from Gipity.`);
           }
@@ -176,6 +234,7 @@ export const claudeCommand = new Command('claude')
         initialPrompt = buildExistingProjectPrompt({
           projectName: existing.projectSlug,
           projectSlug: existing.projectSlug,
+          projectGuid: existing.projectGuid,
           accountSlug: existing.accountSlug,
           cwd: process.cwd(),
         });
@@ -234,7 +293,7 @@ export const claudeCommand = new Command('claude')
           // No agents
         }
 
-        const accountSlug = project.user?.account_slug || '';
+        const accountSlug = await getAccountSlug();
 
         // Always write config (refresh stale GUIDs from a previous setup)
         saveConfig({
@@ -244,7 +303,7 @@ export const claudeCommand = new Command('claude')
           agentGuid,
           conversationGuid: null,
           apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
-          ignore: ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', 'CLAUDE.md', '*.log'],
+          ignore: DEFAULT_SYNC_IGNORE,
         });
 
         console.log(`\n  Using ${projectDir}`);
@@ -255,7 +314,7 @@ export const claudeCommand = new Command('claude')
           if (upResult.pushed > 0) {
             console.log(`  Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
           }
-          const downResult = await syncDown({ confirmDeletions: true });
+          const downResult = await syncDown({ confirmDeletions: !nonInteractive });
           if (downResult.pulled > 0) {
             console.log(`  Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''} from Gipity.`);
           }
@@ -266,33 +325,30 @@ export const claudeCommand = new Command('claude')
         // ── Step 2b: What do you want to build? (new projects only) ────
         if (isNewProject) {
           console.log('');
-          console.log(`  ${bold('What would you like to build?')}\n`);
+          console.log(`  ${bold('What would you like to build?')}`);
           console.log(`  ${muted('Examples: a landing page, a Pac-Man game, a helpdesk app,')}`);
           console.log(`  ${muted('an API that returns random facts, or anything you can describe.')}`);
-          console.log(`  ${muted('Press Enter for a blank project.')}\n`);
+          console.log(`  ${muted('Press Enter for a blank project.')}`);
+          console.log('');
 
-          const buildIdea = (await prompt('  → ')).trim();
+          const buildIdea = (await promptBoxed()).trim();
 
-          const projectContext = [
-            `You are starting a new project called "${project.name}" on Gipity — an AI agent platform with cloud hosting, databases, serverless functions, sandboxed code execution, image generation, TTS, and web search.`,
-            ``,
-            `Project directory: ${process.cwd()}`,
-            `Deploy URL: https://dev.gipity.ai/${accountSlug}/${project.slug}/`,
-            ``,
-            `Read CLAUDE.md for full platform docs, CLI commands, and scaffold types.`,
-            `Key commands: gipity scaffold --type <web|2d-game|3d-world|app-itsm|api>, gipity deploy dev, gipity test, gipity fn call <name> [body].`,
-            `Files auto-sync to the cloud on every save. Deploy gives a live URL instantly.`,
-          ].join('\n');
-
-          if (buildIdea) {
-            initialPrompt = `${projectContext}\n\nThe user's first message: "${buildIdea}"\n\nGet started on their request. Scaffold if appropriate, or build from scratch — use your judgment. Deploy to dev when you have something working.`;
-          } else {
-            initialPrompt = `${projectContext}\n\nThe user started a blank project with no specific request. Briefly introduce yourself, highlight a few key capabilities, and ask what they want to build.`;
-          }
+          const { contents, count } = listProjectFiles(process.cwd());
+          initialPrompt = buildNewProjectPrompt({
+            projectName: project.name,
+            projectSlug: project.slug,
+            projectGuid: project.short_guid,
+            accountSlug,
+            cwd: process.cwd(),
+            contents,
+            fileCount: count,
+            buildIdea,
+          });
         } else {
           initialPrompt = buildExistingProjectPrompt({
             projectName: project.name,
             projectSlug: project.slug,
+            projectGuid: project.short_guid,
             accountSlug,
             cwd: process.cwd(),
           });
@@ -321,6 +377,57 @@ export const claudeCommand = new Command('claude')
         return;
       }
 
+      // Resolve (or create) the backing Gipity conversation for this
+      // Claude Code run. The conv_guid is handed to the child (and thus
+      // every capture hook spawned by Claude Code) via env var so every
+      // capture event is explicitly tagged to the right conversation.
+      //
+      // Three paths:
+      //   1. Inherited GIPITY_CONVERSATION_GUID — the relay daemon already
+      //      created the conv and spawned us with it set. Just pass it
+      //      through. Creating another would orphan the dispatch's conv.
+      //   2. `--resume <sid>` — look up the existing conv by Claude Code
+      //      session_id.
+      //   3. Otherwise — create a fresh claude_code conv tied to this
+      //      paired device.
+      //
+      // Skipped silently if this machine isn't paired — without a device
+      // we can't satisfy the claude_code ownership rule, so hooks stay
+      // offline for this run.
+      let convGuidForHooks: string | null = process.env.GIPITY_CONVERSATION_GUID ?? null;
+      if (!convGuidForHooks) {
+        const device = relayState.getDevice();
+        if (device) {
+          const cfg = getConfig();
+          const resumeIdx = process.argv.indexOf('--resume');
+          const resumeSid = resumeIdx >= 0 ? process.argv[resumeIdx + 1] : null;
+          try {
+            if (resumeSid) {
+              try {
+                const found = await get<{ data: { conversation_guid: string } }>(
+                  `/conversations/claude-code/by-session/${encodeURIComponent(resumeSid)}`,
+                );
+                convGuidForHooks = found.data.conversation_guid;
+              } catch {
+                // No existing conv for this session id — fall through and
+                // create one so capture still has a home.
+              }
+            }
+            if (!convGuidForHooks && cfg?.projectGuid) {
+              const created = await post<{ data: { conversation_guid: string } }>(
+                '/conversations/claude-code',
+                { project_guid: cfg.projectGuid, device_guid: device.guid },
+              );
+              convGuidForHooks = created.data.conversation_guid;
+            }
+          } catch (err: any) {
+            if (!nonInteractive) {
+              console.error(`  ${clrError(`Could not create Gipity conversation: ${err?.message || err}`)}`);
+            }
+          }
+        }
+      }
+
       // Pass through all unknown args to claude (everything after 'claude')
       const claudeIdx = process.argv.indexOf('claude');
       const knownFlags = ['--no-claude', '--api-base'];
@@ -338,16 +445,62 @@ export const claudeCommand = new Command('claude')
         if (valueIdx !== -1) claudeArgs.splice(valueIdx, 1);
       }
 
-      console.log(`  ${info('Launching Claude Code...')}\n`);
-      const allArgs = initialPrompt
-        ? [initialPrompt, ...claudeArgs]
-        : claudeArgs;
+      if (!nonInteractive) {
+        console.log(`  ${info('Launching Claude Code...')}\n`);
+      }
+
+      // In non-interactive (-p) mode, prepend a Gipity preamble to the
+      // user's raw message. Two flavors:
+      //   - No --resume → full project context block (project name, files,
+      //     deploy URL, decision flow). A fresh session has no prior context.
+      //   - --resume → short framing line only. Claude already has the full
+      //     context from the original start dispatch; we just remind it which
+      //     project it's in and to use Gipity tools rather than freelance.
+      let allArgs: string[];
+      if (nonInteractive) {
+        const hasResume = claudeArgs.includes('--resume');
+        const pIdx = claudeArgs.findIndex(a => a === '-p' || a === '--print');
+        if (pIdx !== -1 && pIdx + 1 < claudeArgs.length) {
+          const config = getConfig();
+          const userMsg = claudeArgs[pIdx + 1];
+          let accountSlug = '';
+          try { accountSlug = await getAccountSlug(); } catch { /* best effort */ }
+          const ctxOpts: LocalCtxOpts = {
+            projectName: config?.projectSlug ?? 'this project',
+            projectSlug: config?.projectSlug ?? '',
+            projectGuid: config?.projectGuid ?? '',
+            accountSlug,
+            cwd: process.cwd(),
+          };
+          let wrapped: string;
+          if (hasResume) {
+            const { contents, count } = listProjectFiles(process.cwd());
+            wrapped = buildResumeWrap({ ...ctxOpts, contents, fileCount: count }, userMsg);
+          } else {
+            wrapped = buildFreshWrap(buildProjectContextBlock(ctxOpts), userMsg);
+          }
+          allArgs = [...claudeArgs];
+          allArgs[pIdx + 1] = wrapped;
+          process.stderr.write(
+            `\n── full prompt → claude (${wrapped.length} chars) ──\n` +
+            wrapped +
+            `\n── end prompt ──\n\n`
+          );
+        } else {
+          allArgs = claudeArgs;
+        }
+      } else {
+        allArgs = initialPrompt ? [initialPrompt, ...claudeArgs] : claudeArgs;
+      }
       // Resolve full path on Windows so we can avoid shell:true, which
       // passes args through cmd.exe and mangles quotes/special chars.
       const claudeCmd = resolveCommand('claude');
+      const childEnv = { ...process.env };
+      if (convGuidForHooks) childEnv.GIPITY_CONVERSATION_GUID = convGuidForHooks;
       const child = spawn(claudeCmd, allArgs, {
         stdio: 'inherit',
         cwd: process.cwd(),
+        env: childEnv,
       });
       child.on('exit', (code) => process.exit(code ?? 0));
 
@@ -394,20 +547,46 @@ async function pickOrCreateProject(
 }
 
 async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
-  const suggested = suggestProjectName(existingSlugs);
+  const taken = new Set(existingSlugs);
+  let suggested = suggestProjectName(existingSlugs);
   console.log('');
-  const name = await prompt(`  ${bold('Project name')} [${bold(suggested)}]: `);
-  const projectName = name || suggested;
-  const projectSlug = slugify(projectName);
 
-  if (!projectSlug) {
-    console.error(`  ${clrError('Invalid project name.')}`);
-    process.exit(1);
+  // Loop until the user picks a free, well-formed name. Bad input or duplicate
+  // slugs re-prompt instead of crashing — duplicates can still slip through
+  // after the initial projects-list fetch (race with another session), so the
+  // server-side 409 also routes back here.
+  while (true) {
+    const name = await prompt(`  ${bold('Project name')} [${bold(suggested)}]: `);
+    const projectName = name || suggested;
+    const projectSlug = slugify(projectName);
+
+    if (!projectSlug) {
+      console.error(`  ${clrError('Invalid project name. Use letters, numbers, and hyphens.')}`);
+      continue;
+    }
+    if (taken.has(projectSlug)) {
+      console.error(`  ${clrError(`"${projectSlug}" already exists. Pick a different name.`)}`);
+      suggested = suggestProjectName([...taken]);
+      continue;
+    }
+
+    console.log(`  ${info(`Creating "${projectName}"...`)}`);
+    try {
+      const device = relayState.getDevice();
+      const body: { name: string; slug: string; autoChat?: 'claude_code'; deviceGuid?: string } = { name: projectName, slug: projectSlug };
+      if (device) { body.autoChat = 'claude_code'; body.deviceGuid = device.guid; }
+      const res = await post<{ data: ProjectData }>('/projects', body);
+      console.log(`  ${success('Created.')}`);
+      return res.data;
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 409) {
+        console.error(`  ${clrError(`"${projectSlug}" was just taken. Pick a different name.`)}`);
+        taken.add(projectSlug);
+        suggested = suggestProjectName([...taken]);
+        continue;
+      }
+      throw err;
+    }
   }
-
-  console.log(`  ${info(`Creating "${projectName}"...`)}`);
-  const res = await post<{ data: ProjectData }>('/projects', { name: projectName, slug: projectSlug });
-  console.log(`  ${success('Created.')}`);
-  return res.data;
 }
 

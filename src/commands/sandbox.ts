@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { error as clrError } from '../colors.js';
 import { run } from '../helpers/index.js';
 
@@ -19,15 +19,15 @@ export const sandboxCommand = new Command('sandbox')
 sandboxCommand
   .command('run <code>')
   .description('Run code in sandbox')
-  .option('--lang <language>', 'Language: js, py, or bash', 'js')
+  .option('--language <language>', 'Language: js, py, or bash', 'js')
   .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
   .option('--json', 'Output as JSON')
   .action((code: string, opts) => run('Sandbox', async () => {
-    const config = requireConfig();
-    const language = LANG_MAP[opts.lang] || opts.lang;
+    const { config } = await resolveProjectContext();
+    const language = LANG_MAP[opts.language] || opts.language;
 
     if (!['javascript', 'python', 'bash'].includes(language)) {
-      console.error(clrError(`Invalid language: ${opts.lang}. Use: js, py, or bash`));
+      console.error(clrError(`Invalid language: ${opts.language}. Use: js, py, or bash`));
       process.exit(1);
     }
 

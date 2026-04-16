@@ -127,7 +127,7 @@ agentCommand
       console.error(`Agent "${name}" not found.`);
       process.exit(1);
     }
-    if (!await confirm(`Delete agent "${match.name}"? (y/N) `)) {
+    if (!await confirm(`Delete agent "${match.name}"?`)) {
       console.log('Cancelled.');
       return;
     }

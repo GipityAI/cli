@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, del, post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { formatSize } from '../utils.js';
 import { info, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
@@ -20,7 +20,7 @@ fileCommand
   .description('List files in remote project')
   .option('--json', 'Output as JSON')
   .action((path: string | undefined, opts) => run('List', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const query = path ? `?path=${encodeURIComponent(path)}` : '';
     const res = await get<{ data: FileEntry[] }>(`/projects/${config.projectGuid}/files${query}`);
 
@@ -36,7 +36,7 @@ fileCommand
   .description('Read a remote file')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Read', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const res = await get<{ data: { content: string; size: number; mime: string } }>(
       `/projects/${config.projectGuid}/files/read?path=${encodeURIComponent(path)}`
     );
@@ -53,7 +53,7 @@ fileCommand
   .description('Show full file tree')
   .option('--json', 'Output as JSON')
   .action((path: string | undefined, opts) => run('Tree', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const query = path ? `?path=${encodeURIComponent(path)}` : '';
     const res = await get<{ data: Array<{ path: string; size: number; type: string }> }>(
       `/projects/${config.projectGuid}/files/tree${query}`
@@ -70,7 +70,7 @@ fileCommand
   .description('Delete a remote file or directory')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Delete', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const res = await del<{ success: boolean }>(
       `/projects/${config.projectGuid}/files?path=${encodeURIComponent(path)}`
     );
@@ -97,7 +97,7 @@ fileCommand
   .option('--limit <n>', 'Max versions to return', '20')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Versions', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const query = `?path=${encodeURIComponent(path)}&limit=${opts.limit}`;
     const res = await get<{ data: VersionEntry[] }>(
       `/projects/${config.projectGuid}/files/versions${query}`
@@ -115,7 +115,7 @@ fileCommand
   .description('Switch a file to a specific version (older or newer)')
   .option('--json', 'Output as JSON')
   .action((path: string, version: string, opts) => run('Restore', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const res = await post<{ data: { path: string; version: number; size: number } }>(
       `/projects/${config.projectGuid}/files/version-restore`,
       { path, version: Number(version) },
@@ -144,7 +144,7 @@ fileCommand
   .option('--no-recursive', 'Direct children only')
   .option('--json', 'Output as JSON')
   .action((datetime: string, opts) => run('Rollback', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const res = await post<{ data: RollbackData }>(
       `/projects/${config.projectGuid}/rollback`,
       { datetime, path: opts.path, recursive: opts.recursive !== false },

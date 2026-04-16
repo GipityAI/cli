@@ -91,7 +91,7 @@ recordsCommand
   .command('delete <table> <id>')
   .description('Delete a record')
   .action((table: string, id: string) => run('Delete', async () => {
-    if (!await confirm(`Delete record ${id} from "${table}"? (y/N) `)) {
+    if (!await confirm(`Delete record ${id} from "${table}"?`)) {
       console.log('Cancelled.');
       return;
     }

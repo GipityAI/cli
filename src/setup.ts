@@ -3,93 +3,39 @@
  */
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-export const SKILLS_CONTENT = `# Gipity Integration
+import { SKILLS_CONTENT, SCAFFOLD_HOOK_WARNING } from './prompts.js';
 
-Gipity is a platform for cloud agents — AI agents that run on a server with persistent memory, storage, a database, a sandboxed runtime, and direct internet access. Gip is the cloud agent on Gipity.
+export { SKILLS_CONTENT };
 
-This Claude Code session is connected to a Gipity project, so you have two ways to use the platform:
+/** Canonical list of workstation artifacts that are NOT part of the project.
+ *  Used as the single source of truth for three separate decisions:
+ *    1. Cloud sync — these files/globs are excluded from push and pull.
+ *    2. CLI file count (`listProjectFiles` in commands/claude.ts) — these don't
+ *       count toward "is this project empty?" for scaffold-gate and empty-state
+ *       prompt decisions.
+ *    3. Scaffold collision check — these can never collide with a scaffold
+ *       because they're already skipped by sync and by the empty check.
+ *
+ *  Mental model: a file in this list is a client-side artifact, not project
+ *  content. `CLAUDE.md` is generated fresh per-session from `SKILLS_CONTENT`
+ *  in prompts.ts and is CLI-version-dependent — syncing it would churn on
+ *  every CLI upgrade. `.gipity.json`, `.gipity/`, and `.claude/` are per-
+ *  workstation configuration. */
+export const DEFAULT_SYNC_IGNORE = [
+  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/',
+  '.gitignore', 'CLAUDE.md',
+];
 
-1. **Use Gipity directly via CLI** (fast, no agent overhead). The \`gipity\` CLI exposes ~30 commands covering the common cases: scaffold apps, deploy, query databases, call functions, run code in the sandbox, fetch logs, browse URLs, etc. Use these whenever possible.
-2. **Delegate to Gip** (required for capabilities not in the CLI). The Gipity platform has 90+ tools total — most are only reachable by asking Gip. Use \`gipity chat "<task>"\` to hand off. Required for: video generation and understanding, music and sound effects, TTS/speech generation, Twitter/X search, Gmail, calendar operations, realtime multiplayer rooms, push notifications, and anything else that benefits from agent reasoning or multi-step orchestration.
+/** True if `name` (a top-level dir entry) is a workstation artifact that
+ *  should be excluded from sync, file counts, and collision checks.
+ *  Matches exact names, trailing-slash dir patterns, and dotfiles generally. */
+export function isSyncIgnored(name: string): boolean {
+  if (name.startsWith('.')) return true;
+  if (DEFAULT_SYNC_IGNORE.includes(name)) return true;
+  if (DEFAULT_SYNC_IGNORE.includes(`${name}/`)) return true;
+  return false;
+}
 
-**You are the developer.** Write files in this directory — they auto-sync to Gipity via hooks. Do NOT run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
-
-## Workflow
-
-1. Write and edit files normally (auto-pushed to Gipity on every save)
-2. \`gipity deploy dev\` → live URL instantly
-3. \`gipity deploy prod\` when ready
-
-## CLI Commands
-
-| Command | Purpose |
-|---------|---------|
-| \`gipity scaffold [title]\` | Create app structure (\`--type web\`, \`--type 2d-game\`, or \`--type 3d-world\`) |
-| \`gipity deploy [dev\\|prod]\` | Deploy and get live URL |
-| \`gipity sync [up\\|down\\|check]\` | Manual file sync |
-| \`gipity db create <name>\` | Create a project database |
-| \`gipity db drop <name> [--project <slug>]\` | Drop a database (--project for cross-project) |
-| \`gipity db query "SQL"\` | Run SQL on project database |
-| \`gipity db list [--all]\` | List databases (--all for account-wide) |
-| \`gipity fn list\\|call <name> [body]\\|logs <name>\` | Manage serverless functions |
-| \`gipity memory list\\|read\\|write\` | Persistent key-value memory |
-| \`gipity browser <url>\` | Inspect URL: console errors, timing, resources |
-| \`gipity logs fn <name>\` | View function execution logs |
-| \`gipity sandbox <lang> "code"\` | Execute code in cloud sandbox |
-| \`gipity location [ip\\|lat lng]\` | IP geo / reverse-geocode / caller location |
-| \`gipity chat <message>\` | Send a task to the Gipity agent |
-| \`gipity skills list\` | List all available skill docs |
-| \`gipity skills read <name>\` | Read detailed docs on a topic |
-| \`gipity status\` | Check project and auth status |
-
-All commands support \`--json\` for structured output. Use \`--help\` on any command for details (auto-fetches relevant skill docs from the server).
-
-## Platform Capabilities
-
-- **App hosting**: Deploy to dev/prod URLs on Gipity CDN
-- **Databases**: Per-project PostgreSQL databases with SQL access
-- **Serverless functions**: JavaScript functions callable via REST
-- **Multiplayer**: Colyseus WebSocket rooms (relay and state-synced)
-- **Image generation**: OpenAI (gpt-image-1, DALL-E 3) and BFL/Flux
-- **Speech / TTS**: ElevenLabs and OpenAI voices
-- **Audio/video processing**: FFmpeg, sox, transcription, source isolation
-- **Web search**: Brave API
-- **Browser automation**: Open URLs, screenshot, click, fill forms, console
-- **Workflows**: Cron or webhook-triggered multi-step AI pipelines
-- **Email**: SendGrid transactional email
-- **Cloud sandbox**: Python, Node.js, Bash with 50+ pre-installed tools
-- **Cross-model queries**: Ask GPT-5, Claude, etc. for second opinions
-
-## Detailed Documentation
-
-Run \`gipity skills list\` to see all available skill docs. Run \`gipity skills read <name>\` to read one. Key skills:
-
-- **web-app-basics** — coding guidelines, file structure, HTML/CSS/JS patterns
-- **app-development** — functions, database & API (write functions → deploy → test → call via REST)
-- **app-auth** — user authentication (Sign in with Gipity)
-- **app-realtime** — multiplayer rooms (Colyseus WebSocket)
-- **3d-world** — 3D multiplayer game template (Three.js + Rapier + Colyseus)
-- **2d-game** — 2D game template (Phaser 3)
-- **sandbox-tools** — cloud sandbox capabilities and pre-installed tools
-
-Load the relevant skill BEFORE starting a task — they contain the correct API patterns, code examples, and common mistakes.
-
-## File Operations
-
-All file creation and editing should happen locally — hooks auto-push changes to Gipity. Do NOT use \`gipity chat\` to create or edit files. Use \`gipity sync\` if files get out of sync. Files generated remotely by \`gipity chat\` (images, audio, etc.) also sync down automatically and can be referenced in your code like any local file.
-
-## Authentication
-
-1. \`gipity login --email user@example.com\` → sends a 6-digit code
-2. \`gipity login --email user@example.com --code 123456\`
-
-## Sync Behavior
-
-- **Auto-push**: Files push to Gipity after every Write/Edit (hook)
-- **Auto-pull**: Remote changes pull before each prompt (hook)
-- **Tool-generated files sync too**: Images, audio, and other files created by \`gipity chat\` or remote agent tools are project files that auto-pull like any other
-- **Deletes are safe**: Use \`rollback\` tool with a datetime to undo, or \`file_version_restore\` for individual files
-`;
 
 
 // Permissions: auto-allow safe gipity commands in Claude Code
@@ -132,22 +78,87 @@ export const PERMISSIONS_SETTINGS = {
   },
 };
 
-// Cross-platform hooks using node -e (no bash/jq dependency)
+// Cross-platform hooks using node -e (no bash/jq dependency).
+//
+// Capture hooks (start/prompt/tool/stop/end/compact) forward Claude Code hook
+// payloads to Gipity so the conversation is viewable in the web CLI. They pipe
+// stdin directly to `gipity hook-capture <event>`, which guards on
+// .gipity.json + auth and silently no-ops otherwise. See
+// docs/feature-backlog/claude-code-web-cli-bridge.md.
+// Buffer stdin fully before spawning the detached child and writing the
+// payload to its stdin. Piping stdin directly + timing out on the parent
+// truncates large payloads (big tool_response, long transcripts) when the
+// parent exits before the pipe drains. Same shape as the Write|Edit push
+// shim below.
+function captureHook(event: string): string {
+  return `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{if(!require('fs').existsSync('.gipity.json'))return;const p=require('child_process').spawn('gipity',['hook-capture','${event}'],{stdio:['pipe','ignore','ignore'],detached:true,shell:true});p.stdin.end(d);p.unref()})"`;
+}
+
 export const HOOKS_SETTINGS = {
   hooks: {
-    PostToolUse: [{
-      matcher: 'Write|Edit',
-      hooks: [{
-        type: 'command',
-        command: `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d).tool_input?.file_path;if(!p||!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').spawn('gipity',['push',p,'--quiet'],{stdio:'ignore',detached:true,shell:true}).unref()}catch{}})"`,
-      }],
-    }],
-    UserPromptSubmit: [{
+    SessionStart: [{
       matcher: '',
-      hooks: [{
-        type: 'command',
-        command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync down --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.pulled>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed remotely.')}))}catch{}})"`,
-      }],
+      hooks: [{ type: 'command', command: captureHook('start') }],
+    }],
+    SessionEnd: [{
+      matcher: '',
+      hooks: [{ type: 'command', command: captureHook('end') }],
+    }],
+    PreCompact: [{
+      matcher: '',
+      hooks: [{ type: 'command', command: captureHook('compact') }],
+    }],
+    PreToolUse: [
+      {
+        // Soft scaffold reminder. If this is a Gipity project (has
+        // .gipity.json) AND has no scaffold markers (gipity.yaml, src/,
+        // functions/, package.json), nudge the agent to scaffold first
+        // when building an app. Non-blocking — exit 0 always; stderr is
+        // visible to Claude as an advisory. Auto-quiet once any scaffold
+        // marker appears, so it doesn't spam during normal editing.
+        matcher: 'Write|Edit',
+        hooks: [{
+          type: 'command',
+          // Embed warning as a single-quoted JS string (safe: shell double
+          // quotes survive, and SCAFFOLD_HOOK_WARNING is plain ASCII without
+          // single quotes or backslashes).
+          command: `node -e "const fs=require('fs');if(!fs.existsSync('.gipity.json'))process.exit(0);const m=['gipity.yaml','src','functions','package.json'].some(p=>fs.existsSync(p));if(m)process.exit(0);process.stderr.write('${SCAFFOLD_HOOK_WARNING.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}\\n');process.exit(0)"`,
+        }],
+      },
+    ],
+    PostToolUse: [
+      {
+        // File sync for Write/Edit (existing behavior)
+        matcher: 'Write|Edit',
+        hooks: [{
+          type: 'command',
+          command: `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d).tool_input?.file_path;if(!p||!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').spawn('gipity',['push',p,'--quiet'],{stdio:'ignore',detached:true,shell:true}).unref()}catch{}})"`,
+        }],
+      },
+      {
+        // Conversation capture for every tool call
+        matcher: '.*',
+        hooks: [{ type: 'command', command: captureHook('tool') }],
+      },
+    ],
+    UserPromptSubmit: [
+      {
+        // Sync down + optional system-message (existing behavior)
+        matcher: '',
+        hooks: [{
+          type: 'command',
+          command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync down --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.pulled>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed remotely.')}))}catch{}})"`,
+        }],
+      },
+      {
+        // Capture the user's prompt
+        matcher: '',
+        hooks: [{ type: 'command', command: captureHook('prompt') }],
+      },
+    ],
+    Stop: [{
+      matcher: '',
+      hooks: [{ type: 'command', command: captureHook('stop') }],
     }],
   },
 };

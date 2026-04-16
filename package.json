@@ -1,17 +1,19 @@
 {
   "name": "gipity",
-  "version": "1.0.156",
-  "description": "Connect AI coding agents like Claude Code to the Gipity platform",
+  "version": "1.0.248",
+  "description": "Cloud agents for builders — 90+ tools, persistent memory, app hosting, databases, deploys. Pair with Claude Code or use standalone.",
   "bin": {
-    "gipity": "./dist/index.js",
+    "gipity": "./dist/updater/shim.js",
     "gipcc": "./dist/gipcc.js",
     "gipccd": "./dist/gipccd.js"
   },
   "type": "module",
   "scripts": {
-    "build": "tsc && chmod +x dist/index.js dist/gipcc.js dist/gipccd.js",
+    "build": "tsc && chmod +x dist/index.js dist/gipcc.js dist/gipccd.js dist/updater/shim.js dist/updater/check.js",
     "dev": "tsc --watch",
-    "test": "tsc && node --test dist/__tests__/*.test.js"
+    "test": "npm run test:smoke",
+    "test:smoke": "tsc && node --test dist/__tests__/utils.test.js dist/__tests__/config.test.js dist/__tests__/sync.test.js dist/__tests__/upload.test.js dist/__tests__/updater.test.js dist/__tests__/cli-smoke.test.js dist/__tests__/claude-noninteractive.test.js dist/__tests__/hook-capture.test.js dist/__tests__/relay-state.test.js dist/__tests__/relay-daemon.test.js dist/__tests__/relay-installers.test.js",
+    "test:e2e": "tsc && GIPITY_E2E=1 node --test --test-timeout=180000 dist/__tests__/cli-e2e-live.test.js"
   },
   "dependencies": {
     "commander": "^13.0.0",

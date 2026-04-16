@@ -30,6 +30,17 @@ gipity claude
 
 That's it. `claude` walks you through login, project setup, and launches Claude Code.
 
+## Updates
+
+The CLI auto-updates in the background. After your one-time `npm install -g gipity`, every run silently checks npm for a new version and installs it into `~/.gipity/local/` — no sudo, no re-running install commands. The new version takes effect on your next invocation.
+
+```bash
+gipity doctor   # show install version, last update check, opt-out status
+gipity update   # force an immediate update now
+```
+
+To opt out: `export DISABLE_AUTOUPDATER=1` (matches Claude Code), or set `{ "autoUpdates": false }` in `~/.gipity/settings.json`. CI environments are auto-detected and skipped.
+
 ## Quick Start
 
 One command. It walks you through login, project setup, and drops you into Claude Code.

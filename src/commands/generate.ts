@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { writeFileSync } from 'fs';
 import { error as clrError, success, muted, info } from '../colors.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
@@ -48,7 +48,7 @@ Examples:
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
     try {
-      const config = requireConfig();
+      const { config } = await resolveProjectContext();
       const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
         prompt,
         provider: opts.provider,
@@ -105,7 +105,7 @@ Examples:
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
     try {
-      const config = requireConfig();
+      const { config } = await resolveProjectContext();
       console.log(info('Generating video (this may take 30-120 seconds)...'));
 
       const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/video`, {
@@ -157,7 +157,7 @@ Examples:
   .option('--json', 'Output as JSON')
   .action(async (text: string, opts) => {
     try {
-      const config = requireConfig();
+      const { config } = await resolveProjectContext();
 
       let speakers;
       if (opts.speakers) {

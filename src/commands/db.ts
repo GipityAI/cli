@@ -140,7 +140,7 @@ dbCommand
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Drop', async () => {
     const label = opts.project ? `'${name}' from project '${opts.project}'` : `'${name}'`;
-    if (!await confirm(`Drop database ${label}? This cannot be undone. (y/N) `, opts.yes)) {
+    if (!await confirm(`Drop database ${label}? This cannot be undone.`, { skip: opts.yes })) {
       console.log('Cancelled.');
       return;
     }

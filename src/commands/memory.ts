@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, put, del } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { error as clrError, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 import { confirm } from '../utils.js';
@@ -20,7 +20,7 @@ memoryCommand
   .option('--project', 'List project memory (default is agent memory)')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const endpoint = opts.project
       ? `/projects/${config.projectGuid}/memory`
       : `/agents/${config.agentGuid}/memory`;
@@ -37,7 +37,7 @@ memoryCommand
   .option('--project', 'Read project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, opts) => run('Read', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const endpoint = opts.project
       ? `/projects/${config.projectGuid}/memory`
       : `/agents/${config.agentGuid}/memory`;
@@ -63,7 +63,7 @@ memoryCommand
   .option('--project', 'Write to project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, content: string, opts) => run('Write', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const endpoint = opts.project
       ? `/projects/${config.projectGuid}/memory/${encodeURIComponent(topic)}`
       : `/agents/${config.agentGuid}/memory/${encodeURIComponent(topic)}`;
@@ -83,11 +83,11 @@ memoryCommand
   .option('--project', 'Delete project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, opts) => run('Delete', async () => {
-    if (!await confirm(`Delete memory "${topic}"? (y/N) `)) {
+    if (!await confirm(`Delete memory "${topic}"?`)) {
       console.log('Cancelled.');
       return;
     }
-    const config = requireConfig();
+    const { config } = await resolveProjectContext();
     const endpoint = opts.project
       ? `/projects/${config.projectGuid}/memory/${encodeURIComponent(topic)}`
       : `/agents/${config.agentGuid}/memory/${encodeURIComponent(topic)}`;

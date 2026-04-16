@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { error as clrError, success } from '../colors.js';
 
 export const emailCommand = new Command('email')
@@ -11,7 +11,7 @@ export const emailCommand = new Command('email')
   .option('--json', 'Output as JSON')
   .action(async (opts) => {
     try {
-      requireConfig();
+      await resolveProjectContext();
       const res = await post<{ data: { to: string; subject: string } }>('/agent-email/send', {
         subject: opts.subject,
         body: opts.body,
