@@ -1,10 +1,15 @@
 import { Command } from 'commander';
-import { get, post, put, del } from '../api.js';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
+import { get, post, put, del, getAccountSlug } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
 import { slugify } from '../setup.js';
-import { error as clrError, brand, muted } from '../colors.js';
+import { error as clrError, brand, muted, info, success } from '../colors.js';
 import { confirm } from '../utils.js';
 import { run, printList } from '../helpers/index.js';
+import { getProjectsRoot } from '../relay/paths.js';
+import { finalizeLocalProject } from '../project-setup.js';
+import * as relayState from '../relay/state.js';
 
 interface ProjectData {
   short_guid: string;
@@ -13,6 +18,11 @@ interface ProjectData {
   description: string | null;
   is_default: number;
   created_at: string;
+}
+
+interface AgentData {
+  short_guid: string;
+  name: string;
 }
 
 export const projectCommand = new Command('project')
@@ -50,24 +60,80 @@ export const projectCommand = new Command('project')
 
 projectCommand
   .command('create <name>')
-  .description('Create a new project')
+  .description('Create a new project, materialize it under ~/GipityProjects, and link this machine to it')
   .option('--slug <slug>', 'Project slug')
-  .option('--switch', 'Switch to new project after creation')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
     const slug = opts.slug || slugify(name);
-    const res = await post<{ data: ProjectData }>('/projects', { name, slug });
 
-    if (opts.switch) {
-      const config = requireConfig();
-      saveConfig({ ...config, projectGuid: res.data.short_guid, projectSlug: res.data.slug, conversationGuid: null });
+    // Auto-chat so the project surfaces at the top of both picker lists —
+    // `projects.dal.ts` orders by most recent conversation activity. Same
+    // shape `gipity claude` uses for its picker-created projects.
+    const device = relayState.getDevice();
+    const body: {
+      name: string; slug: string;
+      autoChat?: 'claude_code' | 'gip';
+      deviceGuid?: string;
+    } = { name, slug };
+    if (device) {
+      body.autoChat = 'claude_code';
+      body.deviceGuid = device.guid;
+    } else {
+      body.autoChat = 'gip';
     }
 
+    const res = await post<{ data: ProjectData }>('/projects', body);
+    const project = res.data;
+
+    // Materialize a local dir and link it. We write `.gipity.json` directly
+    // inside the new dir (via `saveConfigAt`, used by `finalizeLocalProject`)
+    // so running this from inside another project's dir never walks up and
+    // rewrites that project's config.
+    const dir = join(getProjectsRoot(), project.slug);
+    mkdirSync(dir, { recursive: true });
+
+    const accountSlug = await getAccountSlug();
+
+    // Resolve the first assigned agent (if any) — not fatal if missing.
+    let agentGuid = '';
+    try {
+      const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
+      if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
+    } catch {
+      // offline or no agents — non-fatal
+    }
+
+    const { pushed, pulled } = await finalizeLocalProject({
+      dir,
+      projectGuid: project.short_guid,
+      projectSlug: project.slug,
+      accountSlug,
+      agentGuid,
+      sync: 'soft',
+      confirmDeletions: false,
+    });
+
     if (opts.json) {
-      console.log(JSON.stringify(res.data));
+      console.log(JSON.stringify({
+        created: project.slug,
+        guid: project.short_guid,
+        dir,
+        pushed,
+        pulled,
+      }));
+      return;
+    }
+
+    console.log(success(`Created "${project.name}" (${project.slug})`));
+    console.log(`Initialized ${info(dir)}`);
+    if (pushed > 0) console.log(`Pushed ${pushed} file${pushed > 1 ? 's' : ''} to Gipity.`);
+    if (pulled > 0) console.log(`Pulled ${pulled} file${pulled > 1 ? 's' : ''}.`);
+    console.log('');
+    if (process.env.GIPITY_NON_INTERACTIVE === '1') {
+      console.log(`${muted('Next:')} switch to "${project.name}" in the sidebar.`);
     } else {
-      console.log(`Created "${res.data.name}" (${res.data.slug})`);
-      if (opts.switch) console.log('Switched.');
+      console.log(`${muted('Next:')} exit Claude (Ctrl+D), then run:  ${brand('gipity claude')}`);
+      console.log(`${muted('Pick')} "${project.name}" ${muted(`— it'll be at the top of the list.`)}`);
     }
   }));
 

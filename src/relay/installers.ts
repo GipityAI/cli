@@ -2,11 +2,17 @@
  * Platform-specific service-unit generation for `gipity relay install`.
  *
  * Each platform returns:
- *   - `path`          — where to write the unit file
- *   - `content`       — the rendered file body
- *   - `enableCmd`     — shell command to register + start the service
- *   - `disableCmd`    — shell command to stop + unregister the service
- *   - `statusCmd`     — shell command a user can run to check the service
+ *   - `path`              — where to write the unit file
+ *   - `content`           — the rendered file body
+ *   - `enableCmds`        — argv arrays run in sequence (fail-fast) to register
+ *   - `disableCmds`       — argv arrays run in sequence (best-effort) to remove
+ *   - `statusCmd`         — argv to query whether the service is registered
+ *   - `enableDisplay` etc — human-readable strings for log/error messages
+ *
+ * **No shell.** Commands are argv arrays so the embedded `cliPath` (and the
+ * unit-file path, which contains `homedir()`) cannot inject via spaces or
+ * shell metacharacters when the user's npm prefix lives somewhere like
+ * `/Program Files/...` or `~/My Stuff/`.
  *
  * File-content generation is pure + unit-tested. Actually running the
  * enable/disable/status commands happens in the CLI command layer so tests
@@ -19,9 +25,15 @@ export interface InstallerPlan {
   platform: 'darwin' | 'linux' | 'win32';
   path: string;
   content: string;
-  enableCmd: string;
-  disableCmd: string;
-  statusCmd: string;
+  /** Argv arrays — each spawned without a shell, in sequence. Enable is
+   *  treated fail-fast by the runner; disable is best-effort. */
+  enableCmds: string[][];
+  disableCmds: string[][];
+  statusCmd: string[];
+  /** Human-readable join of the argv (for "try manually" messages). */
+  enableDisplay: string;
+  disableDisplay: string;
+  statusDisplay: string;
   /** A user-readable sentence describing what this platform's unit does. */
   summary: string;
 }
@@ -39,12 +51,22 @@ export function planFor(opts: { cliPath: string; platformOverride?: string }): I
   throw new UnsupportedPlatformError(plat);
 }
 
+function display(argvs: string[][]): string {
+  return argvs.map(a => a.join(' ')).join(' && ');
+}
+
 // ─── macOS — launchd (user LaunchAgent) ────────────────────────────────
 
 function launchdPlan(cliPath: string): InstallerPlan {
   const label = 'ai.gipity.relay';
   const path = join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
   const logDir = join(homedir(), 'Library', 'Logs', 'Gipity');
+  // launchctl needs gui/<uid>. Old plan used `$(id -u)` via sh; we now
+  // resolve uid at plan time so we can spawn launchctl directly. process
+  // .getuid is undefined on Windows (we never run launchdPlan there) but
+  // optional-chained for safety.
+  const uid = process.getuid?.() ?? 0;
+  const target = `gui/${uid}`;
   const content = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -64,13 +86,19 @@ function launchdPlan(cliPath: string): InstallerPlan {
 </dict>
 </plist>
 `;
+  const enableCmds = [['launchctl', 'bootstrap', target, path]];
+  const disableCmds = [['launchctl', 'bootout', target, path]];
+  const statusCmd = ['launchctl', 'print', `${target}/${label}`];
   return {
     platform: 'darwin',
     path,
     content,
-    enableCmd: `launchctl bootstrap gui/$(id -u) "${path}"`,
-    disableCmd: `launchctl bootout gui/$(id -u) "${path}"`,
-    statusCmd: `launchctl print gui/$(id -u)/${label}`,
+    enableCmds,
+    disableCmds,
+    statusCmd,
+    enableDisplay: display(enableCmds),
+    disableDisplay: display(disableCmds),
+    statusDisplay: statusCmd.join(' '),
     summary: 'LaunchAgent at ~/Library/LaunchAgents/ai.gipity.relay.plist (starts at login, auto-restarts)',
   };
 }
@@ -96,13 +124,22 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 `;
+  const enableCmds = [
+    ['systemctl', '--user', 'daemon-reload'],
+    ['systemctl', '--user', 'enable', '--now', unitName],
+  ];
+  const disableCmds = [['systemctl', '--user', 'disable', '--now', unitName]];
+  const statusCmd = ['systemctl', '--user', 'status', unitName];
   return {
     platform: 'linux',
     path,
     content,
-    enableCmd: `systemctl --user daemon-reload && systemctl --user enable --now ${unitName}`,
-    disableCmd: `systemctl --user disable --now ${unitName}`,
-    statusCmd: `systemctl --user status ${unitName}`,
+    enableCmds,
+    disableCmds,
+    statusCmd,
+    enableDisplay: display(enableCmds),
+    disableDisplay: display(disableCmds),
+    statusDisplay: statusCmd.join(' '),
     summary: `systemd user unit at ~/.config/systemd/user/${unitName} (starts on login, restarts on failure)`,
   };
 }
@@ -112,8 +149,6 @@ WantedBy=default.target
 function windowsTaskPlan(cliPath: string): InstallerPlan {
   const taskName = 'GipityRelay';
   const path = join(homedir(), 'AppData', 'Local', 'Gipity', 'relay-task.xml');
-  // Minimal Task Scheduler XML: triggers at logon, runs the CLI, restarts
-  // on failure up to 999 times with a 1-minute gap.
   const content = `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -145,13 +180,25 @@ function windowsTaskPlan(cliPath: string): InstallerPlan {
   </Actions>
 </Task>
 `;
+  const enableCmds = [
+    ['schtasks', '/Create', '/TN', taskName, '/XML', path, '/F'],
+    ['schtasks', '/Run', '/TN', taskName],
+  ];
+  const disableCmds = [
+    ['schtasks', '/End', '/TN', taskName],
+    ['schtasks', '/Delete', '/TN', taskName, '/F'],
+  ];
+  const statusCmd = ['schtasks', '/Query', '/TN', taskName, '/V', '/FO', 'LIST'];
   return {
     platform: 'win32',
     path,
     content,
-    enableCmd: `schtasks /Create /TN "${taskName}" /XML "${path}" /F && schtasks /Run /TN "${taskName}"`,
-    disableCmd: `schtasks /End /TN "${taskName}" & schtasks /Delete /TN "${taskName}" /F`,
-    statusCmd: `schtasks /Query /TN "${taskName}" /V /FO LIST`,
+    enableCmds,
+    disableCmds,
+    statusCmd,
+    enableDisplay: display(enableCmds),
+    disableDisplay: display(disableCmds),
+    statusDisplay: statusCmd.join(' '),
     summary: `Task Scheduler task "${taskName}" (starts at logon, restarts on failure)`,
   };
 }

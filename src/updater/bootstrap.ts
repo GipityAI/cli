@@ -10,17 +10,21 @@ export function isBootstrapped(): boolean {
 /**
  * Install gipity@<version> into ~/.gipity/local/. Synchronous: blocks the
  * user's first run with a one-line status. Returns true on success.
+ *
+ * `quiet` suppresses the status and fallback-reason lines — used for
+ * subcommands where chatty startup output clutters tool transcripts (e.g.
+ * `gipity scaffold`, `gipity skills`). Loud output is reserved for bare
+ * `gipity`, `gipity claude`, and `gipity --version`.
  */
-export function bootstrap(version: string): boolean {
+export function bootstrap(version: string, quiet = false): boolean {
   mkdirSync(LOCAL_DIR, { recursive: true });
 
-  // Minimal package.json so npm has a project root to install into.
   const pkgJsonPath = join(LOCAL_DIR, 'package.json');
   if (!existsSync(pkgJsonPath)) {
     writeFileSync(pkgJsonPath, JSON.stringify({ name: 'gipity-local', private: true, version: '0.0.0' }, null, 2));
   }
 
-  process.stderr.write(`Setting up gipity local install at ~/.gipity/local (one-time)...\n`);
+  if (!quiet) process.stderr.write(`Setting up gipity local install at ~/.gipity/local (one-time)...\n`);
   const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -28,14 +32,16 @@ export function bootstrap(version: string): boolean {
   });
 
   if (res.status !== 0 || !existsSync(LOCAL_ENTRY)) {
-    const stderr = (res.stderr || '').toString();
-    const notPublished = /E404|No matching version|notarget/i.test(stderr);
-    if (notPublished) {
-      process.stderr.write(`gipity v${version} is not yet published to npm — using the currently installed build.\n`);
-    } else {
-      const firstLine = stderr.split('\n').map(l => l.trim()).find(l => l.length > 0) || `npm exit ${res.status}`;
-      const reason = firstLine.length > 160 ? firstLine.slice(0, 157) + '...' : firstLine;
-      process.stderr.write(`gipity: could not set up local install (${reason}). Using the currently installed build.\n`);
+    if (!quiet) {
+      const stderr = (res.stderr || '').toString();
+      const notPublished = /E404|No matching version|notarget/i.test(stderr);
+      if (notPublished) {
+        process.stderr.write(`gipity v${version} is not yet published to npm — using the currently installed build.\n`);
+      } else {
+        const firstLine = stderr.split('\n').map(l => l.trim()).find(l => l.length > 0) || `npm exit ${res.status}`;
+        const reason = firstLine.length > 160 ? firstLine.slice(0, 157) + '...' : firstLine;
+        process.stderr.write(`gipity: could not set up local install (${reason}). Using the currently installed build.\n`);
+      }
     }
     return false;
   }
@@ -43,7 +49,7 @@ export function bootstrap(version: string): boolean {
   const state = readState();
   state.installedVersion = version;
   writeState(state);
-  process.stderr.write(`Done.\n\n`);
+  if (!quiet) process.stderr.write(`Done.\n\n`);
   return true;
 }
 

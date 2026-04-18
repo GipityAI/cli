@@ -24,6 +24,10 @@ skillsCommand
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
     const { config } = await resolveProjectContext();
+    if (!config.agentGuid) {
+      console.error(clrError('No agent configured for this project. Run `gipity init` to refresh.'));
+      process.exit(1);
+    }
     const res = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
 
     printList(res.data, opts, 'No skills available.', s =>
@@ -37,6 +41,10 @@ skillsCommand
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Read', async () => {
     const { config } = await resolveProjectContext();
+    if (!config.agentGuid) {
+      console.error(clrError('No agent configured for this project. Run `gipity init` to refresh.'));
+      process.exit(1);
+    }
     const listRes = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
     const match = listRes.data.find(s => s.name.toLowerCase() === name.toLowerCase());
     if (!match) {

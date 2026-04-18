@@ -44,8 +44,21 @@ function execSelf(): never {
   process.exit(res.status ?? 1);
 }
 
+// Loud startup output (bootstrap status, npm-fallback notice) is reserved for
+// the handful of commands where users expect a visible chrome banner. All other
+// subcommands — scaffold, skills, fn, test, deploy, etc. — run silently so
+// their output stays clean in transcripts and agent tool results.
+const rawArgs = process.argv.slice(2);
+const firstArg = rawArgs[0];
+const isLoud =
+  rawArgs.length === 0 ||
+  firstArg === 'claude' ||
+  firstArg === '--version' ||
+  firstArg === '-v' ||
+  firstArg === 'version';
+
 if (!isBootstrapped()) {
-  const ok = bootstrap(shimPkg.version);
+  const ok = bootstrap(shimPkg.version, !isLoud);
   if (!ok) execSelf();
 }
 

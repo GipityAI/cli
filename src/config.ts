@@ -155,6 +155,16 @@ export function saveConfig(data: GipityConfig): void {
   cachedPath = path;
 }
 
+/** Write `.gipity.json` at an explicit directory, bypassing the walk-up search.
+ *  Use this when initializing a brand-new project directory so we never
+ *  accidentally rewrite a parent project's config file. */
+export function saveConfigAt(dir: string, data: GipityConfig): void {
+  const path = resolve(dir, CONFIG_FILE);
+  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+  cached = data;
+  cachedPath = path;
+}
+
 export function shouldIgnore(filePath: string, ignorePatterns: string[]): boolean {
   for (const pattern of ignorePatterns) {
     // Simple glob matching: exact match, prefix match, or extension match

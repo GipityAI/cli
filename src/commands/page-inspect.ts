@@ -28,12 +28,12 @@ function shortUrl(url: string): string {
   }
 }
 
-export const browserCommand = new Command('browser')
+export const pageInspectCommand = new Command('page-inspect')
   .description('Inspect a URL: console errors, performance, failed resources')
   .argument('<url>', 'URL to inspect')
   .option('--wait <ms>', 'Wait before capture in ms', '3000')
   .option('--json', 'Output as JSON')
-  .action((url: string, opts) => run('Browser inspect', async () => {
+  .action((url: string, opts) => run('Page inspect', async () => {
     const { config } = await resolveProjectContext();
     const waitMs = parseInt(opts.wait, 10) || 3000;
 

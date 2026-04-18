@@ -18,7 +18,7 @@ import * as daemon from '../relay/daemon.js';
 import { registerInstallCommands } from './relay-install.js';
 
 export const relayCommand = new Command('relay')
-  .description('Connect your local Claude Code to the Gipity web CLI');
+  .description('Pair this machine\'s Claude Code with the Gipity web CLI');
 
 // ─── gipity relay status ───────────────────────────────────────────────
 
@@ -41,12 +41,12 @@ relayCommand
 
     console.log('');
     if (!s.device) {
-      console.log(`  ${muted('No device registered.')} Run ${brand('gipity claude')} (or ${brand('gipity relay run')}) to register this device.`);
+      console.log(`  ${muted('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
       return;
     }
     console.log(`  ${bold('Device:')}      ${brand(s.device.name)} ${muted(`(${s.device.guid})`)}`);
     console.log(`  ${bold('Platform:')}    ${s.device.platform}`);
-    console.log(`  ${bold('Registered:')}  ${s.device.paired_at}`);
+    console.log(`  ${bold('Paired:')}      ${s.device.paired_at}`);
     console.log(`  ${bold('Paused:')}      ${s.paused ? 'yes' : 'no'}`);
     console.log('');
   });
@@ -55,8 +55,8 @@ relayCommand
 
 relayCommand
   .command('run')
-  .description('Start the long-running helper that accepts dispatches from the web CLI')
-  .option('-v, --verbose', 'Log every dispatch decision (project cwd, session chain, spawn argv) — useful for watching behavior live')
+  .description('Run the background service that receives commands from the web CLI')
+  .option('-v, --verbose', 'Log every incoming command (project cwd, session chain, spawn argv) — useful for watching behavior live')
   .action(async (opts: { verbose?: boolean }) => {
     // Tests bound the run via this env so they don't hang on SIGKILL.
     const maxRunMs = process.env.GIPITY_RELAY_MAX_RUN_MS
@@ -70,12 +70,12 @@ relayCommand
 
 relayCommand
   .command('stop')
-  .description('Stop the running daemon (sends SIGTERM to the PID in ~/.gipity/relay.pid)')
-  .option('--force', 'SIGKILL if the daemon doesn\'t exit within 5s')
+  .description('Stop the background service')
+  .option('--force', 'Force-stop if it doesn\'t exit cleanly within 5s')
   .action(async (opts: { force?: boolean }) => {
     const pidPath = state.getDaemonPidPath();
     if (!existsSync(pidPath)) {
-      console.log(`  ${muted('No daemon PID file — nothing to stop.')}`);
+      console.log(`  ${muted('Background service isn\'t running.')}`);
       return;
     }
     const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
@@ -109,13 +109,13 @@ relayCommand
     if (alive) {
       if (opts.force) {
         try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
-        console.log(`  ${success('Daemon killed (SIGKILL).')}`);
+        console.log(`  ${success('Background service force-stopped.')}`);
       } else {
-        console.error(`  ${clrError(`PID ${pid} still running after 5s. Retry with --force to SIGKILL.`)}`);
+        console.error(`  ${clrError(`Didn't shut down cleanly after 5s. Retry with --force to stop it.`)}`);
         process.exit(1);
       }
     } else {
-      console.log(`  ${success(`Daemon stopped (PID ${pid}).`)}`);
+      console.log(`  ${success('Background service stopped.')}`);
     }
   });
 
@@ -123,16 +123,16 @@ relayCommand
 
 relayCommand
   .command('pause')
-  .description('Temporarily stop accepting dispatches (without unpairing)')
+  .description('Temporarily stop accepting commands (without unpairing)')
   .action(() => {
     requirePaired();
     state.setPaused(true);
-    console.log(`  ${success('Paused.')} ${dim('Run `gipity relay resume` to accept dispatches again.')}`);
+    console.log(`  ${success('Paused.')} ${dim('Run `gipity relay resume` to accept commands again.')}`);
   });
 
 relayCommand
   .command('resume')
-  .description('Resume accepting dispatches after a pause')
+  .description('Resume accepting commands after a pause')
   .action(() => {
     requirePaired();
     state.setPaused(false);
@@ -186,20 +186,20 @@ relayCommand
     }
     state.clearDevice();
     console.log(`  ${success('Device revoked + local state cleared.')}`);
-    console.log(`  ${dim('Any running `gipity relay run` daemon will detect the revoke and exit within ~30s.')}`);
+    console.log(`  ${dim('Any running background service will notice and exit within ~30s.')}`);
   });
 
 // ─── gipity relay log ──────────────────────────────────────────────────
 
 relayCommand
   .command('log')
-  .description('Show the daemon\'s recent log (tails ~/.gipity/relay.log)')
+  .description('Show the background service\'s recent log (tails ~/.gipity/relay.log)')
   .option('-n, --lines <n>', 'How many lines to print (default 100)', '100')
   .option('-f, --follow', 'Follow the log like `tail -f`')
   .action((opts: { lines: string; follow?: boolean }) => {
     const path = daemon.RELAY_LOG_PATH;
     if (!existsSync(path)) {
-      console.log(`  ${muted('No log file yet. Start the daemon with `gipity relay run` (or install it).')}`);
+      console.log(`  ${muted('No log file yet. Start the service with `gipity relay run` (or install it).')}`);
       return;
     }
     const lines = parseInt(opts.lines, 10) || 100;
@@ -232,7 +232,7 @@ registerInstallCommands(relayCommand);
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
   if (!device) {
-    console.error(`  ${clrError('No device registered.')} Run ${brand('gipity claude')} (or ${brand('gipity relay run')}) first.`);
+    console.error(`  ${clrError('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
     process.exit(1);
   }
   return device;

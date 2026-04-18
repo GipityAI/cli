@@ -51,35 +51,84 @@ interface AgentData {
   name: string;
 }
 
-function listProjectFiles(dir: string, limit = 40): { contents: string; count: number } {
-  // `isSyncIgnored` is the single source of truth for "is this a workstation
-  // artifact?" — see setup.ts:DEFAULT_SYNC_IGNORE. Anything it ignores is not
-  // counted here so scaffolding and empty-state prompts see a "just-provisioned"
-  // project (with only CLAUDE.md / .gipity.json) as empty.
-  const entries: string[] = [];
-  let count = 0;
-  let truncated = false;
-  try {
-    for (const name of readdirSync(dir).sort()) {
-      if (isSyncIgnored(name)) continue;
-      count++;
-      if (entries.length >= limit) { truncated = true; continue; }
-      try {
-        const isDir = statSync(join(dir, name)).isDirectory();
-        entries.push(isDir ? `${name}/` : name);
-      } catch { /* skip */ }
-    }
-  } catch { /* empty */ }
-  if (truncated) entries.push('…');
-  return {
-    contents: entries.length ? entries.join(', ') : '(empty directory)',
-    count,
-  };
+interface ProjectStats {
+  fileCount: number;
+  folderCount: number;
+  totalBytes: number;
+  topLevel: string;
 }
 
-/** Thin wrappers that scan the filesystem for a top-level listing, then
- *  delegate the actual prompt assembly to `prompts.ts`. All wording lives
- *  in that module — keep it that way. */
+/** Ask the server for recursive VFS counts. Server owns the file metadata
+ *  (counts, bytes, paths), so a single aggregate query beats walking the
+ *  local filesystem — which only sees depth 1 without recursion and led
+ *  to the "1 top-level entry (src/)" bug for scaffolded projects where
+ *  everything is under src/.
+ *
+ *  Returns a best-effort local fallback if the API call fails (offline,
+ *  auth missing, etc.) so the prompt still builds. */
+async function fetchProjectStats(projectGuid: string, cwd: string): Promise<ProjectStats> {
+  if (projectGuid) {
+    try {
+      const res = await get<{ data: {
+        file_count: number;
+        folder_count: number;
+        total_bytes: number;
+        top_level: Array<{ name: string; type: 'file' | 'directory' }>;
+      } }>(`/projects/${encodeURIComponent(projectGuid)}/files/stats`);
+      const d = res.data;
+      const topLevelNames = d.top_level.map(e => e.type === 'directory' ? `${e.name}/` : e.name);
+      return {
+        fileCount: d.file_count,
+        folderCount: d.folder_count,
+        totalBytes: d.total_bytes,
+        topLevel: topLevelNames.length ? topLevelNames.slice(0, 20).join(', ') : '(empty directory)',
+      };
+    } catch { /* fall through to local walk */ }
+  }
+  return localFsFallback(cwd);
+}
+
+/** Local-filesystem fallback for when the stats API isn't reachable.
+ *  Recursive walk (unlike the old top-level-only version). Caps entries to
+ *  keep the prompt bounded. */
+function localFsFallback(dir: string): ProjectStats {
+  let fileCount = 0;
+  let folderCount = 0;
+  let totalBytes = 0;
+  const topLevelEntries: string[] = [];
+  const walk = (d: string, depth: number): void => {
+    try {
+      for (const name of readdirSync(d).sort()) {
+        if (isSyncIgnored(name)) continue;
+        let isDir = false;
+        let size = 0;
+        try {
+          const st = statSync(join(d, name));
+          isDir = st.isDirectory();
+          size = st.isFile() ? st.size : 0;
+        } catch { continue; }
+        if (isDir) {
+          folderCount++;
+          if (depth === 0) topLevelEntries.push(`${name}/`);
+          walk(join(d, name), depth + 1);
+        } else {
+          fileCount++;
+          totalBytes += size;
+          if (depth === 0) topLevelEntries.push(name);
+        }
+      }
+    } catch { /* unreadable */ }
+  };
+  walk(dir, 0);
+  const topLevel = topLevelEntries.length
+    ? topLevelEntries.slice(0, 20).join(', ') + (topLevelEntries.length > 20 ? ', …' : '')
+    : '(empty directory)';
+  return { fileCount, folderCount, totalBytes, topLevel };
+}
+
+/** Thin wrappers that fetch VFS stats, then delegate the actual prompt
+ *  assembly to `prompts.ts`. All wording lives in that module — keep it
+ *  that way. */
 interface LocalCtxOpts {
   projectName: string;
   projectSlug: string;
@@ -88,14 +137,14 @@ interface LocalCtxOpts {
   cwd: string;
 }
 
-function buildProjectContextBlock(opts: LocalCtxOpts): string {
-  const { contents, count } = listProjectFiles(opts.cwd);
-  return buildProjectContextBlockText({ ...opts, contents, fileCount: count });
+async function buildProjectContextBlock(opts: LocalCtxOpts): Promise<string> {
+  const stats = await fetchProjectStats(opts.projectGuid, opts.cwd);
+  return buildProjectContextBlockText({ ...opts, ...stats });
 }
 
-function buildExistingProjectPrompt(opts: LocalCtxOpts): string {
-  const { contents, count } = listProjectFiles(opts.cwd);
-  return buildExistingProjectPromptText({ ...opts, contents, fileCount: count });
+async function buildExistingProjectPrompt(opts: LocalCtxOpts): Promise<string> {
+  const stats = await fetchProjectStats(opts.projectGuid, opts.cwd);
+  return buildExistingProjectPromptText({ ...opts, ...stats });
 }
 
 // First-run relay onboarding now lives in `relay/onboarding.ts`
@@ -129,7 +178,7 @@ function suggestProjectName(existingSlugs: string[]): string {
 }
 
 export const claudeCommand = new Command('claude')
-  .description('Log in, set up a project, and launch Claude Code (pass -p "msg" / --resume <id> for non-interactive use)')
+  .description('Log in, pair this machine, set up a project, and launch Claude Code (pass -p "msg" / --resume <id> for non-interactive use)')
   .option('--no-claude', 'Set up project but skip launching Claude Code')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
@@ -231,7 +280,7 @@ export const claudeCommand = new Command('claude')
           console.log('  Could not sync files (will retry on next prompt).');
         }
 
-        initialPrompt = buildExistingProjectPrompt({
+        initialPrompt = await buildExistingProjectPrompt({
           projectName: existing.projectSlug,
           projectSlug: existing.projectSlug,
           projectGuid: existing.projectGuid,
@@ -325,27 +374,29 @@ export const claudeCommand = new Command('claude')
         // ── Step 2b: What do you want to build? (new projects only) ────
         if (isNewProject) {
           console.log('');
-          console.log(`  ${bold('What would you like to build?')}`);
-          console.log(`  ${muted('Examples: a landing page, a Pac-Man game, a helpdesk app,')}`);
-          console.log(`  ${muted('an API that returns random facts, or anything you can describe.')}`);
-          console.log(`  ${muted('Press Enter for a blank project.')}`);
+          console.log(`  ${bold('Claude Code enabled with Gipity!')}`);
+          console.log('');
+          console.log(`  ${bold("What's next? What would you like to build?")}`);
+          console.log(`  ${muted('Examples: a landing page, a Pac-Man game, a full web app,')}`);
+          console.log(`  ${muted('an API that returns random facts, an image, just answer questions?')}`);
+          console.log('');
+          console.log(`  ${muted('Claude Code with Gipity can do everything your old Claude Code could do but so much more now!')}`);
           console.log('');
 
           const buildIdea = (await promptBoxed()).trim();
 
-          const { contents, count } = listProjectFiles(process.cwd());
+          const stats = await fetchProjectStats(project.short_guid, process.cwd());
           initialPrompt = buildNewProjectPrompt({
             projectName: project.name,
             projectSlug: project.slug,
             projectGuid: project.short_guid,
             accountSlug,
             cwd: process.cwd(),
-            contents,
-            fileCount: count,
+            ...stats,
             buildIdea,
           });
         } else {
-          initialPrompt = buildExistingProjectPrompt({
+          initialPrompt = await buildExistingProjectPrompt({
             projectName: project.name,
             projectSlug: project.slug,
             projectGuid: project.short_guid,
@@ -474,10 +525,11 @@ export const claudeCommand = new Command('claude')
           };
           let wrapped: string;
           if (hasResume) {
-            const { contents, count } = listProjectFiles(process.cwd());
-            wrapped = buildResumeWrap({ ...ctxOpts, contents, fileCount: count }, userMsg);
+            // Resume wrap only needs project identity (no file stats), so
+            // skip the stats API call on every resumed message.
+            wrapped = buildResumeWrap(ctxOpts, userMsg);
           } else {
-            wrapped = buildFreshWrap(buildProjectContextBlock(ctxOpts), userMsg);
+            wrapped = buildFreshWrap(await buildProjectContextBlock(ctxOpts), userMsg);
           }
           allArgs = [...claudeArgs];
           allArgs[pIdx + 1] = wrapped;
@@ -570,16 +622,17 @@ async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
       continue;
     }
 
-    console.log(`  ${info(`Creating "${projectName}"...`)}`);
+    process.stdout.write(`  ${info(`Creating "${projectName}"...`)}`);
     try {
       const device = relayState.getDevice();
       const body: { name: string; slug: string; autoChat?: 'claude_code'; deviceGuid?: string } = { name: projectName, slug: projectSlug };
       if (device) { body.autoChat = 'claude_code'; body.deviceGuid = device.guid; }
       const res = await post<{ data: ProjectData }>('/projects', body);
-      console.log(`  ${success('Created.')}`);
+      console.log(` ${success('Created.')}`);
       return res.data;
     } catch (err) {
       if (err instanceof ApiError && err.statusCode === 409) {
+        console.log('');
         console.error(`  ${clrError(`"${projectSlug}" was just taken. Pick a different name.`)}`);
         taken.add(projectSlug);
         suggested = suggestProjectName([...taken]);

@@ -54,7 +54,7 @@ export const PERMISSIONS_SETTINGS = {
       'Bash(gipity db list *)',
       'Bash(gipity db create *)',
       'Bash(gipity memory *)',
-      'Bash(gipity browser *)',
+      'Bash(gipity page-inspect *)',
       'Bash(gipity logs *)',
       'Bash(gipity sandbox *)',
       'Bash(gipity chat *)',
@@ -80,34 +80,14 @@ export const PERMISSIONS_SETTINGS = {
 
 // Cross-platform hooks using node -e (no bash/jq dependency).
 //
-// Capture hooks (start/prompt/tool/stop/end/compact) forward Claude Code hook
-// payloads to Gipity so the conversation is viewable in the web CLI. They pipe
-// stdin directly to `gipity hook-capture <event>`, which guards on
-// .gipity.json + auth and silently no-ops otherwise. See
-// docs/feature-backlog/claude-code-web-cli-bridge.md.
-// Buffer stdin fully before spawning the detached child and writing the
-// payload to its stdin. Piping stdin directly + timing out on the parent
-// truncates large payloads (big tool_response, long transcripts) when the
-// parent exits before the pipe drains. Same shape as the Write|Edit push
-// shim below.
-function captureHook(event: string): string {
-  return `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{if(!require('fs').existsSync('.gipity.json'))return;const p=require('child_process').spawn('gipity',['hook-capture','${event}'],{stdio:['pipe','ignore','ignore'],detached:true,shell:true});p.stdin.end(d);p.unref()})"`;
-}
-
+// All conversation capture (assistant messages, tool calls, tool results)
+// now flows through the relay daemon parsing `claude --output-format
+// stream-json` directly — no hooks needed for that. The only hooks we
+// install are project-level helpers: a scaffold reminder when editing
+// code that has no scaffold yet, and a sync-on-write for Write/Edit
+// tools so pushed files land in the cloud workspace too.
 export const HOOKS_SETTINGS = {
   hooks: {
-    SessionStart: [{
-      matcher: '',
-      hooks: [{ type: 'command', command: captureHook('start') }],
-    }],
-    SessionEnd: [{
-      matcher: '',
-      hooks: [{ type: 'command', command: captureHook('end') }],
-    }],
-    PreCompact: [{
-      matcher: '',
-      hooks: [{ type: 'command', command: captureHook('compact') }],
-    }],
     PreToolUse: [
       {
         // Soft scaffold reminder. If this is a Gipity project (has
@@ -128,38 +108,26 @@ export const HOOKS_SETTINGS = {
     ],
     PostToolUse: [
       {
-        // File sync for Write/Edit (existing behavior)
+        // File sync for Write/Edit — push any edited file back to the
+        // cloud workspace so web previews see the change.
         matcher: 'Write|Edit',
         hooks: [{
           type: 'command',
           command: `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d).tool_input?.file_path;if(!p||!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').spawn('gipity',['push',p,'--quiet'],{stdio:'ignore',detached:true,shell:true}).unref()}catch{}})"`,
         }],
       },
-      {
-        // Conversation capture for every tool call
-        matcher: '.*',
-        hooks: [{ type: 'command', command: captureHook('tool') }],
-      },
     ],
     UserPromptSubmit: [
       {
-        // Sync down + optional system-message (existing behavior)
+        // Pull down any cloud-side file changes before the next turn so
+        // the agent sees current state.
         matcher: '',
         hooks: [{
           type: 'command',
           command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync down --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.pulled>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed remotely.')}))}catch{}})"`,
         }],
       },
-      {
-        // Capture the user's prompt
-        matcher: '',
-        hooks: [{ type: 'command', command: captureHook('prompt') }],
-      },
     ],
-    Stop: [{
-      matcher: '',
-      hooks: [{ type: 'command', command: captureHook('stop') }],
-    }],
   },
 };
 

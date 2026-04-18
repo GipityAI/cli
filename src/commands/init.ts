@@ -1,10 +1,10 @@
 import { Command } from 'commander';
 import { basename } from 'path';
 import { get, post, getAccountSlug } from '../api.js';
-import { saveConfig, getConfig, getApiBaseOverride } from '../config.js';
-import { syncDown, syncUp } from '../sync.js';
+import { getConfig } from '../config.js';
 import { getAuth } from '../auth.js';
-import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
+import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
+import { finalizeLocalProject } from '../project-setup.js';
 import { success, error as clrError, info, muted } from '../colors.js';
 
 interface ProjectData {
@@ -90,35 +90,17 @@ export const initCommand = new Command('init')
         }
       }
 
-      // 1. Write .gipity.json
-      saveConfig({
+      const { pushed, pulled } = await finalizeLocalProject({
+        dir: process.cwd(),
         projectGuid: project.short_guid,
         projectSlug: project.slug,
         accountSlug,
         agentGuid,
-        conversationGuid: null,
-        apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
-        ignore: [...DEFAULT_SYNC_IGNORE],
+        sync: 'strict',
+        confirmDeletions: true,
       });
-
-      // 2. Sync: push local files up first, then pull any remote-only files down
-      const upResult = await syncUp();
-      if (upResult.pushed > 0) {
-        console.log(`Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
-      }
-      const downResult = await syncDown({ confirmDeletions: true });
-      if (downResult.pulled > 0) {
-        console.log(`Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''}.`);
-      }
-
-      // 3. Write .claude/settings.json (CC hooks)
-      setupClaudeHooks();
-
-      // 4. Write CLAUDE.md (skills)
-      setupClaudeMd();
-
-      // 5. Update .gitignore
-      setupGitignore();
+      if (pushed > 0) console.log(`Pushed ${pushed} file${pushed > 1 ? 's' : ''} to Gipity.`);
+      if (pulled > 0) console.log(`Pulled ${pulled} file${pulled > 1 ? 's' : ''}.`);
 
       console.log(success('Configuring Claude Code... done.'));
       console.log(success('Ready! Run `claude` to start.'));

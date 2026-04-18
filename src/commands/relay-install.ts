@@ -19,7 +19,7 @@ import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
   if (!device) {
-    console.error(`  ${clrError('Not paired.')} Run ${bold('gipity claude')} first.`);
+    console.error(`  ${clrError('No paired device.')} Run ${bold('gipity claude')} to pair this machine.`);
     process.exit(1);
   }
   return device;
@@ -32,10 +32,25 @@ function resolveCliPath(): string {
   return resolve(process.argv[1] ?? 'gipity');
 }
 
+/** Run a sequence of argv commands directly (no shell). Returns true if all
+ *  succeeded. Spawns each command's stdio inherited so the user sees the
+ *  service manager's output verbatim. */
+function runArgvSequence(cmds: string[][], { failFast }: { failFast: boolean }): boolean {
+  let allOk = true;
+  for (const argv of cmds) {
+    const r = spawnSync(argv[0], argv.slice(1), { stdio: 'inherit' });
+    if (r.status !== 0) {
+      allOk = false;
+      if (failFast) return false;
+    }
+  }
+  return allOk;
+}
+
 export function registerInstallCommands(relayCommand: Command): void {
   relayCommand
     .command('install')
-    .description('Install the daemon as a login-time service (launchd / systemd / Task Scheduler)')
+    .description('Install the background service so it starts automatically at login')
     .option('--print', 'Print the service-unit file and the commands, but don\'t run them')
     .action(async (opts: { print?: boolean }) => {
       requirePaired();
@@ -45,7 +60,7 @@ export function registerInstallCommands(relayCommand: Command): void {
       catch (err) {
         if (err instanceof UnsupportedPlatformError) {
           console.error(`  ${clrError(err.message)}`);
-          console.error(`  ${dim('Supported: macOS (launchd), Linux (systemd --user), Windows (Task Scheduler).')}`);
+          console.error(`  ${dim('Supported on macOS, Linux, and Windows.')}`);
         } else throw err;
         process.exit(1);
       }
@@ -59,7 +74,7 @@ export function registerInstallCommands(relayCommand: Command): void {
         console.log(`${dim('--- file content ---')}`);
         console.log(plan.content);
         console.log(`${dim('--- enable: ---')}`);
-        console.log(plan.enableCmd);
+        console.log(plan.enableDisplay);
         console.log('');
         return;
       }
@@ -73,15 +88,13 @@ export function registerInstallCommands(relayCommand: Command): void {
       writeFileSync(plan.path, plan.content);
       console.log(`  ${success(`Wrote ${plan.path}`)}`);
 
-      const r = spawnSync('sh', ['-c', plan.enableCmd], { stdio: 'inherit' });
-      if (r.status !== 0) {
-        console.error(`\n  ${clrError('Enable command failed.')}`);
-        console.error(`  ${dim(`Try manually: ${plan.enableCmd}`)}`);
+      if (!runArgvSequence(plan.enableCmds, { failFast: true })) {
+        console.error(`\n  ${clrError(`Couldn't enable autostart. Try manually: ${plan.enableDisplay}`)}`);
         process.exit(1);
       }
       console.log('');
-      console.log(`  ${success('Daemon installed and started.')}`);
-      console.log(`  ${dim(`Check status: ${plan.statusCmd}`)}`);
+      console.log(`  ${success('Background service installed and started.')}`);
+      console.log(`  ${dim(`Check status: ${plan.statusDisplay}`)}`);
       console.log(`  ${dim(`Tail logs:    gipity relay log`)}`);
     });
 
@@ -102,10 +115,12 @@ export function registerInstallCommands(relayCommand: Command): void {
           process.exit(1);
         } else throw err;
       }
-      const cmd = want === 'on' ? plan.enableCmd : plan.disableCmd;
-      console.log(`  ${info('Running:')} ${dim(cmd)}`);
-      const r = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
-      if (r.status !== 0) {
+      const cmds = want === 'on' ? plan.enableCmds : plan.disableCmds;
+      const display = want === 'on' ? plan.enableDisplay : plan.disableDisplay;
+      console.log(`  ${info('Running:')} ${dim(display)}`);
+      // Disable is best-effort (the task may already be stopped); enable is fail-fast.
+      const ok = runArgvSequence(cmds, { failFast: want === 'on' });
+      if (!ok && want === 'on') {
         console.error(`\n  ${clrError('Command failed.')}`);
         process.exit(1);
       }

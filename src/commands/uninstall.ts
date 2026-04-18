@@ -47,15 +47,18 @@ async function stopDaemon(): Promise<void> {
 function removeServiceUnit(): { ran: boolean; ok: boolean; note?: string } {
   try {
     const plan = planFor({ cliPath: resolveCliPath() });
-    const useCmd = osPlatform() === 'win32';
-    const r = useCmd
-      ? spawnSync('cmd', ['/c', plan.disableCmd], { stdio: 'ignore' })
-      : spawnSync('sh', ['-c', plan.disableCmd], { stdio: 'ignore' });
+    // Run the disable sequence directly — no shell, so paths with spaces /
+    // shell metacharacters can't break out. Best-effort: a non-zero exit
+    // is fine if the service was never installed.
+    let allOk = true;
+    for (const argv of plan.disableCmds) {
+      const r = spawnSync(argv[0], argv.slice(1), { stdio: 'ignore' });
+      if (r.status !== 0) allOk = false;
+    }
     if (existsSync(plan.path)) {
       try { unlinkSync(plan.path); } catch { /* ignore */ }
     }
-    // Non-zero is fine when the service was never installed.
-    return { ran: true, ok: r.status === 0, note: plan.summary };
+    return { ran: true, ok: allOk, note: plan.summary };
   } catch (err) {
     if (err instanceof UnsupportedPlatformError) return { ran: false, ok: true, note: `Unsupported platform (${process.platform}) — nothing to uninstall.` };
     return { ran: false, ok: false, note: String(err) };

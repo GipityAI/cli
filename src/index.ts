@@ -25,7 +25,7 @@ import { fileCommand } from './commands/file.js';
 import { claudeCommand } from './commands/claude.js';
 import { scaffoldCommand } from './commands/scaffold.js';
 import { logsCommand } from './commands/logs.js';
-import { browserCommand } from './commands/browser.js';
+import { pageInspectCommand } from './commands/page-inspect.js';
 import { recordsCommand } from './commands/records.js';
 import { fnCommand } from './commands/fn.js';
 import { rbacCommand } from './commands/rbac.js';
@@ -38,7 +38,6 @@ import { testCommand } from './commands/test.js';
 import { locationCommand } from './commands/location.js';
 import { doctorCommand } from './commands/doctor.js';
 import { updateCommand } from './commands/update.js';
-import { hookCaptureCommand } from './commands/hook-capture.js';
 import { relayCommand } from './commands/relay.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
@@ -66,7 +65,7 @@ const program = new Command();
 // observability → access; Agent flows chat → run → manage → bill.
 const setupGroup     = [loginCommand, logoutCommand, initCommand, claudeCommand, relayCommand];
 const projectGroup   = [statusCommand, syncCommand, pushCommand, uploadCommand, deployCommand, testCommand, scaffoldCommand, domainCommand];
-const resourceGroup  = [dbCommand, memoryCommand, fileCommand, fnCommand, sandboxCommand, browserCommand, generateCommand, logsCommand, recordsCommand, auditCommand, rbacCommand, emailCommand, skillsCommand, locationCommand];
+const resourceGroup  = [dbCommand, memoryCommand, fileCommand, fnCommand, sandboxCommand, pageInspectCommand, generateCommand, logsCommand, recordsCommand, auditCommand, rbacCommand, emailCommand, skillsCommand, locationCommand];
 const agentGroup     = [chatCommand, agentCommand, projectCommand, workflowCommand, creditsCommand];
 const maintenanceGroup = [doctorCommand, updateCommand, uninstallCommand];
 
@@ -149,9 +148,6 @@ for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
   configureHelp(cmd);
   program.addCommand(cmd);
 }
-
-// Hidden: invoked by Claude Code hooks, not user-facing.
-program.addCommand(hookCaptureCommand, { hidden: true });
 
 // Auto-fetch related skill docs when --help is run on mapped commands
 const argv = process.argv.slice(2);

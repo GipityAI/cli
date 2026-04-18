@@ -61,22 +61,49 @@ describe('installers: content renders CLI path correctly', () => {
 });
 
 describe('installers: enable/disable commands look right', () => {
-  it('launchd uses launchctl bootstrap/bootout with gui/<uid>', () => {
+  it('launchd uses launchctl bootstrap/bootout with a resolved gui/<uid>', () => {
     const p = planFor({ cliPath: CLI, platformOverride: 'darwin' });
-    assert.match(p.enableCmd, /launchctl bootstrap gui\/\$\(id -u\)/);
-    assert.match(p.disableCmd, /launchctl bootout gui\/\$\(id -u\)/);
+    // uid is resolved at plan time (process.getuid()) so no shell substitution.
+    assert.deepEqual(p.enableCmds[0].slice(0, 2), ['launchctl', 'bootstrap']);
+    assert.match(p.enableCmds[0][2], /^gui\/\d+$/);
+    assert.deepEqual(p.disableCmds[0].slice(0, 2), ['launchctl', 'bootout']);
+    assert.match(p.disableCmds[0][2], /^gui\/\d+$/);
   });
 
   it('systemd uses systemctl --user enable --now and disable --now', () => {
     const p = planFor({ cliPath: CLI, platformOverride: 'linux' });
-    assert.match(p.enableCmd, /systemctl --user enable --now gipity-relay\.service/);
-    assert.match(p.disableCmd, /systemctl --user disable --now gipity-relay\.service/);
+    // daemon-reload first, then enable --now.
+    assert.deepEqual(p.enableCmds[0], ['systemctl', '--user', 'daemon-reload']);
+    assert.deepEqual(p.enableCmds[1], ['systemctl', '--user', 'enable', '--now', 'gipity-relay.service']);
+    assert.deepEqual(p.disableCmds[0], ['systemctl', '--user', 'disable', '--now', 'gipity-relay.service']);
   });
 
   it('Windows uses schtasks Create with /F (force overwrite) and Delete', () => {
     const p = planFor({ cliPath: CLI, platformOverride: 'win32' });
-    assert.match(p.enableCmd, /schtasks \/Create.*\/F/);
-    assert.match(p.enableCmd, /schtasks \/Run/);
-    assert.match(p.disableCmd, /schtasks \/Delete.*\/F/);
+    // Two-step enable: Create then Run. Two-step disable: End then Delete.
+    assert.equal(p.enableCmds[0][0], 'schtasks');
+    assert.ok(p.enableCmds[0].includes('/Create'));
+    assert.ok(p.enableCmds[0].includes('/F'));
+    assert.equal(p.enableCmds[1][0], 'schtasks');
+    assert.ok(p.enableCmds[1].includes('/Run'));
+    assert.ok(p.disableCmds.some(argv => argv.includes('/Delete')));
+  });
+
+  it('argv arrays are flat string arrays — no shell metacharacters injected', () => {
+    // A path with spaces must stay as a single argv slot, not split by sh.
+    const cliPath = '/Users/Test User/.npm-global/bin/gipity';
+    const p = planFor({ cliPath, platformOverride: 'darwin' });
+    // The plist path also contains the homedir, which on the test runner
+    // doesn't contain spaces — but the contract is still: argv elements
+    // are single strings, never shell-tokenized.
+    for (const argv of [...p.enableCmds, ...p.disableCmds, p.statusCmd]) {
+      for (const part of argv) {
+        assert.equal(typeof part, 'string');
+        assert.ok(!part.includes('\n'), 'argv parts should not contain newlines');
+      }
+    }
+    // CLI path is embedded in the plist content (file body), not the argv —
+    // sanity check that didn't change.
+    assert.match(p.content, /<string>\/Users\/Test User\/\.npm-global\/bin\/gipity<\/string>/);
   });
 });

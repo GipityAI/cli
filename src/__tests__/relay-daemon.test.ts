@@ -179,7 +179,7 @@ async function runDaemon(home: string, claudeCmd: string, opts: { maxRunMs?: num
 // ─── Tests ─────────────────────────────────────────────────────────────
 
 describe('daemon: not paired', () => {
-  it('errors immediately when no device is paired', async () => {
+  it('errors immediately when no device is paired and user is not logged in', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gipity-daemon-unpaired-'));
     const r = await runCliAsync(['--api-base', apiBase, 'relay', 'run'], {
       env: { HOME: home },
@@ -187,7 +187,11 @@ describe('daemon: not paired', () => {
       timeout: 5_000,
     });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /Not paired/);
+    // With a fresh $HOME the auth file doesn't exist either, so the
+    // daemon hits the "Not logged in" branch before it ever attempts to
+    // register a device. Both messages are acceptable signals of the
+    // not-paired condition from the user's perspective.
+    assert.match(r.stderr, /Not logged in|Not paired/);
   });
 });
 

@@ -52,8 +52,9 @@ export async function maybeOfferRelayOn(): Promise<void> {
   }
 
   console.log(`  ${bold('Remote control of Claude Code')}`);
-  console.log(`  ${dim('Drive this Claude Code from the Gipity web CLI on any browser (desktop or phone).')}`);
-  console.log(`  ${dim('You can skip now and turn it on later with')} ${brand('gipity relay install')}${dim('.')}`);
+  console.log(`  ${dim('Drive this Claude Code from the web (')}${brand('gipity.ai')}${dim(') on any browser (desktop or phone).')}`);
+  console.log('');
+  console.log(`  ${dim('Enable now (takes 2 seconds) or turn on later with')} ${brand('gipity relay install')}`);
   console.log('');
 
   const enable = await confirm('  Enable remote control?', { default: 'yes' });
@@ -112,8 +113,14 @@ export async function maybeOfferRelayOn(): Promise<void> {
       const plan = planFor({ cliPath: resolveCliPath() });
       mkdirSync(dirname(plan.path), { recursive: true });
       writeFileSync(plan.path, plan.content);
-      const r = spawnSync('sh', ['-c', plan.enableCmd], { stdio: 'ignore' });
-      if (r.status !== 0) {
+      // Run argv directly — no shell — so paths with spaces / shell metas
+      // can't break out. Fail-fast on the first non-zero exit.
+      let allOk = true;
+      for (const argv of plan.enableCmds) {
+        const r = spawnSync(argv[0], argv.slice(1), { stdio: 'ignore' });
+        if (r.status !== 0) { allOk = false; break; }
+      }
+      if (!allOk) {
         console.log(`  ${muted('Autostart install returned non-zero — you can run')} ${brand('gipity relay install')} ${muted('later.')}`);
       } else {
         console.log(`  ${success('Auto-start installed.')} ${dim(plan.summary)}`);

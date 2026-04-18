@@ -26,11 +26,11 @@ export interface ScaffoldType {
 }
 
 export const SCAFFOLD_TYPES: readonly ScaffoldType[] = [
-  { key: 'web-simple',    for: 'Static page, canvas demo, visualization, physics toy, landing page, dashboard, single-page tool' },
-  { key: 'web-fullstack', for: 'Frontend + backend — needs DB or serverless functions' },
-  { key: '2d-game',       for: 'Phaser platformer / arcade / puzzle / endless runner' },
-  { key: '3d-world',      for: 'Three.js + Rapier + Colyseus multiplayer world' },
-  { key: 'api',           for: 'API only, no frontend' },
+  { key: 'web-simple',    for: 'Landing page, dashboard, calculator, canvas demo, visualization, animation, single-page tool' },
+  { key: 'web-fullstack', for: 'Web app with login, database, or API — CRM, invoice tracker, booking system, admin panel' },
+  { key: '2d-game',       for: 'Platformer, arcade, puzzle, endless runner, physics toy (Phaser 3)' },
+  { key: '3d-world',      for: 'Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)' },
+  { key: 'api',           for: 'Backend service, webhook, data pipeline, chatbot, cron job — no frontend' },
 ] as const;
 
 export const SCAFFOLD_TYPE_KEYS = SCAFFOLD_TYPES.map(t => t.key).join('|');
@@ -44,20 +44,21 @@ export const SCAFFOLD_TYPE_PICKER = SCAFFOLD_TYPES
 // ---------------------------------------------------------------------------
 
 export const BUILD_VS_NON_BUILD_RULE = [
-  `## Build vs. one-off`,
-  `Build request (deployable — web app, game, API): run \`gipity scaffold --type <type>\` before writing any files. Scaffolding wires up \`gipity.yaml\`, deploy config, and sync; hand-written files miss all of it. Pick the type:`,
+  `## When to scaffold`,
+  `If the user wants a deployable app (web, game, API): run \`gipity scaffold --type <type>\` before writing any files. Scaffolding wires up \`gipity.yaml\`, deploy config, and sync; hand-written files miss all of it.`,
+  `If it's a one-off task (analysis, media, data, research): skip scaffolding — use \`gipity sandbox run\` or work with files directly.`,
+  `If ambiguous: ask one short clarifying question.`,
+  ``,
+  `Scaffold types:`,
   SCAFFOLD_TYPE_PICKER,
   `When unsure, default to \`web-simple\`. After scaffolding, edit the generated files, then \`gipity deploy dev\`.`,
-  ``,
-  `One-off task (PDF analysis, data exploration, media/document work, research, scratch): do not scaffold. Use \`gipity sandbox run\` for compute, or work with files directly.`,
-  ``,
-  `If ambiguous, ask one short clarifying question. Only skip scaffolding on a build request if the user explicitly says "don't scaffold".`,
+  `Only skip scaffolding on a build request if the user explicitly says "don't scaffold".`,
 ].join('\n');
 
 export const DEFINITION_OF_DONE = [
   `## Definition of done (build tasks)`,
   `1. \`gipity deploy dev\` succeeds and you have a live URL.`,
-  `2. \`gipity browser <url>\` shows no console errors and the golden path works.`,
+  `2. \`gipity page-inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen).`,
   `3. For apps with functions: \`gipity test\` passes.`,
   `4. You told the user the live URL.`,
   ``,
@@ -65,45 +66,70 @@ export const DEFINITION_OF_DONE = [
 ].join('\n');
 
 export const CAPABILITIES_BLURB_SHORT =
-  `Gipity gives this session: cloud hosting, Postgres, serverless functions, a sandboxed toolkit ` +
-  `(ffmpeg, ImageMagick, pandas, pandoc, LibreOffice, etc.), headless browsers, file storage, email, ` +
-  `image/TTS/video generation, web search, scheduled workflows, persistent memory, custom domains. ` +
-  `Full reference is in CLAUDE.md. Prefer CLI commands and the sandbox over \`gipity chat\` — they're ` +
-  `faster and don't burn LLM tokens. Naming: honor the user's chosen name; if inventing, blend "Gip" or "Gipity" in.`;
+  `Full platform reference is in CLAUDE.md. ` +
+  `Prefer CLI commands and the sandbox over \`gipity chat\` — they're faster and cheaper. ` +
+  `Naming: honor the user's chosen name; if inventing, blend "Gip" or "Gipity" in.`;
 
 // ---------------------------------------------------------------------------
 // Header — appears at the top of every preamble (new, existing, fresh, resume)
 // ---------------------------------------------------------------------------
 
-export interface ProjectContextOpts {
+/** Identity-only — used by light wrappers (resume) that don't need the full
+ *  file-stats payload. */
+export interface ProjectIdentityOpts {
   projectName: string;
   projectSlug: string;
   projectGuid: string;
   accountSlug: string;
   cwd: string;
-  /** Pre-computed top-level file listing string (caller owns the fs scan) */
-  contents: string;
-  /** Pre-computed top-level entry count (caller owns the fs scan). 0 = empty. */
+}
+
+/** Full context — what the fresh-session preamble needs. File stats are
+ *  recursive aggregates from the VFS (caller owns the lookup). */
+export interface ProjectContextOpts extends ProjectIdentityOpts {
+  /** Recursive total of live files in the project's VFS. 0 = empty project. */
   fileCount: number;
+  /** Recursive total of live folders. */
+  folderCount: number;
+  /** Sum of all file sizes in bytes. */
+  totalBytes: number;
+  /** Pre-formatted top-level entry listing for the header, e.g.
+   *  "src/, gipity.yaml, README.md" or "(empty directory)". */
+  topLevel: string;
+}
+
+function humanBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function buildHeader(opts: ProjectContextOpts): string {
   const deployUrl = opts.accountSlug
     ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
-  const entryLabel = opts.fileCount === 1 ? 'entry' : 'entries';
+  // "Files" line is the agent's at-a-glance signal of project size and
+  // shape. Counts are recursive (from the VFS DB), not just top-level —
+  // prevents the bug where a scaffolded project with everything under
+  // `src/` showed as "1 top-level entry (src/)" and looked nearly empty.
+  const filesLine = opts.fileCount === 0
+    ? `- Files: empty (no files yet)`
+    : `- Files: ${opts.fileCount} file${opts.fileCount === 1 ? '' : 's'}` +
+      ` in ${opts.folderCount} folder${opts.folderCount === 1 ? '' : 's'}` +
+      ` (${humanBytes(opts.totalBytes)}) — ${opts.topLevel}`;
   return [
     `## Gipity project`,
     `- Name: ${opts.projectName} (slug: \`${opts.projectSlug}\`)`,
-    `- GUID: \`${opts.projectGuid}\` — use as \`<PROJECT_GUID>\` in App Services calls`,
+    `- Project GUID: \`${opts.projectGuid}\` (use as \`<PROJECT_GUID>\` in service calls)`,
     `- Directory: ${opts.cwd}`,
     `- Deploy URL: ${deployUrl}`,
-    `- Files: ${opts.fileCount} top-level ${entryLabel}${opts.fileCount > 0 ? ` (${opts.contents})` : ''}`,
+    filesLine,
   ].join('\n');
 }
 
 const EMPTY_STATE_NOTE =
-  `Directory is empty. Apply the build-vs-one-off rule above before writing any files.`;
+  `Directory is empty. Apply the scaffolding rule above before writing any files.`;
 
 const EXISTING_STATE_NOTE = [
   `Project already has files. Before making changes:`,
@@ -113,7 +139,13 @@ const EXISTING_STATE_NOTE = [
   `- Exception: if the existing files are user content (media, data, notes) and the user wants to build an app around them, scaffolding is allowed — \`gipity scaffold\` will refuse automatically if any file paths would collide.`,
 ].join('\n');
 
-/** Compact project-context preamble — header + capabilities + build rule + state note + definition of done. */
+/** Compact project-context preamble — header + capabilities + state note + definition of done.
+ *  The BUILD_VS_NON_BUILD_RULE (scaffold picker, scaffold types, default
+ *  recommendations) only fires for empty projects. An existing project
+ *  that already has a scaffold doesn't need to be told to pick a scaffold
+ *  type — that guidance conflicts with EXISTING_STATE_NOTE's "edit in
+ *  place, don't re-scaffold" and led to agents re-scaffolding over live
+ *  projects. */
 export function buildProjectContextBlock(opts: ProjectContextOpts): string {
   const isEmpty = opts.fileCount === 0;
   return [
@@ -122,12 +154,12 @@ export function buildProjectContextBlock(opts: ProjectContextOpts): string {
     `## Session`,
     `You're pairing with the user on this project. ${CAPABILITIES_BLURB_SHORT}`,
     ``,
-    BUILD_VS_NON_BUILD_RULE,
+    isEmpty ? BUILD_VS_NON_BUILD_RULE : EXISTING_STATE_NOTE,
     ``,
-    isEmpty ? EMPTY_STATE_NOTE : EXISTING_STATE_NOTE,
+    isEmpty ? EMPTY_STATE_NOTE : '',
     ``,
     DEFINITION_OF_DONE,
-  ].join('\n');
+  ].join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 /** Project-context block + a brief greeting instruction. */
@@ -143,7 +175,7 @@ export function buildExistingProjectPrompt(opts: ProjectContextOpts): string {
 export function buildNewProjectPrompt(opts: ProjectContextOpts & { buildIdea: string }): string {
   const base = buildProjectContextBlock(opts);
   if (opts.buildIdea) {
-    return `${base}\n\nThe user's first message: "${opts.buildIdea}"\n\nGet started. Apply the build-vs-one-off rule. Report back when you hit the definition of done.`;
+    return `${base}\n\nThe user's first message: "${opts.buildIdea}"\n\nGet started. Apply the scaffolding rule. Report back when you hit the definition of done.`;
   }
   return `${base}\n\nThe user started a blank project with no specific request. Briefly introduce yourself, highlight a few key capabilities, and ask what they want to build.`;
 }
@@ -155,21 +187,21 @@ export function buildNewProjectPrompt(opts: ProjectContextOpts & { buildIdea: st
 /** Compact capability reminder — safe to include on every resumed-session message.
  *  Hedges against Claude compacting away the original context block mid-session. */
 export const PLATFORM_REMINDER =
-  `This project runs on the Gipity hosting platform. The \`gipity\` CLI exposes 90+ tools — common ones: ` +
-  `\`gipity deploy dev\`, \`gipity browser <url>\`, \`gipity sandbox run\`, \`gipity test\`, \`gipity fn call\`. ` +
-  `Run \`gipity skills list\` for the full skill catalog; full platform reference is in \`CLAUDE.md\`.`;
+  `This project runs on the Gipity platform. All CLI commands and service APIs are documented in CLAUDE.md.`;
 
-/** Resume wrap: header + capability reminder + short framing. */
-export function buildResumeWrap(opts: ProjectContextOpts, userMsg: string): string {
+/** Resume wrap: compact header + capability reminder + short framing.
+ *  Takes identity only — resume doesn't need the full file stats
+ *  (Claude already has the context from the initial start dispatch). */
+export function buildResumeWrap(opts: ProjectIdentityOpts, userMsg: string): string {
+  const deployUrl = opts.accountSlug
+    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
+    : '(not yet deployed)';
   return [
-    buildHeader(opts),
-    ``,
+    `Project: ${opts.projectName} (\`${opts.projectGuid}\`) — ${deployUrl}`,
     PLATFORM_REMINDER,
-    `Resumed session — apply the build-vs-one-off rule for new features; files auto-sync on save.`,
+    `Resumed session — scaffold before building (see CLAUDE.md); skip for one-off tasks.`,
     ``,
     `User message: ${userMsg}`,
-    ``,
-    `Answer directly. Do not greet or reintroduce yourself.`,
   ].join('\n');
 }
 
@@ -196,207 +228,47 @@ export const SKILLS_CONTENT = `# Gipity Integration
 
 Gipity is a platform for cloud agents — AI agents that run on a server with persistent memory, storage, a database, a sandboxed runtime, and direct internet access. Gip is the cloud agent on Gipity.
 
-This Claude Code session is connected to a Gipity project. You have four ways to use the platform — try them in this order before falling back to \`gipity chat\`:
+This Claude Code session is connected to a Gipity project. Prefer the cheapest option that works — CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
 
-1. CLI commands (fast, no agent overhead). The \`gipity\` CLI exposes ~30 commands covering scaffold/deploy/db/fn/logs/browser/sync/memory/skills/etc. Use these whenever possible.
-2. Cloud sandbox via \`gipity sandbox run\` (fast, no agent overhead, no deploy needed). The sandbox is a Docker container with a huge pre-installed toolkit — use it for any one-off media, data, or build task instead of delegating to Gip:
-   - Media: \`ffmpeg\` (transcode, trim, concat, extract audio, generate thumbnails, splice video), \`ImageMagick\` (resize, convert, composite, OCR-friendly preprocess), \`sox\` (audio mix/normalize/effects), \`exiftool\`, \`mediainfo\`, \`optipng\`, \`gifsicle\`, \`webp\`, \`potrace\` (raster→SVG)
-   - Documents: \`pandoc\` (any-to-any docs), \`LibreOffice\` headless (DOCX/XLSX/PPTX↔PDF), \`wkhtmltopdf\`, \`poppler-utils\` (PDF text/image extract), \`ghostscript\`, \`qpdf\`, \`python-docx\`, \`python-pptx\`, \`openpyxl\`, \`reportlab\`, \`cairosvg\`
-   - Data / analysis: Python with \`pandas\`, \`numpy\`, \`scipy\`, \`sympy\`, \`matplotlib\`, \`seaborn\`, \`pillow\`, \`bs4\`, \`requests\`, \`pyyaml\`, \`jinja2\`, \`tabulate\`, plus \`csvkit\`, \`miller\`, \`datamash\`, \`jq\`, \`xmlstarlet\`, \`sqlite3\`
-   - Misc: \`Graphviz\`, \`gnuplot\`, \`qrcode\`, \`p7zip\`, \`GCC/G++\`, \`Rust\` (rustc/cargo), \`mingw-w64\` (Windows cross-compile)
-   - Languages: Node 20, Python 3, Bash. Workspace files are auto-injected; output files auto-extract back to the project. Sticky session per user (state persists across calls). No network from inside the sandbox — fetch what you need before sending it in.
-
-   Examples:
-   \`\`\`bash
-   gipity sandbox run --lang bash "ffmpeg -i input.mp4 -vf scale=640:-1 -c:a copy out.mp4"
-   gipity sandbox run --lang bash "convert input.png -resize 200x200 thumb.jpg"   # ImageMagick
-   gipity sandbox run --lang py   "import pandas as pd; print(pd.read_csv('sales.csv').groupby('region').total.sum())"
-   gipity sandbox run --lang bash "libreoffice --headless --convert-to pdf report.docx"
-   gipity sandbox run --lang bash "pandoc article.md -o article.pdf"
-   \`\`\`
-3. Call app services directly from your app (no agent overhead, runtime endpoints). LLM, TTS, image, sound, music, transcription, video, file upload, and realtime multiplayer are HTTP endpoints under \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\` — see the app services section below. These are for the deployed app to call at runtime; for one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
-4. Delegate to Gip (\`gipity chat "<task>"\`) — only when the work genuinely needs agent reasoning or a tool that isn't in the CLI, the sandbox, or the app services. Required for: Twitter/X search, Gmail, calendar operations, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` to run ffmpeg, ImageMagick, pandas, LibreOffice, pandoc, or anything else listed in the sandbox toolkit above — \`gipity sandbox run\` is faster and doesn't burn tokens.
+1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers scaffold, deploy, db, fn, logs, browser, sync, memory, skills, and more. Run \`gipity --help\` for the full list. All commands support \`--json\`.
+2. Cloud sandbox via \`gipity sandbox run\` — Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skills read sandbox-tools\` for the full toolkit. No network from inside the sandbox — fetch what you need before sending it in.
+3. App services — runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code — they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
+4. Delegate to Gip (\`gipity chat "<task>"\`) — only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do — it's slower and burns tokens.
 
 You are the developer. Write files in this directory — they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
 
-## Build vs. one-off
+## When to scaffold
 
-The full build-vs-one-off rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity scaffold --type <type>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` — do not scaffold.
+The full scaffolding rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity scaffold --type <type>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` — do not scaffold.
 
-## Remote control
+## CLI quick reference
 
-This session can be driven from the Gipity web CLI on any browser (desktop or phone). The first \`gipity claude\` run on this machine pairs the device and starts the relay daemon automatically. Once paired, typing \`/claude\` (or \`/cc\`) in the web CLI enters dispatch mode; each message queues a new \`gipity claude -p "…"\` session here and streams the captured conversation back to their browser. If the user asks how to use Gipity from their phone or another browser, point them at \`gipity relay --help\`.
+Key commands: \`gipity scaffold --type <type>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page-inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity skills read <name>\`.
+Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
-## Workflow
+## Files and sync
 
-1. Write and edit files normally (auto-pushed to Gipity on every save)
-2. \`gipity deploy dev\` → live URL instantly
-3. \`gipity deploy prod\` when ready
+Write files locally — hooks auto-push to Gipity on every save. Remote-generated files (images, audio from \`gipity chat\`) auto-pull. Use \`gipity sync\` if things get out of sync. Deletes are safe — use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
 
-## CLI commands
+## Skills (detailed documentation)
 
-| Command | Purpose |
-|---------|---------|
-| \`gipity scaffold [title]\` | Create app structure. \`--type\` is required. Canonical types: \`${SCAFFOLD_TYPE_KEYS}\`. Run \`gipity scaffold --help\` for the full list. |
-| \`gipity deploy [dev\\|prod]\` | Deploy and get live URL |
-| \`gipity sync [up\\|down\\|check]\` | Manual file sync |
-| \`gipity db create <name>\` | Create a project database |
-| \`gipity db drop <name> [--project <slug>]\` | Drop a database (--project for cross-project) |
-| \`gipity db query "SQL"\` | Run SQL on project database |
-| \`gipity db list [--all]\` | List databases (--all for account-wide) |
-| \`gipity fn list\\|call <name> [body]\\|logs <name>\` | Manage serverless functions |
-| \`gipity memory list\\|read\\|write\` | Persistent key-value memory |
-| \`gipity browser <url>\` | Inspect URL: console errors, timing, resources |
-| \`gipity logs fn <name>\` | View function execution logs |
-| \`gipity sandbox <lang> "code"\` | Execute code in cloud sandbox |
-| \`gipity location [ip\\|lat lng]\` | IP geo / reverse-geocode / caller location |
-| \`gipity chat <message>\` | Send a task to the Gipity agent |
-| \`gipity skills list\` | List all available skill docs |
-| \`gipity skills read <name>\` | Read detailed docs on a topic |
-| \`gipity status\` | Check project and auth status (project GUID, slug, auth state) |
+Run \`gipity skills list\` to see all available skill docs. Run \`gipity skills read <name>\` to read one. Load the relevant skill before starting a task — they contain the correct API patterns, code examples, and common mistakes.
 
-All commands support \`--json\` for structured output. Use \`--help\` on any command for details (auto-fetches relevant skill docs from the server).
-
-## Platform capabilities
-
-- App hosting — deploy to dev/prod URLs on Gipity CDN
-- Databases — per-project PostgreSQL databases with SQL access
-- Serverless functions — JavaScript functions callable via REST
-- Multiplayer — Colyseus WebSocket rooms (relay and state-synced)
-- Image generation — OpenAI (gpt-image-1, DALL-E 3) and BFL/Flux
-- Speech / TTS — ElevenLabs and OpenAI voices
-- Audio/video processing — FFmpeg, sox, transcription, source isolation
-- Web search — Brave API
-- Browser automation — open URLs, screenshot, click, fill forms, console
-- Workflows — cron or webhook-triggered multi-step AI pipelines
-- Email — SendGrid transactional email
-- Cloud sandbox — Python, Node.js, Bash with 50+ pre-installed tools
-- Cross-model queries — ask GPT-5, Claude, etc. for second opinions
-
-## App services (HTTP endpoints your deployed app can call)
-
-Every project automatically exposes platform services at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Your frontend or function calls these directly — don't write a server-side wrapper function for them, and don't fall back to browser APIs (e.g. \`window.speechSynthesis\`). Billing defaults to your credits (\`owner_pays\`); no setup needed.
-
-Your \`<PROJECT_GUID>\` is printed in the session context header on every launch, and also via \`gipity status --json\`.
-
-| Service | Endpoint | Purpose |
-|---------|----------|---------|
-| LLM | \`POST /services/llm\` | OpenAI-style chat completions (Anthropic + OpenAI models, streaming) |
-| TTS | \`POST /services/tts\` | Text-to-speech → MP3 URL (ElevenLabs/OpenAI/Gemini) |
-| Image | \`POST /services/image\` | Image generation (OpenAI/BFL/Gemini) |
-| Sound effects | \`POST /services/sound\` | ElevenLabs SFX from text |
-| Music | \`POST /services/music\` | ElevenLabs music from prompt |
-| Transcribe (STT) | \`POST /services/transcribe\` | Multipart audio → text |
-| Video | \`POST /services/video\` | Veo 3.1 video with audio |
-| Files | \`POST /uploads/init\` + \`/uploads/complete\` | Presigned S3 uploads up to 30 GB |
-| Realtime | \`wss://rt.gipity.ai\` | Colyseus rooms (relay or state) |
-
-### Universal auth — mint an app token
-
-\`\`\`js
-const r = await fetch('https://a.gipity.ai/api/token', {  // must be absolute URL, POST
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ app: '<PROJECT_GUID>' })
-});
-const { data: { token } } = await r.json();              // token is at .data.token
-\`\`\`
-Send on every service call as \`X-App-Token: <token>\`. For \`auth: user\` functions or \`user_pays\` services also pass \`credentials: 'include'\` so the \`.gipity.ai\` session cookie travels.
-
-Common mistakes the agent should avoid:
-- Relative URL \`/api/token\` (hits app host, 404) — always absolute \`https://a.gipity.ai/api/token\`
-- Reading \`json.token\` instead of \`json.data.token\`
-- Treating the project GUID as the bearer token
-- Writing a server-side TTS \`speak\` function or a \`useBrowserTts\` fallback — just call \`/services/tts\` from the browser and \`new Audio(url).play()\`
-- Calling \`client.getAvailableRooms()\` for realtime — that method doesn't exist; use \`GET https://rt.gipity.ai/rooms?room=<name>&token=<t>\`
-
-### Quick examples
-
-LLM:
-\`\`\`js
-const r = await fetch(\`https://a.gipity.ai/api/\${APP}/services/llm\`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'X-App-Token': token },
-  body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }], model: 'gpt-5-mini' })
-});
-const { choices } = await r.json();
-// choices[0].message.content
-\`\`\`
-
-TTS:
-\`\`\`js
-const r = await fetch(\`https://a.gipity.ai/api/\${APP}/services/tts\`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'X-App-Token': token },
-  body: JSON.stringify({ text: 'Hello world', provider: 'elevenlabs' })
-});
-const { url } = await r.json();
-new Audio(url).play();
-\`\`\`
-
-Transcribe:
-\`\`\`js
-const fd = new FormData();
-fd.append('audio', file);                    // mp3/wav/m4a, up to 100MB
-fd.append('diarize', 'true');                // optional
-const r = await fetch(\`https://a.gipity.ai/api/\${APP}/services/transcribe\`, {
-  method: 'POST',
-  headers: { 'X-App-Token': token },         // do not set Content-Type for FormData
-  body: fd
-});
-const { text } = await r.json();
-\`\`\`
-
-File upload (helper script handles progress + multipart for 5GB+ files):
-\`\`\`html
-<script src="https://media.gipity.ai/scripts/gipity-upload.js"></script>
-<script>
-  const result = await Gipity.upload(file, { appGuid: '<PROJECT_GUID>', appToken: token });
-  // result.url, result.guid
-</script>
-\`\`\`
-
-For full request/response schemas, parameters, error codes, and edge cases (streaming, image input, multi-speaker TTS, Veo aspect ratios, multipart uploads, popup auth flow, Colyseus room safety patterns), load the matching skill before writing code.
-
-## Detailed documentation
-
-Run \`gipity skills list\` to see all available skill docs. Run \`gipity skills read <name>\` to read one.
-
-App services skills (load before calling \`/services/*\` endpoints — they contain the canonical request/response schemas, examples, and common-mistake guards):
-
-- \`app-llm\` — \`/services/llm\` (chat completions, streaming, image input, model list)
-- \`app-tts\` — \`/services/tts\` (voices, multi-speaker Gemini, languages)
-- \`app-image\` — \`/services/image\` (providers, sizes, aspect ratios)
-- \`app-audio\` — \`/services/sound\`, \`/services/music\`, \`/services/transcribe\`
-- \`app-video\` — \`/services/video\` (Veo models, aspect, resolution)
-- \`app-files\` — \`/uploads/init\`+\`/uploads/complete\`, \`gipity-upload.js\` helper, variants, file listing
-- \`app-auth\` — sign in with Gipity, popup vs redirect, \`auth/status\`, error codes
-- \`app-realtime\` — Colyseus rooms (relay vs state), \`MapSchema\` init guard, room discovery
+App services skills (load before calling \`/services/*\` endpoints):
+- \`app-llm\` — chat completions, streaming, image input
+- \`app-tts\` — voices, multi-speaker, languages
+- \`app-image\` — providers, sizes, aspect ratios
+- \`app-audio\` — sound effects, music, transcription
+- \`app-video\` — Veo models, aspect, resolution
+- \`app-files\` — uploads, variants, file listing
+- \`app-auth\` — sign in with Gipity, popup vs redirect
+- \`app-realtime\` — Colyseus rooms, relay vs state
 
 Other key skills:
-
 - \`web-app-basics\` — coding guidelines, file structure, HTML/CSS/JS patterns
-- \`app-development\` — functions, database & API (write functions → deploy → test → call via REST)
+- \`app-development\` — functions, database and API
 - \`3d-world\` — 3D multiplayer game template (Three.js + Rapier + Colyseus)
 - \`2d-game\` — 2D game template (Phaser 3)
 - \`sandbox-tools\` — cloud sandbox capabilities and pre-installed tools
-- \`tts-guide\` — agent-side speech tools (\`speech_generate\`, \`voice_set\`, sound/music) — different from the \`app-tts\` HTTP service
-
-Load the relevant skill before starting a task — they contain the correct API patterns, code examples, and common mistakes.
-
-## File operations
-
-All file creation and editing should happen locally — hooks auto-push changes to Gipity. Don't use \`gipity chat\` to create or edit files. Use \`gipity sync\` if files get out of sync. Files generated remotely by \`gipity chat\` (images, audio, etc.) also sync down automatically and can be referenced in your code like any local file.
-
-## Authentication
-
-1. \`gipity login --email user@example.com\` → sends a 6-digit code
-2. \`gipity login --email user@example.com --code 123456\`
-
-## Sync behavior
-
-- Auto-push — files push to Gipity after every Write/Edit (hook)
-- Auto-pull — remote changes pull before each prompt (hook)
-- Tool-generated files sync too — images, audio, and other files created by \`gipity chat\` or remote agent tools auto-pull like any other
-- Deletes are safe — use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files
+- \`tts-guide\` — agent-side speech tools (different from the \`app-tts\` HTTP service)
 `;

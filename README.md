@@ -140,7 +140,7 @@ gipity sync down     # Pull remote changes
 | `gipity scaffold [title]` | Create app structure (`--type web`, `--type 2d-game`, or `--type 3d-world`) |
 | `gipity test` | Run project tests in sandboxed containers |
 | `gipity logs fn <name>` | View function execution logs |
-| `gipity browser <url>` | Inspect a URL: console errors, performance, failed resources |
+| `gipity page-inspect <url>` | Inspect a URL: console errors, performance, failed resources |
 | `gipity records` | Query and manage Records API tables |
 | `gipity fn` | Manage and call serverless functions |
 | `gipity rbac` | Manage RBAC policies |
