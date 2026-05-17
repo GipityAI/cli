@@ -89,6 +89,6 @@ export async function refreshTokenIfNeeded(): Promise<void> {
       expiresAt,
     });
   } catch {
-    // Refresh failed — caller will see expired auth
+    // Refresh failed - caller will see expired auth
   }
 }

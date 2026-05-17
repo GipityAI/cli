@@ -1,2 +1,8 @@
 dist/
 node_modules/
+.env
+.env.local
+
+# Screenshots from local browser/page-screenshot testing - keep out of commits.
+screenshot.png
+ss-*.png

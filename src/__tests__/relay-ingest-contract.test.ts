@@ -1,13 +1,13 @@
 /**
  * Contract test: every key the daemon emits in an ingest entry must appear
- * in the manifest below — which mirrors the server's `entrySchema`
+ * in the manifest below - which mirrors the server's `entrySchema`
  * (platform/server/src/routes/remote-sessions.ts). If `mapEventToEntries`
  * ever stamps a key the server doesn't accept, this test fails loudly
  * BEFORE the daemon ships and starts 400ing in production.
  *
  * Why a manifest instead of importing the server's Zod schema directly:
  * the CLI is a standalone npm package with a strict `rootDir: src`
- * tsconfig — a cross-workspace import won't typecheck. The manifest is
+ * tsconfig - a cross-workspace import won't typecheck. The manifest is
  * the smallest thing that catches the class of bug we hit (the daemon
  * adding a `ts` field the server stripped silently, then later rejected).
  *

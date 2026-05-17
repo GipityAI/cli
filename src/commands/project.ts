@@ -6,7 +6,7 @@ import { requireConfig, saveConfig } from '../config.js';
 import { slugify } from '../setup.js';
 import { error as clrError, brand, muted, info, success } from '../colors.js';
 import { confirm } from '../utils.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 import { getProjectsRoot } from '../relay/paths.js';
 import { finalizeLocalProject } from '../project-setup.js';
 import * as relayState from '../relay/state.js';
@@ -41,11 +41,7 @@ export const projectCommand = new Command('project')
         process.exit(1);
       }
       saveConfig({ ...config, projectGuid: match.short_guid, projectSlug: match.slug, conversationGuid: null });
-      if (opts.json) {
-        console.log(JSON.stringify({ switched: match.slug, guid: match.short_guid }));
-      } else {
-        console.log(`Switched to ${match.name} (${match.slug})`);
-      }
+      printResult(`Switched to ${match.name} (${match.slug}).`, opts, { switched: match.slug, guid: match.short_guid });
       return;
     }
 
@@ -60,24 +56,31 @@ export const projectCommand = new Command('project')
 
 projectCommand
   .command('create <name>')
-  .description('Create a new project, materialize it under ~/GipityProjects, and link this machine to it')
+  .description('Create a project')
   .option('--slug <slug>', 'Project slug')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
     const slug = opts.slug || slugify(name);
 
-    // Auto-chat so the project surfaces at the top of both picker lists —
+    // Auto-chat so the project surfaces at the top of both picker lists -
     // `projects.dal.ts` orders by most recent conversation activity. Same
     // shape `gipity claude` uses for its picker-created projects.
+    // When spawned inside a web-CLI-dispatched Claude Code turn, the relay
+    // daemon sets GIPITY_CONVERSATION_GUID on our env; pass origin='dispatch'
+    // so the new project's chat is writable from the web CLI (otherwise it
+    // defaults to 'local' = read-only mirror).
     const device = relayState.getDevice();
+    const isDispatch = Boolean(process.env.GIPITY_CONVERSATION_GUID);
     const body: {
       name: string; slug: string;
       autoChat?: 'claude_code' | 'gip';
       deviceGuid?: string;
+      origin?: 'dispatch' | 'local';
     } = { name, slug };
     if (device) {
       body.autoChat = 'claude_code';
       body.deviceGuid = device.guid;
+      if (isDispatch) body.origin = 'dispatch';
     } else {
       body.autoChat = 'gip';
     }
@@ -94,23 +97,23 @@ projectCommand
 
     const accountSlug = await getAccountSlug();
 
-    // Resolve the first assigned agent (if any) — not fatal if missing.
+    // Resolve the first assigned agent (if any) - not fatal if missing.
     let agentGuid = '';
     try {
       const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
       if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
     } catch {
-      // offline or no agents — non-fatal
+      // offline or no agents - non-fatal
     }
 
-    const { pushed, pulled } = await finalizeLocalProject({
+    const { applied } = await finalizeLocalProject({
       dir,
       projectGuid: project.short_guid,
       projectSlug: project.slug,
       accountSlug,
       agentGuid,
       sync: 'soft',
-      confirmDeletions: false,
+      interactive: false,
     });
 
     if (opts.json) {
@@ -118,22 +121,20 @@ projectCommand
         created: project.slug,
         guid: project.short_guid,
         dir,
-        pushed,
-        pulled,
+        applied,
       }));
       return;
     }
 
     console.log(success(`Created "${project.name}" (${project.slug})`));
     console.log(`Initialized ${info(dir)}`);
-    if (pushed > 0) console.log(`Pushed ${pushed} file${pushed > 1 ? 's' : ''} to Gipity.`);
-    if (pulled > 0) console.log(`Pulled ${pulled} file${pulled > 1 ? 's' : ''}.`);
+    if (applied > 0) console.log(`Synced ${applied} change${applied > 1 ? 's' : ''} with Gipity.`);
     console.log('');
     if (process.env.GIPITY_NON_INTERACTIVE === '1') {
       console.log(`${muted('Next:')} switch to "${project.name}" in the sidebar.`);
     } else {
       console.log(`${muted('Next:')} exit Claude (Ctrl+D), then run:  ${brand('gipity claude')}`);
-      console.log(`${muted('Pick')} "${project.name}" ${muted(`— it'll be at the top of the list.`)}`);
+      console.log(`${muted('Pick')} "${project.name}" ${muted(`- it'll be at the top of the list.`)}`);
     }
   }));
 
@@ -154,17 +155,12 @@ projectCommand
       return;
     }
     await del(`/projects/${match.short_guid}`);
-
-    if (opts.json) {
-      console.log(JSON.stringify({ deleted: match.slug }));
-    } else {
-      console.log(`Deleted "${match.name}".`);
-    }
+    printResult(`Deleted "${match.name}".`, opts, { deleted: match.slug });
   }));
 
 projectCommand
   .command('rename <name> <new-name>')
-  .description('Rename a project (display name only — slug and URLs are unchanged)')
+  .description('Rename a project')
   .option('--json', 'Output as JSON')
   .action((name: string, newName: string, opts) => run('Rename', async () => {
     const res = await get<{ data: ProjectData[] }>('/projects?limit=100');
@@ -174,17 +170,12 @@ projectCommand
       process.exit(1);
     }
     await put(`/projects/${match.short_guid}`, { name: newName });
-
-    if (opts.json) {
-      console.log(JSON.stringify({ renamed: match.slug, from: match.name, to: newName }));
-    } else {
-      console.log(`Renamed "${match.name}" -> "${newName}" (slug ${match.slug} unchanged).`);
-    }
+    printResult(`Renamed "${match.name}" → "${newName}".`, opts, { renamed: match.slug, from: match.name, to: newName });
   }));
 
 projectCommand
   .command('info')
-  .description('Show current project details')
+  .description('Show current project')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Info', async () => {
     const config = requireConfig();

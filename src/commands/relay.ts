@@ -1,5 +1,5 @@
 /**
- * `gipity relay` — user-facing command tree for managing the local relay
+ * `gipity relay` - user-facing command tree for managing the local relay
  * daemon. Setup itself now lives in `gipity claude`'s onboarding; this
  * file hosts the everyday management verbs (status, run, pause, resume,
  * rename, revoke, log) plus delegates install/autostart to
@@ -18,19 +18,19 @@ import * as daemon from '../relay/daemon.js';
 import { registerInstallCommands } from './relay-install.js';
 
 export const relayCommand = new Command('relay')
-  .description('Pair this machine\'s Claude Code with the Gipity web CLI');
+  .description('Pair with the web CLI');
 
 // ─── gipity relay status ───────────────────────────────────────────────
 
 relayCommand
   .command('status')
-  .description('Show pairing status, allowed projects, and pause state')
+  .description('Show pairing status')
   .option('--json', 'Machine-readable output')
   .action((opts: { json?: boolean }) => {
     const s = state.loadState();
 
     if (opts.json) {
-      // Redact the token — no reason for scripts to see it.
+      // Redact the token - no reason for scripts to see it.
       const safe = {
         ...s,
         device: s.device ? { ...s.device, token: '***' } : null,
@@ -55,8 +55,8 @@ relayCommand
 
 relayCommand
   .command('run')
-  .description('Run the background service that receives commands from the web CLI')
-  .option('-v, --verbose', 'Log every incoming command (project cwd, session chain, spawn argv) — useful for watching behavior live')
+  .description('Run the background service')
+  .option('-v, --verbose', 'Log every incoming command (project cwd, session chain, spawn argv) - useful for watching behavior live')
   .action(async (opts: { verbose?: boolean }) => {
     // Tests bound the run via this env so they don't hang on SIGKILL.
     const maxRunMs = process.env.GIPITY_RELAY_MAX_RUN_MS
@@ -88,7 +88,7 @@ relayCommand
       process.kill(pid, 'SIGTERM');
     } catch (err: any) {
       if (err?.code === 'ESRCH') {
-        console.log(`  ${muted(`PID ${pid} not running — cleaning up stale PID file.`)}`);
+        console.log(`  ${muted(`PID ${pid} not running - cleaning up stale PID file.`)}`);
         try { unlinkSync(pidPath); } catch { /* ignore */ }
         return;
       }
@@ -123,7 +123,7 @@ relayCommand
 
 relayCommand
   .command('pause')
-  .description('Temporarily stop accepting commands (without unpairing)')
+  .description('Pause without unpairing')
   .action(() => {
     requirePaired();
     state.setPaused(true);
@@ -132,7 +132,7 @@ relayCommand
 
 relayCommand
   .command('resume')
-  .description('Resume accepting commands after a pause')
+  .description('Resume after a pause')
   .action(() => {
     requirePaired();
     state.setPaused(false);
@@ -143,7 +143,7 @@ relayCommand
 
 relayCommand
   .command('rename <new-name>')
-  .description('Rename this device (both locally and on the server)')
+  .description('Rename this device')
   .action(async (newName: string) => {
     const device = requirePaired();
     const name = newName.trim();
@@ -157,7 +157,7 @@ relayCommand
     } catch (err: any) {
       console.error(`\n  ${clrError(`Rename failed: ${err?.message || err}`)}`);
       if (err?.statusCode === 401) {
-        console.error(`  ${dim('Run `gipity login` first — rename requires your user auth.')}`);
+        console.error(`  ${dim('Run `gipity login` first - rename requires your user auth.')}`);
       }
       process.exit(1);
     }
@@ -169,7 +169,7 @@ relayCommand
 
 relayCommand
   .command('revoke')
-  .description('Revoke this device on the server and forget the local token')
+  .description('Revoke and forget this device')
   .action(async () => {
     const device = requirePaired();
     if (!(await confirm(`  Revoke ${bold(device.name)} (${device.guid})?`))) {
@@ -179,7 +179,7 @@ relayCommand
     try {
       await post(`/remote-devices/${encodeURIComponent(device.guid)}/revoke`, {});
     } catch (err: any) {
-      // Even if the server call fails, drop local state — a stale token is
+      // Even if the server call fails, drop local state - a stale token is
       // worse than double-revoking. Warn loudly though.
       console.error(`  ${clrError(`Server revoke failed: ${err?.message || err}`)}`);
       console.error(`  ${dim('Local token cleared anyway. Visit the web CLI to confirm the server-side revoke.')}`);
@@ -193,7 +193,7 @@ relayCommand
 
 relayCommand
   .command('log')
-  .description('Show the background service\'s recent log (tails ~/.gipity/relay.log)')
+  .description('Tail the service log')
   .option('-n, --lines <n>', 'How many lines to print (default 100)', '100')
   .option('-f, --follow', 'Follow the log like `tail -f`')
   .action((opts: { lines: string; follow?: boolean }) => {
@@ -212,7 +212,7 @@ relayCommand
       process.exit(1);
     }
     if (opts.follow) {
-      // Defer real follow to `tail -f` — cross-platform fallback below.
+      // Defer real follow to `tail -f` - cross-platform fallback below.
       const tailCmd = process.platform === 'win32' ? null : 'tail';
       if (!tailCmd) {
         console.error(`  ${clrError('--follow is not supported on this platform yet.')}`);

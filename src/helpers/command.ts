@@ -1,5 +1,5 @@
 /**
- * command.ts — Shared command execution helpers.
+ * command.ts - Shared command execution helpers.
  * Eliminates duplicated try/catch + clrError + process.exit pattern.
  */
 

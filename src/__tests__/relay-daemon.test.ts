@@ -1,5 +1,5 @@
 /**
- * `gipity-relay` daemon — full round-trip tests against an in-process mock
+ * `gipity-relay` daemon - full round-trip tests against an in-process mock
  * backend. `GIPITY_RELAY_CLAUDE_CMD` is pointed at `true` / `false` / a
  * sleep script so we can assert the daemon's ack shape for each outcome
  * without actually shelling out to `gipity claude`.
@@ -76,7 +76,7 @@ before(async () => {
       }
       const d = pending.shift();
       if (!d) {
-        // Brief wait then 204 — simulates a short long-poll hold.
+        // Brief wait then 204 - simulates a short long-poll hold.
         await new Promise(r => setTimeout(r, 80));
         res.statusCode = 204;
         return res.end();
@@ -105,7 +105,7 @@ after(async () => {
   await new Promise<void>(resolve => server.close(() => resolve()));
 });
 
-// ─── Fixture — a fresh $HOME with a paired device + pre-seeded project dir ─
+// ─── Fixture - a fresh $HOME with a paired device + pre-seeded project dir ─
 
 function freshHome(opts: { paused?: boolean; preseedProject?: boolean } = {}): {
   home: string;
@@ -252,13 +252,13 @@ describe('daemon: safety checks', () => {
 describe('daemon: auto-bootstrap missing project dir', () => {
   it('creates ~/GipityProjects/<slug>/ + .gipity.json when dispatch targets an unknown project', async () => {
     resetMock();
-    // Don't preseed the project dir — daemon should create it.
+    // Don't preseed the project dir - daemon should create it.
     const { home, projectCwd } = freshHome({ preseedProject: false });
     pending.push(dispatchRow({ short_guid: 'rds_bootstrap', message: 'hi' }));
 
     await runDaemon(home, 'true');
 
-    // Ack should be "done" — the dispatch ran successfully against the new dir.
+    // Ack should be "done" - the dispatch ran successfully against the new dir.
     assert.equal(acks.length, 1);
     assert.equal(acks[0].status, 'done', `got ${acks[0].status}: ${acks[0].error}`);
 

@@ -59,44 +59,44 @@ const INFRASTRUCTURE = [
   'Deploy', 'Uploads', 'Rollback',
 ];
 
-// ── Egg color palette (shared) — gradient built around #FEA60E ───────
+// ── Egg color palette (shared) - gradient built around #FEA60E ───────
 const _hi = (s: string) => `\x1b[38;2;255;215;80m${s}\x1b[39m`;  // golden highlight
 const _lt = (s: string) => `\x1b[38;2;254;190;45m${s}\x1b[39m`;  // light
-const _br = (s: string) => `\x1b[38;2;254;166;14m${s}\x1b[39m`;  // base — #FEA60E
+const _br = (s: string) => `\x1b[38;2;254;166;14m${s}\x1b[39m`;  // base - #FEA60E
 const _md = (s: string) => `\x1b[38;2;218;112;8m${s}\x1b[39m`;   // medium-dark
 const _sh = (s: string) => `\x1b[38;2;170;68;4m${s}\x1b[39m`;    // shadow
 
-// Wobbly egg — asymmetric left/right, organic feel (8 rows)
+// Wobbly egg - asymmetric left/right, organic feel (8 rows)
 // Widths: 6 → 8 → 10 → 12 → 14 → 12 → 10 → 8  |  Widest at row 5/8 (62%)
 function eggWobbly(): string[] {
   return [
-    _lt('▗▄') + _br('██') + _md('▄▖'),                        //  6 — narrow top
-    _lt('▟') + _hi('█') + _br('████') + _md('█▙'),            //  8 — subtle highlight
-    _lt('▐') + _br('██████') + _md('██▌'),                     // 10 — expanding
-    _br('▟████████') + _md('██') + _sh('▙'),                   // 12 — smooth curve left, step right
-    _br('▐███████') + _md('███') + _sh('██▌'),                 // 14 — widest
-    _br('▜██████') + _md('███') + _sh('█▌'),                   // 12 — left tapers, right stays
-    _md('▜██████') + _sh('██▛'),                               // 10 — both taper
-    _md('▝▀') + _sh('████▀▘'),                                 //  8 — bottom (wider than top)
+    _lt('▗▄') + _br('██') + _md('▄▖'),                        //  6 - narrow top
+    _lt('▟') + _hi('█') + _br('████') + _md('█▙'),            //  8 - subtle highlight
+    _lt('▐') + _br('██████') + _md('██▌'),                     // 10 - expanding
+    _br('▟████████') + _md('██') + _sh('▙'),                   // 12 - smooth curve left, step right
+    _br('▐███████') + _md('███') + _sh('██▌'),                 // 14 - widest
+    _br('▜██████') + _md('███') + _sh('█▌'),                   // 12 - left tapers, right stays
+    _md('▜██████') + _sh('██▛'),                               // 10 - both taper
+    _md('▝▀') + _sh('████▀▘'),                                 //  8 - bottom (wider than top)
   ];
 }
 
-// Symmetric egg — clean left/right mirror, fatter bottom (7 rows)
+// Symmetric egg - clean left/right mirror, fatter bottom (7 rows)
 // Widths: 6 → 8 → 10 → 12 → 14 → 12 → 10  |  Widest at row 5/7 (71%)
 // Edge pairs: ▗/▖ cap → ▟/▙ expand → ▐/▌ straight → ▜/▛ contract → ▝/▘ cap
 function eggSym(): string[] {
   return [
-    _lt('▗▄') + _br('██') + _md('▄▖'),                        //  6 — rounded top cap
-    _lt('▟') + _hi('█') + _br('████') + _md('█▙'),            //  8 — expanding, subtle highlight
-    _lt('▟') + _br('██████') + _md('██▙'),                    // 10 — expanding
-    _br('▟████████') + _md('██▙'),                             // 12 — expanding
-    _br('▐███████') + _md('███') + _sh('██▌'),                 // 14 — widest, straight sides
-    _br('▜████████') + _sh('██▛'),                             // 12 — contracting
-    _md('▝▀') + _sh('██████▀▘'),                               // 10 — rounded bottom cap
+    _lt('▗▄') + _br('██') + _md('▄▖'),                        //  6 - rounded top cap
+    _lt('▟') + _hi('█') + _br('████') + _md('█▙'),            //  8 - expanding, subtle highlight
+    _lt('▟') + _br('██████') + _md('██▙'),                    // 10 - expanding
+    _br('▟████████') + _md('██▙'),                             // 12 - expanding
+    _br('▐███████') + _md('███') + _sh('██▌'),                 // 14 - widest, straight sides
+    _br('▜████████') + _sh('██▛'),                             // 12 - contracting
+    _md('▝▀') + _sh('██████▀▘'),                               // 10 - rounded bottom cap
   ];
 }
 
-// Tall smooth egg — symmetric, extra row at widest, finer gradient (8 rows)
+// Tall smooth egg - symmetric, extra row at widest, finer gradient (8 rows)
 // Widths: 6 → 8 → 10 → 12 → 14 → 14 → 12 → 10  |  Widest at rows 5-6/8
 // Edge pairs: ▗/▖ cap → ▟/▙ expand → ▐/▌ straight → ▜/▛ contract → ▝/▘ cap
 function eggTall(): string[] {
@@ -105,14 +105,14 @@ function eggTall(): string[] {
   const _dk = (s: string) => `\x1b[38;2;195;88;6m${s}\x1b[39m`;   // medium → shadow
 
   return [
-    _lt('▗▄') + _br('██') + _md('▄▖'),                            //  6 — top cap
-    _lt('▟') + _hi('█') + _br('████') + _m1('█▙'),                //  8 — expanding, highlight
-    _lt('▟') + _br('██████') + _m1('██▙'),                        // 10 — expanding
-    _br('▟████████') + _m1('██▙'),                                 // 12 — expanding
-    _br('▐███████') + _m1('███') + _md('██▌'),                    // 14 — widest, straight
-    _br('▐██████') + _m1('███') + _md('██') + _dk('█▌'),          // 14 — widest, gradient shifts
-    _m1('▜████') + _md('████') + _dk('██▛'),                      // 12 — contracting
-    _md('▝▀') + _dk('████') + _sh('██▀▘'),                        // 10 — bottom cap
+    _lt('▗▄') + _br('██') + _md('▄▖'),                            //  6 - top cap
+    _lt('▟') + _hi('█') + _br('████') + _m1('█▙'),                //  8 - expanding, highlight
+    _lt('▟') + _br('██████') + _m1('██▙'),                        // 10 - expanding
+    _br('▟████████') + _m1('██▙'),                                 // 12 - expanding
+    _br('▐███████') + _m1('███') + _md('██▌'),                    // 14 - widest, straight
+    _br('▐██████') + _m1('███') + _md('██') + _dk('█▌'),          // 14 - widest, gradient shifts
+    _m1('▜████') + _md('████') + _dk('██▛'),                      // 12 - contracting
+    _md('▝▀') + _dk('████') + _sh('██▀▘'),                        // 10 - bottom cap
   ];
 }
 
@@ -127,6 +127,14 @@ function visLen(s: string): number {
 function padR(s: string, width: number): string {
   const gap = width - visLen(s);
   return gap > 0 ? s + ' '.repeat(gap) : s;
+}
+
+/** Truncate from the left with a leading ellipsis if longer than maxW (plain text). */
+function leadingEllipsify(s: string, maxW: number): string {
+  if (s.length <= maxW) return s;
+  if (maxW <= 1) return s.slice(-maxW);
+  if (maxW <= 3) return '…'.padStart(maxW);
+  return '…' + s.slice(-(maxW - 1));
 }
 
 function center(s: string, width: number): string {
@@ -202,12 +210,11 @@ function buildLeftPanel(opts: BannerOptions, panelW: number): string[] {
     leftLines.push(center(line, panelW));
   }
 
-  leftLines.push('');
-  leftLines.push(center(faint('Cloud agents for builders'), panelW));
-
   if (opts.cwd) {
-    const short = opts.cwd.replace(process.env['HOME'] || '', '~');
+    const short = leadingEllipsify(opts.cwd.replace(process.env['HOME'] || '', '~'), panelW);
+    leftLines.push('');
     leftLines.push(center(muted(short), panelW));
+    leftLines.push('');
   }
 
   return leftLines;
@@ -271,6 +278,8 @@ function printFull(opts: BannerOptions, outerW: number): void {
   addSection('App Building', APP_BUILDING);
   addSection('Utilities', UTILITIES);
   addSection('Infrastructure', INFRASTRUCTURE);
+  rightLines.push('');
+  rightLines.push('');
 
   // -- Equalize lengths --
   const maxLen = Math.max(leftLines.length, rightLines.length);

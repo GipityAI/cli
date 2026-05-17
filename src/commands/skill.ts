@@ -15,12 +15,12 @@ interface SkillDetail extends SkillSummary {
   content: string;
 }
 
-export const skillsCommand = new Command('skills')
-  .description('List and read skill documentation (platform docs for building apps)');
+export const skillCommand = new Command('skill')
+  .description('Read platform docs');
 
-skillsCommand
+skillCommand
   .command('list')
-  .description('List available skills')
+  .description('List skills')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
     const { config } = await resolveProjectContext();
@@ -35,9 +35,9 @@ skillsCommand
     );
   }));
 
-skillsCommand
+skillCommand
   .command('read <name>')
-  .description('Read a skill\'s full content by name')
+  .description('Read a skill')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Read', async () => {
     const { config } = await resolveProjectContext();

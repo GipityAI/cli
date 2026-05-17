@@ -1,8 +1,16 @@
+import { Readable } from 'stream';
+import * as tar from 'tar-stream';
 import { getAuth, refreshTokenIfNeeded } from './auth.js';
 import { getConfig, getApiBaseOverride, requireConfig, saveConfig } from './config.js';
 
 export class ApiError extends Error {
-  constructor(public statusCode: number, public code: string, message: string) {
+  constructor(
+    public statusCode: number,
+    public code: string,
+    message: string,
+    /** Structured sidecar payload from the server (e.g. current_server_version on CAS 409s). */
+    public data?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -35,7 +43,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, err.message);
+    throw new ApiError(res.status, err.code, err.message, json.data);
   }
 
   return res.json() as Promise<T>;
@@ -47,6 +55,49 @@ export function get<T>(path: string): Promise<T> {
 
 export function post<T>(path: string, body?: unknown): Promise<T> {
   return request<T>('POST', path, body);
+}
+
+/** POST JSON and consume the response as a tar stream, returning each entry as
+ *  { name, buffer } in arrival order. Non-2xx responses are parsed as JSON errors. */
+export async function postForTarEntries(
+  path: string,
+  body?: unknown,
+): Promise<Array<{ name: string; buffer: Buffer }>> {
+  const headers = await getHeaders();
+  const url = `${baseUrl()}${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
+    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
+    throw new ApiError(res.status, err.code, err.message, json.data);
+  }
+  if (!res.body) throw new ApiError(500, 'EMPTY_RESPONSE', 'Server returned no body');
+
+  const extract = tar.extract();
+  const entries: Array<{ name: string; buffer: Buffer }> = [];
+
+  const done = new Promise<void>((resolve, reject) => {
+    extract.on('entry', (header, stream, next) => {
+      const chunks: Buffer[] = [];
+      stream.on('data', (c: Buffer) => chunks.push(c));
+      stream.on('end', () => {
+        entries.push({ name: header.name, buffer: Buffer.concat(chunks) });
+        next();
+      });
+      stream.on('error', reject);
+      stream.resume();
+    });
+    extract.on('finish', () => resolve());
+    extract.on('error', reject);
+  });
+
+  Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream).pipe(extract);
+  await done;
+  return entries;
 }
 
 export function put<T>(path: string, body?: unknown): Promise<T> {
@@ -118,7 +169,7 @@ export async function downloadStream(path: string): Promise<import('stream').Rea
 }
 
 /**
- * PUT raw bytes to a presigned URL (no auth header — the URL is signed).
+ * PUT raw bytes to a presigned URL (no auth header - the URL is signed).
  * Supports a Buffer or a Readable stream body. Returns the response ETag header
  * (without quotes), used for multipart upload completion.
  */
@@ -173,7 +224,7 @@ export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, err.message);
+    throw new ApiError(res.status, err.code, err.message, json.data);
   }
 
   return res.json() as Promise<T>;

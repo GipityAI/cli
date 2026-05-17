@@ -22,7 +22,7 @@ describe('cli-smoke: --version and --help', () => {
     const out = r.stdout;
     assert.match(out, new RegExp(`Gipity CLI\\s+v${PKG_VERSION.replace(/\./g, '\\.')}`));
 
-    const sections = ['Setup:', 'Project:', 'Resources:', 'Agent:', 'Maintenance:'];
+    const sections = ['Common:', 'Connect:', 'Project:', 'Files:', 'App building:', 'Utilities:', 'Agent:', 'Setup:'];
     let lastIdx = -1;
     for (const s of sections) {
       const idx = out.indexOf(s);
@@ -32,11 +32,11 @@ describe('cli-smoke: --version and --help', () => {
     }
   });
 
-  it('--help lists doctor and update under Maintenance', () => {
+  it('--help lists doctor and update under Setup', () => {
     const r = runCli(['--help']);
-    const maint = r.stdout.split('Maintenance:')[1] ?? '';
-    assert.match(maint, /\bdoctor\b/);
-    assert.match(maint, /\bupdate\b/);
+    const setup = r.stdout.split('Setup:')[1] ?? '';
+    assert.match(setup, /\bdoctor\b/);
+    assert.match(setup, /\bupdate\b/);
   });
 });
 

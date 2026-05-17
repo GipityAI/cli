@@ -3,13 +3,13 @@
  *
  * The daemon spawns Claude with this flag set and pipes stdout through
  * `parseEvent` + `mapEventToEntries`. Each ingest entry produced here is
- * POSTed to `/remote-sessions/:convGuid/ingest` — the single source of
+ * POSTed to `/remote-sessions/:convGuid/ingest` - the single source of
  * truth for the conversation. There is no hook, no transcript-file
  * reading, no shared offset file: the daemon owns the capture entirely.
  *
  * Stream-json is a public, documented protocol. The Claude Agent SDK
  * uses it internally. That's what makes dropping the hook model
- * acceptable as a design — we're not scraping an internal format.
+ * acceptable as a design - we're not scraping an internal format.
  */
 
 // ─── Ingest wire format (matches server's /ingest Zod schema) ──────────
@@ -27,7 +27,7 @@ export type IngestEntry =
   | { kind: 'system'; content: string };
 
 // ─── Stream-json event shapes ──────────────────────────────────────────
-// Only the fields we actually read are typed — everything else is passed
+// Only the fields we actually read are typed - everything else is passed
 // through loosely. Claude Code's event schema is documented but may grow
 // subtypes; we treat unknown events as no-ops rather than failing hard.
 
@@ -90,7 +90,7 @@ const MAX_LINE_BYTES = 2 * 1024 * 1024;
 /** Parse one NDJSON line. Returns null for blank lines, malformed JSON,
  *  records without a `type` field (stream-json always sets it), or
  *  absurdly long lines. An optional `onWarn` callback receives a reason
- *  code + a short snippet so the caller can log the drop — this keeps
+ *  code + a short snippet so the caller can log the drop - this keeps
  *  stream-json.ts free of daemon-specific logging. */
 export function parseEvent(
   line: string,
@@ -193,7 +193,7 @@ export function mapEventToEntries(evt: StreamJsonEvent): IngestEntry[] {
  *  per-line cap in `parseEvent` is 2 MB, but that only applies after we
  *  see a newline. A pathological producer that writes 100 MB of data
  *  without a `\n` would otherwise grow the buffer unboundedly. When we
- *  hit this cap we force-drain the buffer as one oversized "line" —
+ *  hit this cap we force-drain the buffer as one oversized "line" -
  *  `parseEvent` will drop it via its own length check and log a warning
  *  so the source is visible. */
 const MAX_SPLITTER_BUF_BYTES = 4 * 1024 * 1024;

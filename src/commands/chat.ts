@@ -1,11 +1,18 @@
 import { Command } from 'commander';
-import { post } from '../api.js';
+import { get, post, put, del } from '../api.js';
 import { resolveProjectContext, saveConfig } from '../config.js';
-import { syncDown } from '../sync.js';
+import { sync } from '../sync.js';
 import { error as clrError, muted } from '../colors.js';
+import { run, printList, printResult } from '../helpers/index.js';
+
+interface ChatSummary {
+  short_guid: string;
+  title: string | null;
+  updated_at: string;
+}
 
 export const chatCommand = new Command('chat')
-  .description('Send a message to the Gipity agent')
+  .description('Send a message to your agent')
   .argument('<message>', 'Message to send')
   .option('--new', 'Start a new conversation')
   .option('--json', 'Output as JSON')
@@ -53,14 +60,14 @@ export const chatCommand = new Command('chat')
       let syncChanges: { path: string; type: string; size?: number }[] = [];
 
       if (res.data.filesChanged) {
-        const syncResult = await syncDown();
-        if (syncResult.pulled > 0) {
-          syncSummary = `\nPulled ${syncResult.pulled} file${syncResult.pulled > 1 ? 's' : ''}:\n${syncResult.summary}`;
+        const syncResult = await sync({ interactive: false });
+        if (syncResult.applied > 0) {
+          syncSummary = `\nSynced ${syncResult.applied} change${syncResult.applied > 1 ? 's' : ''}:\n${syncResult.summary}`;
         }
-        syncChanges = syncResult.changes.map(c => ({
-          path: c.path,
-          type: c.type,
-          ...(c.remoteSize != null ? { size: c.remoteSize } : {}),
+        syncChanges = syncResult.plan.actions.map(a => ({
+          path: a.path,
+          type: a.kind,
+          ...(a.remoteSize != null ? { size: a.remoteSize } : {}),
         }));
       }
 
@@ -99,3 +106,44 @@ export const chatCommand = new Command('chat')
       process.exit(1);
     }
   });
+
+chatCommand
+  .command('list')
+  .description('List chats')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('List', async () => {
+    const res = await get<{ data: ChatSummary[] }>('/conversations');
+    printList(res.data, opts, 'No chats.', c => {
+      const title = c.title || '(untitled)';
+      const updated = c.updated_at ? new Date(c.updated_at).toLocaleDateString() : '';
+      return `${c.short_guid}  ${title}  ${muted(updated)}`;
+    });
+  }));
+
+chatCommand
+  .command('rename <guid> <title...>')
+  .description('Rename a chat')
+  .option('--json', 'Output as JSON')
+  .action((guid: string, titleParts: string[], opts) => run('Rename', async () => {
+    const title = titleParts.join(' ');
+    await put(`/conversations/${guid}`, { title });
+    printResult(`Renamed ${guid} → "${title}".`, opts, { guid, title });
+  }));
+
+chatCommand
+  .command('archive <guid>')
+  .description('Archive a chat')
+  .option('--json', 'Output as JSON')
+  .action((guid: string, opts) => run('Archive', async () => {
+    await put(`/conversations/${guid}`, { archive: true });
+    printResult(`Archived ${guid}.`, opts, { guid, archived: true });
+  }));
+
+chatCommand
+  .command('delete <guid>')
+  .description('Delete a chat')
+  .option('--json', 'Output as JSON')
+  .action((guid: string, opts) => run('Delete', async () => {
+    await del(`/conversations/${guid}`);
+    printResult(`Deleted ${guid}.`, opts, { guid, deleted: true });
+  }));

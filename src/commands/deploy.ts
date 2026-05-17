@@ -17,7 +17,7 @@ function statusIcon(status: string): string {
 // ── Main Deploy Command ────────────────────────────────────────────────
 
 export const deployCommand = new Command('deploy')
-  .description('Deploy project to dev or prod')
+  .description('Deploy to dev or prod')
   .argument('[target]', 'dev or prod', 'dev')
   .option('--source-dir <dir>', 'Source directory to deploy from')
   .option('--only <phases>', 'Run only specific phases (comma-separated)')
@@ -36,7 +36,7 @@ export const deployCommand = new Command('deploy')
 
       if (!opts.json) console.log('');
 
-      // Call server — pipeline runs entirely server-side
+      // Call server - pipeline runs entirely server-side
       const res = await post<{
         data: {
           fileCount: number;

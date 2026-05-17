@@ -1,9 +1,9 @@
 /**
- * `gipity uninstall` — true reset. Stops the relay daemon, removes the
+ * `gipity uninstall` - true reset. Stops the relay daemon, removes the
  * platform autostart service, revokes the device on the server (best-effort),
  * and wipes ~/.gipity/. Optionally wipes ~/GipityProjects/ on request.
  *
- * Does not touch the npm-installed shim — the user removes that separately
+ * Does not touch the npm-installed shim - the user removes that separately
  * via `npm uninstall -g gipity`.
  */
 import { Command } from 'commander';
@@ -47,7 +47,7 @@ async function stopDaemon(): Promise<void> {
 function removeServiceUnit(): { ran: boolean; ok: boolean; note?: string } {
   try {
     const plan = planFor({ cliPath: resolveCliPath() });
-    // Run the disable sequence directly — no shell, so paths with spaces /
+    // Run the disable sequence directly - no shell, so paths with spaces /
     // shell metacharacters can't break out. Best-effort: a non-zero exit
     // is fine if the service was never installed.
     let allOk = true;
@@ -60,7 +60,7 @@ function removeServiceUnit(): { ran: boolean; ok: boolean; note?: string } {
     }
     return { ran: true, ok: allOk, note: plan.summary };
   } catch (err) {
-    if (err instanceof UnsupportedPlatformError) return { ran: false, ok: true, note: `Unsupported platform (${process.platform}) — nothing to uninstall.` };
+    if (err instanceof UnsupportedPlatformError) return { ran: false, ok: true, note: `Unsupported platform (${process.platform}) - nothing to uninstall.` };
     return { ran: false, ok: false, note: String(err) };
   }
 }
@@ -72,12 +72,12 @@ async function revokeDeviceBestEffort(): Promise<void> {
   try {
     await post(`/remote-devices/${encodeURIComponent(device.guid)}/revoke`, {});
   } catch {
-    // Swallow — we still want the local wipe to succeed.
+    // Swallow - we still want the local wipe to succeed.
   }
 }
 
 export const uninstallCommand = new Command('uninstall')
-  .description('Stop the relay, remove autostart, revoke the device, and wipe ~/.gipity/')
+  .description('Uninstall Gipity')
   .option('--yes', 'Skip confirmation prompts')
   .option('--purge-projects', 'Also delete ~/GipityProjects/ (your local project trees)')
   .action(async (opts: { yes?: boolean; purgeProjects?: boolean }) => {
@@ -86,7 +86,7 @@ export const uninstallCommand = new Command('uninstall')
     const projectsDir = join(homedir(), 'GipityProjects');
 
     console.log('');
-    console.log(`  ${bold('Gipity uninstall')} — this will:`);
+    console.log(`  ${bold('Gipity uninstall')} - this will:`);
     console.log(`    • Stop the running relay daemon (if any)`);
     console.log(`    • Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
     console.log(`    • Revoke this device on the server (best-effort)`);

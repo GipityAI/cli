@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
 import { error as clrError } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 interface AgentData {
@@ -31,11 +31,7 @@ export const agentCommand = new Command('agent')
       }
       const config = requireConfig();
       saveConfig({ ...config, agentGuid: match.short_guid, conversationGuid: null });
-      if (opts.json) {
-        console.log(JSON.stringify({ switched: match.name, guid: match.short_guid }));
-      } else {
-        console.log(`Switched to ${match.name}`);
-      }
+      printResult(`Switched to ${match.name}.`, opts, { switched: match.name, guid: match.short_guid });
       return;
     }
 
@@ -52,7 +48,7 @@ export const agentCommand = new Command('agent')
 
 agentCommand
   .command('create <name>')
-  .description('Create a new agent')
+  .description('Create an agent')
   .option('--model <model>', 'Model preference')
   .option('--switch', 'Switch to new agent after creation')
   .option('--json', 'Output as JSON')
@@ -69,14 +65,16 @@ agentCommand
     if (opts.json) {
       console.log(JSON.stringify(res.data));
     } else {
+      console.log('');
       console.log(`Created "${res.data.name}" (${res.data.short_guid})`);
       if (opts.switch) console.log('Switched.');
+      console.log('');
     }
   }));
 
 agentCommand
   .command('set <field> <value>')
-  .description('Set agent field (model, temp)')
+  .description('Set a field (model, temp)')
   .option('--json', 'Output as JSON')
   .action((field: string, value: string, opts) => run('Set', async () => {
     const config = requireConfig();
@@ -89,16 +87,22 @@ agentCommand
     }
 
     await put(`/agents/${config.agentGuid}`, body);
-    if (opts.json) {
-      console.log(JSON.stringify({ success: true, field, value }));
-    } else {
-      console.log(`Set ${field} = ${value}`);
-    }
+    printResult(`Set ${field} = ${value}`, opts, { success: true, field, value });
+  }));
+
+agentCommand
+  .command('rename <new-name>')
+  .description('Rename the current agent')
+  .option('--json', 'Output as JSON')
+  .action((newName: string, opts) => run('Rename', async () => {
+    const config = requireConfig();
+    await put(`/agents/${config.agentGuid}`, { name: newName });
+    printResult(`Renamed agent to "${newName}".`, opts, { success: true, name: newName });
   }));
 
 agentCommand
   .command('info')
-  .description('Show current agent details')
+  .description('Show current agent')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Info', async () => {
     const config = requireConfig();
@@ -132,9 +136,5 @@ agentCommand
       return;
     }
     await del(`/agents/${match.short_guid}`);
-    if (opts.json) {
-      console.log(JSON.stringify({ deleted: match.name }));
-    } else {
-      console.log(`Deleted "${match.name}".`);
-    }
+    printResult(`Deleted "${match.name}".`, opts, { deleted: match.name });
   }));

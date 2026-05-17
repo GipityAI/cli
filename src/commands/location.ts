@@ -43,7 +43,7 @@ function formatLocation(r: LocationData): string {
  * gipity location history [--count N]   → stored history
  */
 export const locationCommand = new Command('location')
-  .description('Show geographic location: your IP geo, look up an IP, reverse-geocode coords, or view stored history')
+  .description('Show location')
   .argument('[args...]', 'Zero args for me; one IP for IP lookup; two numbers for reverse geocode; "latest" or "history"')
   .option('--count <n>', 'History row count (with "history")', (v) => parseInt(v, 10))
   .option('--json', 'Output as JSON')

@@ -15,7 +15,7 @@ export function decodeJwtExp(token: string): number | null {
 
 /** Prompt the user for input on stdin.
  *  Fails fast if stdin is not a TTY (e.g. when spawned by the relay
- *  daemon with `stdio: ['ignore', ...]`) — otherwise `readline` blocks
+ *  daemon with `stdio: ['ignore', ...]`) - otherwise `readline` blocks
  *  indefinitely on a closed stdin, hanging the dispatch until the web
  *  CLI's 8-second latch gives up. Turning that into a loud error lets
  *  the daemon ack the dispatch cleanly and surface a real message. */
@@ -50,11 +50,11 @@ let _autoConfirm = false;
 export function setAutoConfirm(val: boolean): void { _autoConfirm = val; }
 export function getAutoConfirm(): boolean { return _autoConfirm; }
 
-/** Ask for Y/n confirmation. Single-keypress — no Enter required.
+/** Ask for Y/n confirmation. Single-keypress - no Enter required.
  *
  *  - `opts.default` controls which answer Enter / unknown-key selects. Defaults to `'no'`.
  *  - `opts.skip` (or the global `--yes` flag) auto-returns `true`.
- *  - Renders a `[Y/n]` or `[y/N]` hint automatically — callers should NOT append
+ *  - Renders a `[Y/n]` or `[y/N]` hint automatically - callers should NOT append
  *    their own y/N suffix to `question`.
  *  - In non-TTY environments without `--yes`, returns `false` and prints a hint. */
 export async function confirm(
@@ -125,7 +125,7 @@ export function pickOne(
 
 /** Check if a file is likely binary by reading its first bytes */
 export function isBinaryFile(buffer: Buffer): boolean {
-  // Check for null bytes in first 8KB — reliable binary indicator
+  // Check for null bytes in first 8KB - reliable binary indicator
   const len = Math.min(buffer.length, 8192);
   for (let i = 0; i < len; i++) {
     if (buffer[i] === 0) return true;

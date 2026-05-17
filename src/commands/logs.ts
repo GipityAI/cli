@@ -15,11 +15,11 @@ interface FnLog {
 }
 
 export const logsCommand = new Command('logs')
-  .description('View execution logs');
+  .description('View logs');
 
 logsCommand
   .command('fn <name>')
-  .description('Show function execution logs')
+  .description('Show function logs')
   .option('--limit <n>', 'Max entries', '20')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Logs', async () => {

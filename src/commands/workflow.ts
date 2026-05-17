@@ -1,8 +1,8 @@
 import { Command } from 'commander';
-import { get, post, put } from '../api.js';
+import { get, post, put, del } from '../api.js';
 import { requireConfig } from '../config.js';
 import { success, error as clrError, muted, bold } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 
 interface WorkflowData {
   short_guid: string;
@@ -41,7 +41,8 @@ export const workflowCommand = new Command('workflow')
     }
 
     if (res.meta) {
-      console.log(`Active workflows: ${res.meta.activeCount}/${res.meta.activeLimit}\n`);
+      console.log('');
+      console.log(`Active workflows: ${res.meta.activeCount}/${res.meta.activeLimit}`);
     }
 
     printList(res.data, opts, 'No workflows.', w => {
@@ -80,16 +81,12 @@ workflowCommand
 
 workflowCommand
   .command('run <name>')
-  .description('Manually trigger a workflow')
+  .description('Trigger a workflow')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Run', async () => {
     const wf = await resolveWorkflow(name);
     const res = await post<{ data: { message: string; workflow_guid: string } }>(`/workflows/${wf.short_guid}/run`, {});
-    if (opts.json) {
-      console.log(JSON.stringify(res.data));
-    } else {
-      console.log(`Triggered "${wf.name}".`);
-    }
+    printResult(`Triggered "${wf.name}".`, opts, res.data);
   }));
 
 workflowCommand
@@ -116,11 +113,7 @@ workflowCommand
   .action((name: string, opts) => run('Enable', async () => {
     const wf = await resolveWorkflow(name);
     await put(`/workflows/${wf.short_guid}`, { is_active: true });
-    if (opts.json) {
-      console.log(JSON.stringify({ enabled: wf.name }));
-    } else {
-      console.log(`Enabled "${wf.name}".`);
-    }
+    printResult(`Enabled "${wf.name}".`, opts, { enabled: wf.name });
   }));
 
 workflowCommand
@@ -130,11 +123,51 @@ workflowCommand
   .action((name: string, opts) => run('Disable', async () => {
     const wf = await resolveWorkflow(name);
     await put(`/workflows/${wf.short_guid}`, { is_active: false });
-    if (opts.json) {
-      console.log(JSON.stringify({ disabled: wf.name }));
-    } else {
-      console.log(`Disabled "${wf.name}".`);
-    }
+    printResult(`Disabled "${wf.name}".`, opts, { disabled: wf.name });
+  }));
+
+workflowCommand
+  .command('create')
+  .description('Create a workflow from a YAML file in the project (e.g. workflows/foo.yaml)')
+  .requiredOption('--from <path>', 'Project-relative YAML file path')
+  .option('--name <name>', 'Override the name in the YAML')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Create', async () => {
+    const config = requireConfig();
+    const body: Record<string, unknown> = {
+      config_yaml_path: opts.from,
+      project_guid: config.projectGuid,
+    };
+    if (opts.name) body.name = opts.name;
+    const res = await post<{ data: { short_guid?: string; guid?: string } }>('/workflows', body);
+    const guid = res.data.short_guid ?? res.data.guid;
+    printResult(`Workflow created (${guid}).`, opts, { created: true, guid });
+  }));
+
+workflowCommand
+  .command('edit <name>')
+  .alias('update')
+  .description('Update a workflow from a YAML file')
+  .requiredOption('--from <path>', 'Project-relative YAML file path')
+  .option('--json', 'Output as JSON')
+  .action((name: string, opts) => run('Edit', async () => {
+    const config = requireConfig();
+    const wf = await resolveWorkflow(name);
+    await put(`/workflows/${wf.short_guid}`, {
+      config_yaml_path: opts.from,
+      project_guid: config.projectGuid,
+    });
+    printResult(`Updated "${wf.name}" from ${opts.from}.`, opts, { updated: wf.name });
+  }));
+
+workflowCommand
+  .command('delete <name>')
+  .description('Delete a workflow')
+  .option('--json', 'Output as JSON')
+  .action((name: string, opts) => run('Delete', async () => {
+    const wf = await resolveWorkflow(name);
+    await del(`/workflows/${wf.short_guid}`);
+    printResult(`Deleted "${wf.name}".`, opts, { deleted: wf.name });
   }));
 
 async function resolveWorkflow(name: string): Promise<WorkflowData> {

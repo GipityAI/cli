@@ -1,40 +1,28 @@
 import { Command } from 'commander';
-import { syncDown, syncUp, syncCheck } from '../sync.js';
+import { sync } from '../sync.js';
 import { error as clrError } from '../colors.js';
 
 export const syncCommand = new Command('sync')
-  .description('Sync files between local and Gipity')
-  .argument('[direction]', 'up, down, or check', 'check')
+  .description('Sync files')
+  .option('--plan', 'Print the plan without applying any changes')
+  .option('--force', 'Bypass the bulk-deletion guard')
   .option('--json', 'Output as JSON')
-  .action(async (direction: string, opts) => {
+  .action(async (opts) => {
     try {
-      let result;
-
-      switch (direction) {
-        case 'down':
-          result = await syncDown({ confirmDeletions: true });
-          break;
-        case 'up':
-          result = await syncUp();
-          break;
-        case 'check':
-          result = await syncCheck();
-          break;
-        default:
-          console.error(clrError(`Unknown direction: ${direction}. Use: up, down, or check`));
-          process.exit(1);
-      }
-
+      const result = await sync({ plan: opts.plan, force: opts.force });
       if (opts.json) {
         console.log(JSON.stringify(result));
       } else {
-        if (result.pulled > 0) {
-          console.log(`Pulled ${result.pulled} change${result.pulled > 1 ? 's' : ''}:`);
-        } else if (result.pushed > 0) {
-          console.log(`Pushed ${result.pushed} change${result.pushed > 1 ? 's' : ''}:`);
-        }
         console.log(result.summary);
+        if (!opts.plan && result.applied > 0) {
+          console.log(`\n${result.applied} action${result.applied > 1 ? 's' : ''} applied.`);
+        }
+        if (result.skipped > 0) {
+          console.error(clrError(`${result.skipped} action${result.skipped > 1 ? 's' : ''} skipped by guard.`));
+        }
+        for (const e of result.errors) console.error(clrError(e));
       }
+      if (result.errors.length > 0) process.exit(1);
     } catch (err: any) {
       console.error(clrError(`Sync failed: ${err.message}`));
       process.exit(1);

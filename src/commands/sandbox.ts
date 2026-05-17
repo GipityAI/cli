@@ -26,11 +26,11 @@ function resolveRelativeCwd(): string | undefined {
 }
 
 export const sandboxCommand = new Command('sandbox')
-  .description('Execute code in Gipity sandbox');
+  .description('Run code in a sandbox');
 
 sandboxCommand
   .command('run <code>')
-  .description('Run code in sandbox (project files auto-mirrored into /work/)')
+  .description('Run code')
   .option('--language <language>', 'Language: js, py, or bash', 'js')
   .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
   .option(
@@ -40,7 +40,7 @@ sandboxCommand
   )
   .option('--json', 'Output as JSON')
   .addHelpText('after', `
-By default the whole project is auto-mirrored into /work/ (up to 1 GB) —
+By default the whole project is auto-mirrored into /work/ (up to 1 GB) -
 so your code can reference project files by their relative path, and any
 file you write lands back in the project. No manual copy needed.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command, Help } from 'commander';
+import { Command, Help, Option } from 'commander';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
@@ -26,13 +26,14 @@ import { claudeCommand } from './commands/claude.js';
 import { scaffoldCommand } from './commands/scaffold.js';
 import { logsCommand } from './commands/logs.js';
 import { pageInspectCommand } from './commands/page-inspect.js';
+import { pageScreenshotCommand } from './commands/page-screenshot.js';
 import { recordsCommand } from './commands/records.js';
 import { fnCommand } from './commands/fn.js';
 import { rbacCommand } from './commands/rbac.js';
 import { auditCommand } from './commands/audit.js';
 import { emailCommand } from './commands/email.js';
 import { generateCommand } from './commands/generate.js';
-import { skillsCommand } from './commands/skills.js';
+import { skillCommand } from './commands/skill.js';
 import { domainCommand } from './commands/domain.js';
 import { testCommand } from './commands/test.js';
 import { locationCommand } from './commands/location.js';
@@ -40,6 +41,8 @@ import { doctorCommand } from './commands/doctor.js';
 import { updateCommand } from './commands/update.js';
 import { relayCommand } from './commands/relay.js';
 import { uninstallCommand } from './commands/uninstall.js';
+import { approvalCommand } from './commands/approval.js';
+import { gmailCommand } from './commands/gmail.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
 import { bold, dim, brand, muted } from './colors.js';
 import { normalizeAliases } from './flag-aliases.js';
@@ -60,28 +63,31 @@ function configureHelp(cmd: Command): void {
 const program = new Command();
 
 // ── Command groups (logical ordering within each) ──────────────────────
-// Order within each group is intentional: Setup follows the user's first-run
-// path; Project follows the dev loop; Resources groups data → compute →
-// observability → access; Agent flows chat → run → manage → bill.
-const setupGroup     = [loginCommand, logoutCommand, initCommand, claudeCommand, relayCommand];
-const projectGroup   = [statusCommand, syncCommand, pushCommand, uploadCommand, deployCommand, testCommand, scaffoldCommand, domainCommand];
-const resourceGroup  = [dbCommand, memoryCommand, fileCommand, fnCommand, sandboxCommand, pageInspectCommand, generateCommand, logsCommand, recordsCommand, auditCommand, rbacCommand, emailCommand, skillsCommand, locationCommand];
-const agentGroup     = [chatCommand, agentCommand, projectCommand, workflowCommand, creditsCommand];
-const maintenanceGroup = [doctorCommand, updateCommand, uninstallCommand];
+const commonGroup      = [skillCommand, projectCommand, scaffoldCommand, deployCommand];
+const connectGroup     = [claudeCommand, relayCommand];
+const projectGroup     = [domainCommand, statusCommand, initCommand];
+const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];
+const appBuildingGroup = [testCommand, fnCommand, dbCommand, logsCommand, workflowCommand, rbacCommand, auditCommand, recordsCommand];
+const utilitiesGroup   = [pageInspectCommand, pageScreenshotCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand];
+const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
+const setupGroup       = [loginCommand, logoutCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
-  { title: 'Setup',       cmds: setupGroup },
-  { title: 'Project',     cmds: projectGroup },
-  { title: 'Resources',   cmds: resourceGroup },
-  { title: 'Agent',       cmds: agentGroup },
-  { title: 'Maintenance', cmds: maintenanceGroup },
+  { title: 'Common',       cmds: commonGroup },
+  { title: 'Connect',      cmds: connectGroup },
+  { title: 'Project',      cmds: projectGroup },
+  { title: 'Files',        cmds: filesGroup },
+  { title: 'App building', cmds: appBuildingGroup },
+  { title: 'Utilities',    cmds: utilitiesGroup },
+  { title: 'Agent',        cmds: agentGroup },
+  { title: 'Setup',        cmds: setupGroup },
 ];
 
 program
   .name('gipity')
-  .description(`${brand(bold('Gipity CLI'))} ${dim('—')} Cloud agents for builders\n\n  ${dim('90+ tools, persistent memory, app hosting, databases, deploys. Pair with Claude Code or use standalone.')}`)
+  .description(`${brand(bold('Gipity CLI'))} ${dim('-')} The agent-tuned platform where AI-built apps live\n\n  ${dim('Hosting, databases, deploys, workflows, code execution, and monitoring - one place, agent-tuned. Pair with Claude Code or use standalone.')}`)
   .version(pkg.version, '-v, --version')
-  .option('--api-base <url>', 'API base URL (e.g. http://localhost:7200)')
+  .addOption(new Option('--api-base <url>', 'API base URL').hideHelp())
   .option('-y, --yes', 'Skip confirmation prompts');
 
 program.hook('preAction', () => {
@@ -93,13 +99,10 @@ program.hook('preAction', () => {
 // ── Custom top-level help: version banner + grouped commands ────────────
 program.configureHelp({
   formatHelp(cmd, helper) {
-    // Command column: tight to the longest command name (don't let long
-    // option terms like `--api-base <url>` blow out the gutter).
     const cmdColWidth = Math.max(
       ...HELP_SECTIONS.flatMap(s => s.cmds.map(c => c.name().length)),
     );
     const padCmd = (s: string) => s.padEnd(cmdColWidth);
-    // Options get their own narrower column based on their own widths.
     const opts = helper.visibleOptions(cmd);
     const optColWidth = opts.length ? Math.max(...opts.map(o => helper.optionTerm(o).length)) : 0;
     const padOpt = (s: string) => s.padEnd(optColWidth);
@@ -107,13 +110,13 @@ program.configureHelp({
 
     lines.push('');
     lines.push(`${brand(bold('Gipity CLI'))} ${muted(`v${pkg.version}`)}`);
-    lines.push(dim('Cloud agents for builders — 90+ tools, persistent memory, app hosting,'));
-    lines.push(dim('databases, deploys. Pair with Claude Code or use standalone.'));
+    lines.push(dim('The agent-tuned platform where AI-built apps live.'));
+    lines.push(dim('Hosting, databases, deploys, workflows - one place. Pair with Claude Code or use standalone.'));
     lines.push('');
 
     lines.push(bold('Quick start:'));
-    lines.push(`  ${brand('gipity claude')}   ${dim('— launch Claude Code with Gipity tools wired in')}`);
-    lines.push(`  ${brand('gipity login')}    ${dim('— authenticate first if you haven\'t already')}`);
+    lines.push(`  ${brand('gipity claude')}   ${dim('- launch Claude Code with Gipity tools wired in')}`);
+    lines.push(`  ${brand('gipity login')}    ${dim('- authenticate first if you haven\'t already')}`);
     lines.push('');
 
     lines.push(bold('Usage:'));

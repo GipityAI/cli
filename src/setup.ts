@@ -1,29 +1,31 @@
 /**
  * Shared project setup helpers used by both `init` and `claude`.
  */
-import { resolve, join } from 'path';
+import { resolve, join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { SKILLS_CONTENT, SCAFFOLD_HOOK_WARNING } from './prompts.js';
+import { getConfig } from './config.js';
 
 export { SKILLS_CONTENT };
 
 /** Canonical list of workstation artifacts that are NOT part of the project.
  *  Used as the single source of truth for three separate decisions:
- *    1. Cloud sync — these files/globs are excluded from push and pull.
- *    2. CLI file count (`listProjectFiles` in commands/claude.ts) — these don't
+ *    1. Cloud sync - these files/globs are excluded from push and pull.
+ *    2. CLI file count (`listProjectFiles` in commands/claude.ts) - these don't
  *       count toward "is this project empty?" for scaffold-gate and empty-state
  *       prompt decisions.
- *    3. Scaffold collision check — these can never collide with a scaffold
+ *    3. Scaffold collision check - these can never collide with a scaffold
  *       because they're already skipped by sync and by the empty check.
  *
  *  Mental model: a file in this list is a client-side artifact, not project
  *  content. `CLAUDE.md` is generated fresh per-session from `SKILLS_CONTENT`
- *  in prompts.ts and is CLI-version-dependent — syncing it would churn on
+ *  in prompts.ts and is CLI-version-dependent - syncing it would churn on
  *  every CLI upgrade. `.gipity.json`, `.gipity/`, and `.claude/` are per-
  *  workstation configuration. */
 export const DEFAULT_SYNC_IGNORE = [
   'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/',
-  '.gitignore', 'CLAUDE.md',
+  '.gitignore', 'CLAUDE.md', 'AGENTS.md',
 ];
 
 /** True if `name` (a top-level dir entry) is a workstation artifact that
@@ -78,14 +80,27 @@ export const PERMISSIONS_SETTINGS = {
   },
 };
 
+/** Absolute path to the bundled capture-runner script. Resolved once at
+ *  install time so hook commands embed a stable `node <path>` command
+ *  rather than `gipity …` (which would require re-running `gipity` every
+ *  hook fire). Works whether the CLI is installed globally, linked, or
+ *  run from a build output - `import.meta.url` always points at this
+ *  file under `dist/`, and the runner sits at `dist/hooks/`. */
+export function resolveCaptureRunnerPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, 'hooks', 'capture-runner.js');
+}
+
 // Cross-platform hooks using node -e (no bash/jq dependency).
 //
-// All conversation capture (assistant messages, tool calls, tool results)
-// now flows through the relay daemon parsing `claude --output-format
-// stream-json` directly — no hooks needed for that. The only hooks we
-// install are project-level helpers: a scaffold reminder when editing
-// code that has no scaffold yet, and a sync-on-write for Write/Edit
-// tools so pushed files land in the cloud workspace too.
+// Two categories:
+//   1. File-sync hooks (PreToolUse / PostToolUse / UserPromptSubmit):
+//      installed unconditionally. Scaffold reminder + push/pull. Not
+//      related to conversation capture.
+//   2. Capture hooks (SessionStart / Stop / SubagentStop / SessionEnd):
+//      mirror a terminal Claude Code session into the Gipity DB so the
+//      web CLI can display it read-only. Toggled by the `captureHooks`
+//      field in `.gipity.json` - default on.
 export const HOOKS_SETTINGS = {
   hooks: {
     PreToolUse: [
@@ -93,7 +108,7 @@ export const HOOKS_SETTINGS = {
         // Soft scaffold reminder. If this is a Gipity project (has
         // .gipity.json) AND has no scaffold markers (gipity.yaml, src/,
         // functions/, package.json), nudge the agent to scaffold first
-        // when building an app. Non-blocking — exit 0 always; stderr is
+        // when building an app. Non-blocking - exit 0 always; stderr is
         // visible to Claude as an advisory. Auto-quiet once any scaffold
         // marker appears, so it doesn't spam during normal editing.
         matcher: 'Write|Edit',
@@ -108,7 +123,7 @@ export const HOOKS_SETTINGS = {
     ],
     PostToolUse: [
       {
-        // File sync for Write/Edit — push any edited file back to the
+        // File sync for Write/Edit - push any edited file back to the
         // cloud workspace so web previews see the change.
         matcher: 'Write|Edit',
         hooks: [{
@@ -124,12 +139,27 @@ export const HOOKS_SETTINGS = {
         matcher: '',
         hooks: [{
           type: 'command',
-          command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync down --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.pulled>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed remotely.')}))}catch{}})"`,
+          command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.applied>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed.')}))}catch{}})"`,
         }],
       },
     ],
   },
 };
+
+/** Build the four lifecycle-hook entries that invoke the bundled capture
+ *  runner. Kept as a factory rather than a constant so the absolute
+ *  runner path is resolved at install time, reflecting the CLI's current
+ *  install location. */
+function buildCaptureHookEntries(source: string): Record<string, any[]> {
+  const runner = resolveCaptureRunnerPath();
+  const cmd = (event: string): string => `node ${JSON.stringify(runner)} ${source} ${event}`;
+  return {
+    SessionStart: [{ hooks: [{ type: 'command', command: cmd('session-start') }] }],
+    Stop:         [{ hooks: [{ type: 'command', command: cmd('stop') }] }],
+    SubagentStop: [{ hooks: [{ type: 'command', command: cmd('subagent-stop') }] }],
+    SessionEnd:   [{ hooks: [{ type: 'command', command: cmd('session-end') }] }],
+  };
+}
 
 export function setupClaudeHooks(): void {
   const claudeDir = resolve(process.cwd(), '.claude');
@@ -142,13 +172,19 @@ export function setupClaudeHooks(): void {
     try {
       settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     } catch {
-      // corrupted — overwrite
+      // corrupted - overwrite
     }
   }
 
-  settings.hooks = HOOKS_SETTINGS.hooks;
+  // Merge capture hooks in only when the project opts in (default true).
+  // `captureHooks === false` in `.gipity.json` disables the mirror-to-web
+  // feature for this project without affecting the file-sync hooks.
+  const captureEnabled = getConfig()?.captureHooks !== false;
+  const captureEntries = captureEnabled ? buildCaptureHookEntries('claude-code') : {};
 
-  // Merge permissions (additive — preserve user's existing allows)
+  settings.hooks = { ...HOOKS_SETTINGS.hooks, ...captureEntries };
+
+  // Merge permissions (additive - preserve user's existing allows)
   const perms = (settings as Record<string, any>).permissions || {};
   if (!perms.allow) perms.allow = [];
   for (const entry of PERMISSIONS_SETTINGS.permissions.allow) {
@@ -161,16 +197,24 @@ export function setupClaudeHooks(): void {
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
-export function setupClaudeMd(): void {
-  const claudeMdPath = resolve(process.cwd(), 'CLAUDE.md');
+function writeSkillsFile(filename: string): void {
+  const path = resolve(process.cwd(), filename);
 
-  if (existsSync(claudeMdPath)) {
-    const existing = readFileSync(claudeMdPath, 'utf-8');
+  if (existsSync(path)) {
+    const existing = readFileSync(path, 'utf-8');
     if (existing.includes('Gipity Integration')) return;
-    writeFileSync(claudeMdPath, existing + '\n\n' + SKILLS_CONTENT);
+    writeFileSync(path, existing + '\n\n' + SKILLS_CONTENT);
   } else {
-    writeFileSync(claudeMdPath, SKILLS_CONTENT);
+    writeFileSync(path, SKILLS_CONTENT);
   }
+}
+
+export function setupClaudeMd(): void {
+  writeSkillsFile('CLAUDE.md');
+}
+
+export function setupAgentsMd(): void {
+  writeSkillsFile('AGENTS.md');
 }
 
 export function setupGitignore(): void {

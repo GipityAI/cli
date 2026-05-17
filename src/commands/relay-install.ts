@@ -1,10 +1,10 @@
 /**
- * `gipity relay install` + `gipity relay autostart <on|off>` — service-unit
+ * `gipity relay install` + `gipity relay autostart <on|off>` - service-unit
  * management for the relay daemon. Split out from `commands/relay.ts` so
  * that file stays focused on the small, everyday subcommands (status,
  * pause, resume, rename, revoke, log).
  *
- * Both commands are mounted onto the caller's `Command` instance — the
+ * Both commands are mounted onto the caller's `Command` instance - the
  * parent `relay` command passes itself in via `registerInstallCommands`.
  */
 import { Command } from 'commander';
@@ -50,7 +50,7 @@ function runArgvSequence(cmds: string[][], { failFast }: { failFast: boolean }):
 export function registerInstallCommands(relayCommand: Command): void {
   relayCommand
     .command('install')
-    .description('Install the background service so it starts automatically at login')
+    .description('Install the background service')
     .option('--print', 'Print the service-unit file and the commands, but don\'t run them')
     .action(async (opts: { print?: boolean }) => {
       requirePaired();
@@ -100,7 +100,7 @@ export function registerInstallCommands(relayCommand: Command): void {
 
   relayCommand
     .command('autostart <on|off>')
-    .description('Enable or disable the installed daemon starting at login')
+    .description('Start the service at login')
     .action(async (mode: string) => {
       const want = mode.toLowerCase();
       if (want !== 'on' && want !== 'off') {

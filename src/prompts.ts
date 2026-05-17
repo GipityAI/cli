@@ -1,23 +1,26 @@
 /**
  * All long-form prompt text the CLI hands to Claude Code lives here.
  *
- * If you're tweaking what the agent sees — the per-project CLAUDE.md, the
+ * If you're tweaking what the agent sees - the per-project CLAUDE.md, the
  * project-context preamble, the resume reminder, or the soft scaffold-warning
- * hook — edit it here, not in claude.ts/setup.ts. Those files import and
+ * hook - edit it here, not in claude.ts/setup.ts. Those files import and
  * compose; this file owns the wording.
  *
  * Voice conventions:
  *  - Short imperative sentences. Plain markdown only.
- *  - No bold (`**`). No ALL-CAPS for emphasis — reserved for acronyms
+ *  - No bold (`**`). No ALL-CAPS for emphasis - reserved for acronyms
  *    and identifiers (CLAUDE.md, GUID, SQL, etc.).
  *  - Section headings are `## `, lists are `-` or `1.`.
  */
 
 // ---------------------------------------------------------------------------
-// Canonical scaffold types. Keep in sync with VISIBLE_SCAFFOLD_TEMPLATES in
-// platform/server/src/services/tools/handlers/app-scaffold.ts. `app-itsm` is
-// intentionally omitted from guidance — still selectable via
-// `gipity scaffold --type app-itsm`, just not a suggested default.
+// Canonical scaffold types. Keep in sync with SCAFFOLD_TEMPLATES in
+// platform/packages/shared/src/constants.ts.
+//
+// Visible types are the default picker. Hidden types are real, working
+// templates that aren't yet promoted for default suggestions - the agent
+// must NOT suggest them unsolicited, but SHOULD use them when the user
+// explicitly asks for that domain ("build me a helpdesk" → app-itsm).
 // ---------------------------------------------------------------------------
 
 export interface ScaffoldType {
@@ -27,16 +30,24 @@ export interface ScaffoldType {
 
 export const SCAFFOLD_TYPES: readonly ScaffoldType[] = [
   { key: 'web-simple',    for: 'Landing page, dashboard, calculator, canvas demo, visualization, animation, single-page tool' },
-  { key: 'web-fullstack', for: 'Web app with login, database, or API — CRM, invoice tracker, booking system, admin panel' },
+  { key: 'web-fullstack', for: 'Web app with login, database, or API - CRM, invoice tracker, booking system, admin panel' },
   { key: '2d-game',       for: 'Platformer, arcade, puzzle, endless runner, physics toy (Phaser 3)' },
   { key: '3d-world',      for: 'Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)' },
-  { key: 'api',           for: 'Backend service, webhook, data pipeline, chatbot, cron job — no frontend' },
+  { key: 'api',           for: 'Backend service, webhook, data pipeline, chatbot, cron job - no frontend' },
+] as const;
+
+export const HIDDEN_SCAFFOLD_TYPES: readonly ScaffoldType[] = [
+  { key: 'app-itsm',      for: 'IT service management - helpdesk, ticketing, incident management, agent console + portal' },
 ] as const;
 
 export const SCAFFOLD_TYPE_KEYS = SCAFFOLD_TYPES.map(t => t.key).join('|');
 
 export const SCAFFOLD_TYPE_PICKER = SCAFFOLD_TYPES
-  .map(t => `    - \`${t.key}\` — ${t.for}`)
+  .map(t => `    - \`${t.key}\` - ${t.for}`)
+  .join('\n');
+
+export const HIDDEN_SCAFFOLD_PICKER = HIDDEN_SCAFFOLD_TYPES
+  .map(t => `    - \`${t.key}\` - ${t.for}`)
   .join('\n');
 
 // ---------------------------------------------------------------------------
@@ -46,13 +57,16 @@ export const SCAFFOLD_TYPE_PICKER = SCAFFOLD_TYPES
 export const BUILD_VS_NON_BUILD_RULE = [
   `## When to scaffold`,
   `If the user wants a deployable app (web, game, API): run \`gipity scaffold --type <type>\` before writing any files. Scaffolding wires up \`gipity.yaml\`, deploy config, and sync; hand-written files miss all of it.`,
-  `If it's a one-off task (analysis, media, data, research): skip scaffolding — use \`gipity sandbox run\` or work with files directly.`,
+  `If it's a one-off task (analysis, media, data, research): skip scaffolding - use \`gipity sandbox run\` or work with files directly.`,
   `If ambiguous: ask one short clarifying question.`,
   ``,
   `Scaffold types:`,
   SCAFFOLD_TYPE_PICKER,
   `When unsure, default to \`web-simple\`. After scaffolding, edit the generated files, then \`gipity deploy dev\`.`,
   `Only skip scaffolding on a build request if the user explicitly says "don't scaffold".`,
+  ``,
+  `Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):`,
+  HIDDEN_SCAFFOLD_PICKER,
 ].join('\n');
 
 export const DEFINITION_OF_DONE = [
@@ -62,19 +76,19 @@ export const DEFINITION_OF_DONE = [
   `3. For apps with functions: \`gipity test\` passes.`,
   `4. You told the user the live URL.`,
   ``,
-  `If any step fails, fix it before claiming done — do not report success on a broken deploy.`,
+  `If any step fails, fix it before claiming done - do not report success on a broken deploy.`,
 ].join('\n');
 
 export const CAPABILITIES_BLURB_SHORT =
   `Full platform reference is in CLAUDE.md. ` +
-  `Prefer CLI commands and the sandbox over \`gipity chat\` — they're faster and cheaper. ` +
+  `Prefer CLI commands and the sandbox over \`gipity chat\` - they're faster and cheaper. ` +
   `Naming: honor the user's chosen name; if inventing, blend "Gip" or "Gipity" in.`;
 
 // ---------------------------------------------------------------------------
-// Header — appears at the top of every preamble (new, existing, fresh, resume)
+// Header - appears at the top of every preamble (new, existing, fresh, resume)
 // ---------------------------------------------------------------------------
 
-/** Identity-only — used by light wrappers (resume) that don't need the full
+/** Identity-only - used by light wrappers (resume) that don't need the full
  *  file-stats payload. */
 export interface ProjectIdentityOpts {
   projectName: string;
@@ -84,7 +98,7 @@ export interface ProjectIdentityOpts {
   cwd: string;
 }
 
-/** Full context — what the fresh-session preamble needs. File stats are
+/** Full context - what the fresh-session preamble needs. File stats are
  *  recursive aggregates from the VFS (caller owns the lookup). */
 export interface ProjectContextOpts extends ProjectIdentityOpts {
   /** Recursive total of live files in the project's VFS. 0 = empty project. */
@@ -110,14 +124,14 @@ function buildHeader(opts: ProjectContextOpts): string {
     ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
   // "Files" line is the agent's at-a-glance signal of project size and
-  // shape. Counts are recursive (from the VFS DB), not just top-level —
+  // shape. Counts are recursive (from the VFS DB), not just top-level -
   // prevents the bug where a scaffolded project with everything under
   // `src/` showed as "1 top-level entry (src/)" and looked nearly empty.
   const filesLine = opts.fileCount === 0
     ? `- Files: empty (no files yet)`
     : `- Files: ${opts.fileCount} file${opts.fileCount === 1 ? '' : 's'}` +
       ` in ${opts.folderCount} folder${opts.folderCount === 1 ? '' : 's'}` +
-      ` (${humanBytes(opts.totalBytes)}) — ${opts.topLevel}`;
+      ` (${humanBytes(opts.totalBytes)}) - ${opts.topLevel}`;
   return [
     `## Gipity project`,
     `- Name: ${opts.projectName} (slug: \`${opts.projectSlug}\`)`,
@@ -136,14 +150,14 @@ const EXISTING_STATE_NOTE = [
   `- Read \`README.md\` / \`gipity.yaml\` if present to understand what's here.`,
   `- Load the relevant skill with \`gipity skills read <name>\` if you need the scaffold's conventions.`,
   `- Edit in place. Don't re-scaffold over an existing app.`,
-  `- Exception: if the existing files are user content (media, data, notes) and the user wants to build an app around them, scaffolding is allowed — \`gipity scaffold\` will refuse automatically if any file paths would collide.`,
+  `- Exception: if the existing files are user content (media, data, notes) and the user wants to build an app around them, scaffolding is allowed - \`gipity scaffold\` will refuse automatically if any file paths would collide.`,
 ].join('\n');
 
-/** Compact project-context preamble — header + capabilities + state note + definition of done.
+/** Compact project-context preamble - header + capabilities + state note + definition of done.
  *  The BUILD_VS_NON_BUILD_RULE (scaffold picker, scaffold types, default
  *  recommendations) only fires for empty projects. An existing project
  *  that already has a scaffold doesn't need to be told to pick a scaffold
- *  type — that guidance conflicts with EXISTING_STATE_NOTE's "edit in
+ *  type - that guidance conflicts with EXISTING_STATE_NOTE's "edit in
  *  place, don't re-scaffold" and led to agents re-scaffolding over live
  *  projects. */
 export function buildProjectContextBlock(opts: ProjectContextOpts): string {
@@ -181,40 +195,66 @@ export function buildNewProjectPrompt(opts: ProjectContextOpts & { buildIdea: st
 }
 
 // ---------------------------------------------------------------------------
-// Non-interactive (-p) wraps — what the relay sends per message
+// Non-interactive (-p) wraps - what the relay sends per message
 // ---------------------------------------------------------------------------
 
-/** Compact capability reminder — safe to include on every resumed-session message.
+/** Compact capability reminder - safe to include on every resumed-session message.
  *  Hedges against Claude compacting away the original context block mid-session. */
 export const PLATFORM_REMINDER =
   `This project runs on the Gipity platform. All CLI commands and service APIs are documented in CLAUDE.md.`;
 
+/** Tags that bracket the user's actual message inside a wrap. All agent-facing
+ *  context and instructions live BEFORE the opening tag; nothing comes after
+ *  the closing tag. The client-side `stripPreamble` renderer in
+ *  `platform/client/src/ts/commands/claude-display.ts` looks for the same
+ *  strings - keep the two copies in sync (there is a drift-guard test). */
+export const USER_MSG_OPEN = '<gipity-user-message>';
+export const USER_MSG_CLOSE = '</gipity-user-message>';
+
+/** Standing instruction applied to every relay-dispatched message. Placed
+ *  once, before the user message, so the model doesn't trip over a trailing
+ *  instruction after it has already read the question. */
+const RESPONSE_DIRECTIVE =
+  `Respond to the user message below. Don't greet or reintroduce yourself.`;
+
 /** Resume wrap: compact header + capability reminder + short framing.
- *  Takes identity only — resume doesn't need the full file stats
+ *  Takes identity only - resume doesn't need the full file stats
  *  (Claude already has the context from the initial start dispatch). */
 export function buildResumeWrap(opts: ProjectIdentityOpts, userMsg: string): string {
   const deployUrl = opts.accountSlug
     ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
   return [
-    `Project: ${opts.projectName} (\`${opts.projectGuid}\`) — ${deployUrl}`,
+    `Project: ${opts.projectName} (\`${opts.projectGuid}\`) - ${deployUrl}`,
     PLATFORM_REMINDER,
-    `Resumed session — scaffold before building (see CLAUDE.md); skip for one-off tasks.`,
+    `Resumed session - scaffold before building (see CLAUDE.md); skip for one-off tasks.`,
     ``,
-    `User message: ${userMsg}`,
+    RESPONSE_DIRECTIVE,
+    ``,
+    USER_MSG_OPEN,
+    userMsg,
+    USER_MSG_CLOSE,
   ].join('\n');
 }
 
 /** Fresh wrap: full project context + the user's message. */
 export function buildFreshWrap(contextBlock: string, userMsg: string): string {
-  return `${contextBlock}\n\nUser message: ${userMsg}\n\nAnswer directly. Do not greet or reintroduce yourself.`;
+  return [
+    contextBlock,
+    ``,
+    RESPONSE_DIRECTIVE,
+    ``,
+    USER_MSG_OPEN,
+    userMsg,
+    USER_MSG_CLOSE,
+  ].join('\n');
 }
 
 // ---------------------------------------------------------------------------
 // PreToolUse soft-warning hook (advisory message printed to stderr)
 // ---------------------------------------------------------------------------
 
-/** Plain ASCII, no apostrophes or backslashes — embedded inside a node -e shell command. */
+/** Plain ASCII, no apostrophes or backslashes - embedded inside a node -e shell command. */
 export const SCAFFOLD_HOOK_WARNING =
   `[gipity] Heads up: this project has no scaffold yet. If you are building an app/game/API to deploy, ` +
   `stop and run: gipity scaffold --type <${SCAFFOLD_TYPE_KEYS}>  (default: web-simple). ` +
@@ -226,20 +266,20 @@ export const SCAFFOLD_HOOK_WARNING =
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
-Gipity is a platform for cloud agents — AI agents that run on a server with persistent memory, storage, a database, a sandboxed runtime, and direct internet access. Gip is the cloud agent on Gipity.
+Gipity is the agent-tuned platform where AI-built apps live. Real compute, storage, hosting, databases, deployment, workflows, code execution, and monitoring - always on. Gip is the cloud agent that runs on Gipity.
 
-This Claude Code session is connected to a Gipity project. Prefer the cheapest option that works — CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
+This Claude Code session is connected to a Gipity project. Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
 
 1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers scaffold, deploy, db, fn, logs, browser, sync, memory, skills, and more. Run \`gipity --help\` for the full list. All commands support \`--json\`.
-2. Cloud sandbox via \`gipity sandbox run\` — Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skills read sandbox-tools\` for the full toolkit. No network from inside the sandbox — fetch what you need before sending it in.
-3. App services — runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code — they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
-4. Delegate to Gip (\`gipity chat "<task>"\`) — only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do — it's slower and burns tokens.
+2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skills read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
+3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
+4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
 
-You are the developer. Write files in this directory — they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
+You are the developer. Write files in this directory - they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
 
 ## When to scaffold
 
-The full scaffolding rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity scaffold --type <type>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` — do not scaffold.
+The full scaffolding rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity scaffold --type <type>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` - do not scaffold.
 
 ## CLI quick reference
 
@@ -248,27 +288,27 @@ Run \`gipity --help\` for the full list. Use \`--help\` on any command for detai
 
 ## Files and sync
 
-Write files locally — hooks auto-push to Gipity on every save. Remote-generated files (images, audio from \`gipity chat\`) auto-pull. Use \`gipity sync\` if things get out of sync. Deletes are safe — use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
+Write files locally - hooks auto-push to Gipity on every save. Remote-generated files (images, audio from \`gipity chat\`) auto-pull. Use \`gipity sync\` if things get out of sync. Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
 
 ## Skills (detailed documentation)
 
-Run \`gipity skills list\` to see all available skill docs. Run \`gipity skills read <name>\` to read one. Load the relevant skill before starting a task — they contain the correct API patterns, code examples, and common mistakes.
+Run \`gipity skills list\` to see all available skill docs. Run \`gipity skills read <name>\` to read one. Load the relevant skill before starting a task - they contain the correct API patterns, code examples, and common mistakes.
 
 App services skills (load before calling \`/services/*\` endpoints):
-- \`app-llm\` — chat completions, streaming, image input
-- \`app-tts\` — voices, multi-speaker, languages
-- \`app-image\` — providers, sizes, aspect ratios
-- \`app-audio\` — sound effects, music, transcription
-- \`app-video\` — Veo models, aspect, resolution
-- \`app-files\` — uploads, variants, file listing
-- \`app-auth\` — sign in with Gipity, popup vs redirect
-- \`app-realtime\` — Colyseus rooms, relay vs state
+- \`app-llm\` - chat completions, streaming, image input
+- \`app-tts\` - voices, multi-speaker, languages
+- \`app-image\` - providers, sizes, aspect ratios
+- \`app-audio\` - sound effects, music, transcription
+- \`app-video\` - Veo models, aspect, resolution
+- \`app-files\` - uploads, variants, file listing
+- \`app-auth\` - sign in with Gipity, popup vs redirect
+- \`app-realtime\` - Colyseus rooms, relay vs state
 
 Other key skills:
-- \`web-app-basics\` — coding guidelines, file structure, HTML/CSS/JS patterns
-- \`app-development\` — functions, database and API
-- \`3d-world\` — 3D multiplayer game template (Three.js + Rapier + Colyseus)
-- \`2d-game\` — 2D game template (Phaser 3)
-- \`sandbox-tools\` — cloud sandbox capabilities and pre-installed tools
-- \`tts-guide\` — agent-side speech tools (different from the \`app-tts\` HTTP service)
+- \`web-app-basics\` - coding guidelines, file structure, HTML/CSS/JS patterns
+- \`app-development\` - functions, database and API
+- \`3d-world\` - 3D multiplayer game template (Three.js + Rapier + Colyseus)
+- \`2d-game\` - 2D game template (Phaser 3)
+- \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
+- \`tts-guide\` - agent-side speech tools (different from the \`app-tts\` HTTP service)
 `;

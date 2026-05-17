@@ -74,7 +74,7 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 3): 
       return await fn();
     } catch (err) {
       lastErr = err;
-      // Don't retry 4xx (auth, validation, gone) — only network/5xx.
+      // Don't retry 4xx (auth, validation, gone) - only network/5xx.
       if (err instanceof ApiError && err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 408) {
         throw err;
       }
@@ -88,7 +88,7 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 3): 
 }
 
 type InitData =
-  | { already_current: true; guid: string; size: number }
+  | { already_current: true; guid: string; size: number; server_version: number }
   | {
       already_current?: false;
       upload_guid: string;
@@ -113,10 +113,13 @@ interface InitResponse { data: InitData }
 
 export interface UploadOpts {
   mime?: string;
-  /** Force a new version even if the server-side SHA-256 matches the current version. */
-  overwrite?: boolean;
   /** Override per-file part-upload concurrency (multipart only). */
   partConcurrency?: number;
+  /** CAS token: pass the baseline `serverVersion` for an expected-existing file,
+   *  `null` when the file is expected to be new, or omit (undefined) to skip the
+   *  CAS check entirely (e.g. tool-driven writes, scaffolding). On mismatch the
+   *  server returns 409 and this function throws {@link UploadConflictError}. */
+  expectedServerVersion?: number | null;
 }
 
 export interface UploadResult {
@@ -127,6 +130,16 @@ export interface UploadResult {
   guid: string;
   /** vfs version number (1+); undefined when skipped. */
   version?: number;
+  /** CAS counter on the live node after this operation. Present on skip (=current) and upload (=bumped). */
+  serverVersion: number;
+}
+
+/** Thrown when the server rejects an upload due to CAS mismatch. */
+export class UploadConflictError extends Error {
+  constructor(public readonly currentServerVersion: number | null, public readonly path: string) {
+    super(`Version mismatch for ${path}: current serverVersion is ${currentServerVersion}`);
+    this.name = 'UploadConflictError';
+  }
 }
 
 /**
@@ -141,20 +154,37 @@ export async function uploadOneFile(
   const mime = opts.mime ?? guessMime(virtualPath);
 
   const initBody: Record<string, unknown> = { path: virtualPath, size, sha256, mime };
-  if (opts.overwrite) initBody.overwrite = true;
+  if (opts.expectedServerVersion !== undefined) {
+    initBody.expected_server_version = opts.expectedServerVersion;
+  }
 
-  const init = await post<InitResponse>(
-    `/projects/${projectGuid}/files/upload-init`,
-    initBody,
-  );
+  let init: InitResponse;
+  try {
+    init = await post<InitResponse>(
+      `/projects/${projectGuid}/files/upload-init`,
+      initBody,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.statusCode === 409) {
+      const current = typeof err.data?.current_server_version === 'number'
+        ? err.data.current_server_version : null;
+      throw new UploadConflictError(current, virtualPath);
+    }
+    throw err;
+  }
   const data = init.data;
 
   // Skip-if-identical fast path.
   if ('already_current' in data && data.already_current) {
-    return { status: 'skipped', size, guid: data.guid };
+    return { status: 'skipped', size, guid: data.guid, serverVersion: data.server_version };
   }
 
-  // Single-part (covers fresh + resumed PUT — single PUT is idempotent on the staging key).
+  const completeBody: Record<string, unknown> = { upload_guid: data.upload_guid };
+  if (opts.expectedServerVersion !== undefined) {
+    completeBody.expected_server_version = opts.expectedServerVersion;
+  }
+
+  // Single-part (covers fresh + resumed PUT - single PUT is idempotent on the staging key).
   if (data.method === 'PUT') {
     const etag = await withRetry('PUT', async () => {
       const stream = createReadStream(localPath);
@@ -163,19 +193,28 @@ export async function uploadOneFile(
         data.headers?.['Content-Type'] ?? mime,
       );
     });
-    const comp = await post<{ data: { size: number; guid: string; version: number } }>(
-      `/projects/${projectGuid}/files/upload-complete`,
-      { upload_guid: data.upload_guid, etag },
-    );
+    completeBody.etag = etag;
+    let comp: { data: { size: number; guid: string; version: number; server_version: number } };
+    try {
+      comp = await post(`/projects/${projectGuid}/files/upload-complete`, completeBody);
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 409) {
+        const current = typeof err.data?.current_server_version === 'number'
+          ? err.data.current_server_version : null;
+        throw new UploadConflictError(current, virtualPath);
+      }
+      throw err;
+    }
     return {
       status: data.resumed ? 'resumed' : 'uploaded',
       size: comp.data.size,
       guid: comp.data.guid,
       version: comp.data.version,
+      serverVersion: comp.data.server_version,
     };
   }
 
-  // Multipart — start with any parts that already landed (resume case).
+  // Multipart - start with any parts that already landed (resume case).
   const partSize = data.part_size;
   const partUrls = data.parts;            // missing parts to upload now
   const alreadyDone = data.completed_parts ?? [];
@@ -213,14 +252,23 @@ export async function uploadOneFile(
   // Sort by part_number so server CompleteMultipartUpload sees ascending order.
   completed.sort((a, b) => a.part_number - b.part_number);
 
-  const comp = await post<{ data: { size: number; guid: string; version: number } }>(
-    `/projects/${projectGuid}/files/upload-complete`,
-    { upload_guid: data.upload_guid, parts: completed },
-  );
+  completeBody.parts = completed;
+  let comp: { data: { size: number; guid: string; version: number; server_version: number } };
+  try {
+    comp = await post(`/projects/${projectGuid}/files/upload-complete`, completeBody);
+  } catch (err) {
+    if (err instanceof ApiError && err.statusCode === 409) {
+      const current = typeof err.data?.current_server_version === 'number'
+        ? err.data.current_server_version : null;
+      throw new UploadConflictError(current, virtualPath);
+    }
+    throw err;
+  }
   return {
     status: data.resumed ? 'resumed' : 'uploaded',
     size: comp.data.size,
     guid: comp.data.guid,
     version: comp.data.version,
+    serverVersion: comp.data.server_version,
   };
 }

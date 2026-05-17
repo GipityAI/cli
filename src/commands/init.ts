@@ -1,25 +1,21 @@
 import { Command } from 'commander';
 import { basename } from 'path';
-import { get, post, getAccountSlug } from '../api.js';
+import { getAccountSlug } from '../api.js';
 import { getConfig } from '../config.js';
 import { getAuth } from '../auth.js';
-import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore } from '../setup.js';
-import { finalizeLocalProject } from '../project-setup.js';
-import { success, error as clrError, info, muted } from '../colors.js';
-
-interface ProjectData {
-  short_guid: string;
-  name: string;
-  slug: string;
-}
-
-interface AgentData {
-  short_guid: string;
-  name: string;
-}
+import { slugify, setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore } from '../setup.js';
+import { success, error as clrError, info, muted, bold } from '../colors.js';
+import { confirm } from '../utils.js';
+import {
+  scanForAdoption,
+  adoptCurrentDir,
+  formatBytes,
+  formatCwdLabel,
+  ADOPT_THRESHOLDS,
+} from '../adopt-cwd.js';
 
 export const initCommand = new Command('init')
-  .description('Initialize a Gipity project (new or existing)')
+  .description('Set up a project')
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
   .action(async (name: string | undefined, opts) => {
@@ -38,6 +34,7 @@ export const initCommand = new Command('init')
         // Re-run setup in case hooks/skills are missing
         setupClaudeHooks();
         setupClaudeMd();
+        setupAgentsMd();
         setupGitignore();
         console.log(success('Configuring Claude Code... done.'));
         return;
@@ -52,55 +49,40 @@ export const initCommand = new Command('init')
         process.exit(1);
       }
 
-      // Search for existing project by slug
-      let project: ProjectData | null = null;
-
-      try {
-        const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
-        project = res.data.find(p => p.slug === projectSlug) || null;
-      } catch {
-        // List failed — we'll create a new project
+      // Size-tier safety: refuse huge dirs, confirm moderate ones, silently
+      // adopt easy ones. Same check as the `gipity claude` picker.
+      const scan = scanForAdoption(process.cwd());
+      if (scan.tier === 'refuse') {
+        const sizeStr = scan.truncated ? `>${formatBytes(ADOPT_THRESHOLDS.REFUSE_BYTES)}` : formatBytes(scan.bytes);
+        const fileStr = scan.truncated ? `>${ADOPT_THRESHOLDS.REFUSE_FILES}` : `${scan.files}`;
+        console.error(clrError(`Directory has ${fileStr} files (${sizeStr}) - too large to adopt as a Gipity project.`));
+        console.error(muted('Move into a subdirectory, or use `gipity claude` and pick "Create new project".'));
+        process.exit(1);
       }
-
-      if (project) {
-        console.log(`Found existing project ${info(`"${project.name}"`)} ${muted(`(${project.slug})`)}`);
-      } else {
-        // Create new project
-        const res = await post<{ data: ProjectData }>('/projects', {
-          name: projectName,
-          slug: projectSlug,
-          autoChat: 'claude_code',
-        });
-        project = res.data;
-        console.log(success(`Created project "${project.name}" (${project.slug})`));
+      if (scan.tier === 'moderate') {
+        const ok = await confirm(
+          `About to adopt ${bold(String(scan.files))} files (${bold(formatBytes(scan.bytes))}) at ${bold(formatCwdLabel(process.cwd()))}. Continue?`,
+          { default: 'yes' },
+        );
+        if (!ok) { console.log(muted('Aborted.')); process.exit(1); }
       }
 
       const accountSlug = await getAccountSlug();
-
-      // Find agent for the project
-      let agentGuid = opts.agent || '';
-      if (!agentGuid) {
-        try {
-          const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
-          if (agents.data.length > 0) {
-            agentGuid = agents.data[0].short_guid;
-          }
-        } catch {
-          // No agents — that's fine
-        }
-      }
-
-      const { pushed, pulled } = await finalizeLocalProject({
-        dir: process.cwd(),
-        projectGuid: project.short_guid,
-        projectSlug: project.slug,
+      const adopted = await adoptCurrentDir({
+        cwd: process.cwd(),
+        projectName,
+        projectSlug,
         accountSlug,
-        agentGuid,
-        sync: 'strict',
         confirmDeletions: true,
+        agentOverride: opts.agent || undefined,
       });
-      if (pushed > 0) console.log(`Pushed ${pushed} file${pushed > 1 ? 's' : ''} to Gipity.`);
-      if (pulled > 0) console.log(`Pulled ${pulled} file${pulled > 1 ? 's' : ''}.`);
+
+      if (adopted.isNew) {
+        console.log(success(`Created project "${adopted.project.name}" (${adopted.project.slug})`));
+      } else {
+        console.log(`Found existing project ${info(`"${adopted.project.name}"`)} ${muted(`(${adopted.project.slug})`)}`);
+      }
+      if (adopted.applied > 0) console.log(`Synced ${adopted.applied} change${adopted.applied > 1 ? 's' : ''} with Gipity.`);
 
       console.log(success('Configuring Claude Code... done.'));
       console.log(success('Ready! Run `claude` to start.'));

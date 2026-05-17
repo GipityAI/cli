@@ -1,5 +1,5 @@
 /**
- * `gipity claude -p "msg"` / `--print` — non-interactive passthrough mode.
+ * `gipity claude -p "msg"` / `--print` - non-interactive passthrough mode.
  *
  * Exercises the early-exit preconditions (must be logged in + must have a
  * project in cwd) since the success path shells out to `claude` which isn't

@@ -22,7 +22,7 @@ const API_BASE = process.env['GIPITY_E2E_API_BASE'] ?? 'https://a.gipity.ai';
 const EMAIL = process.env['GIPITY_E2E_EMAIL'] ?? 'ec-cli-e2e@914-6.com';
 const CODE = process.env['GIPITY_E2E_CODE'] ?? '914914';
 
-// Email convention guard — protect against accidentally invoking real SendGrid.
+// Email convention guard - protect against accidentally invoking real SendGrid.
 if (E2E_ENABLED && !EMAIL.startsWith('ec')) {
   throw new Error(`E2E test email must start with "ec" to suppress real outbound mail: got "${EMAIL}"`);
 }
@@ -89,7 +89,7 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
   it('4b. deploy dev again is idempotent (no changes)', () => {
     const r = cli(['deploy', 'dev'], { timeout: 60000 });
     assert.equal(r.status, 0);
-    // No strict assertion on output text — phases may say "skipped" or "ok"
+    // No strict assertion on output text - phases may say "skipped" or "ok"
     // depending on whether checksums caught everything. Just confirm exit 0.
   });
 
@@ -149,7 +149,7 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
   it('9. doctor reports sane install info with auth', () => {
     const r = cli(['doctor']);
     assert.equal(r.status, 0);
-    assert.match(r.stdout, /Gipity CLI — doctor/);
+    assert.match(r.stdout, /Gipity CLI - doctor/);
     assert.match(r.stdout, /shim version/);
   });
 });

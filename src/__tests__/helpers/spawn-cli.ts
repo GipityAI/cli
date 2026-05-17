@@ -5,7 +5,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// __dirname is dist/__tests__/helpers — CLI entry is dist/index.js
+// __dirname is dist/__tests__/helpers - CLI entry is dist/index.js
 export const CLI_ENTRY = resolve(__dirname, '..', '..', 'index.js');
 
 export interface SpawnResult {
@@ -60,7 +60,7 @@ export function makeTmpHome(): string {
 }
 
 /**
- * Async version of runCli — uses `spawn` instead of `spawnSync` so the
+ * Async version of runCli - uses `spawn` instead of `spawnSync` so the
  * test's event loop keeps turning while the child runs. Required for any
  * test that spins up an in-process HTTP server for the child to hit
  * (spawnSync deadlocks because the server can't accept connections while

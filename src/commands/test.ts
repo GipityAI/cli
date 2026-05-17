@@ -90,7 +90,7 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
       return data;
     }
 
-    // Show progress indicator (overwrite in-place) — only in real terminals
+    // Show progress indicator (overwrite in-place) - only in real terminals
     if (!opts.json && process.stdout.isTTY) {
       if (data.totalFiles === 0) {
         process.stdout.write(`\r  ${muted('Starting...')}          `);
@@ -107,7 +107,7 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
 // ── Main Command ───────────────────────────────────────────────────────
 
 export const testCommand = new Command('test')
-  .description('Run tests against the deployed app')
+  .description('Run tests')
   .argument('[path]', 'Test path filter (e.g. "api", "e2e/portal")')
   .option('--timeout <ms>', 'Per-test timeout in ms', '30000')
   .option('--retry <n>', 'Retry failed tests N times', '0')
@@ -172,7 +172,7 @@ export const testCommand = new Command('test')
 
 testCommand
   .command('status')
-  .description('Check status of a test run')
+  .description('Check a test run')
   .argument('<runGuid>', 'Test run GUID (e.g. tr_abc123)')
   .option('--json', 'Output as JSON')
   .option('--follow', 'Follow until complete (poll)')
@@ -197,7 +197,7 @@ testCommand
 
       const icon = data.status === 'running' ? muted('⧗') : data.status === 'passed' ? success('✓') : clrError('✗');
       console.log('');
-      console.log(`  ${icon} ${bold(data.status)} — ${data.passed}/${data.total} passed`);
+      console.log(`  ${icon} ${bold(data.status)} - ${data.passed}/${data.total} passed`);
       if (data.totalFiles > 0) {
         console.log(`  ${muted(`Files: ${data.completedFiles}/${data.totalFiles}`)}`);
       }
@@ -219,7 +219,7 @@ testCommand
 
 testCommand
   .command('history')
-  .description('Show recent test run history')
+  .description('Show recent runs')
   .option('--limit <n>', 'Number of runs to show', '10')
   .option('--json', 'Output as JSON')
   .action((opts) => run('History', async () => {

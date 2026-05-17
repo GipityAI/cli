@@ -25,11 +25,11 @@ interface AccountDatabasesResponse {
 }
 
 export const dbCommand = new Command('db')
-  .description('Manage project databases');
+  .description('Manage databases');
 
 dbCommand
   .command('query <sql>')
-  .description('Execute SQL on project database')
+  .description('Run SQL')
   .option('--database <name>', 'Database name')
   .option('--json', 'Output as JSON')
   .action((sql: string, opts) => run('Query', async () => {
@@ -74,7 +74,7 @@ dbCommand
 
 dbCommand
   .command('list')
-  .description('List project databases')
+  .description('List databases')
   .option('--all', 'List databases across all projects')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
@@ -87,10 +87,13 @@ dbCommand
         return;
       }
 
-      console.log(`Databases: ${count}/${limit}\n`);
+      console.log('');
+      console.log(`Databases: ${count}/${limit}`);
+      console.log('');
 
       if (databases.length === 0) {
         console.log('No databases.');
+        console.log('');
         return;
       }
 
@@ -119,7 +122,7 @@ dbCommand
 
 dbCommand
   .command('create <name>')
-  .description('Create a project database')
+  .description('Create a database')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
     // DDL delegates to agent (needs confirmation flow)
@@ -134,7 +137,7 @@ dbCommand
 
 dbCommand
   .command('drop <name>')
-  .description('Drop a database (use --project to drop from another project)')
+  .description('Drop a database')
   .option('--project <slug>', 'Project slug (required if not in a project directory)')
   .option('--yes', 'Skip confirmation')
   .option('--json', 'Output as JSON')

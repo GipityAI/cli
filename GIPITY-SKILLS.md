@@ -1,4 +1,4 @@
-# Gipity Integration — Claude Code Skills
+# Gipity Integration - Claude Code Skills
 
 This directory mirrors a Gipity-hosted project. There is no local runtime.
 Do NOT run `npm install`, `npm start`, `node`, `python`, or any local execution commands.
@@ -20,6 +20,7 @@ All code execution happens on Gipity's hosted platform.
 | `gipity file [ls\|cat\|tree]` | Browse remote files |
 | `gipity project [list\|create\|switch\|delete]` | Manage projects |
 | `gipity agent [list\|create\|switch\|set]` | Manage agents |
+| `gipity approval [list\|create\|answer\|cancel]` | Manage pending approvals |
 | `gipity workflow [list\|run\|enable\|disable]` | Manage workflows |
 | `gipity scaffold [title] --type <type>` | Create app structure (web, 2d-game, 3d-world, app-itsm, api) |
 | `gipity fn [list\|call <name> [body]\|logs <name>]` | Manage and call serverless functions |
@@ -28,7 +29,9 @@ All code execution happens on Gipity's hosted platform.
 | `gipity records [query\|schema]` | Query and manage Records API tables |
 | `gipity domain [list\|add\|remove]` | Manage custom domains |
 | `gipity credits` | Check balance and usage |
-| `gipity skills [list\|search\|install]` | Manage agent skills |
+| `gipity skill [list\|search\|install]` | Manage agent skills |
+| `gipity chat [list\|rename\|archive\|delete]` | Manage chats (or `gipity chat "<msg>"` to send) |
+| `gipity gmail [send\|reply\|search\|read]` | Send/read via the user's own Gmail |
 | `gipity rbac [list\|grant\|revoke]` | Manage RBAC policies |
 | `gipity audit [query]` | Query audit logs |
 | `gipity logs fn <name>` | View function execution logs |
@@ -110,10 +113,10 @@ test('get-items returns items', async (ctx) => {
 });
 ```
 
-- `ctx.fn.call(name, params)` — call a deployed function
-- `test()` and `assert` are provided as globals by the harness — do NOT `import` them
+- `ctx.fn.call(name, params)` - call a deployed function
+- `test()` and `assert` are provided as globals by the harness - do NOT `import` them
 - Write tests for every new function by default; use judgment for trivial glue code or throwaway experiments
-- Tests run in sandboxed containers — no raw DB access
+- Tests run in sandboxed containers - no raw DB access
 
 ### API Dev Workflow
 
@@ -127,18 +130,18 @@ test('get-items returns items', async (ctx) => {
 
 If `gipity scaffold` fails because the project already has files:
 
-- **User wants to start over in the *same* project** (most common — they're iterating):
-  1. `gipity file rm src` — removes the old scaffold directory (recursive, no extra flag needed)
-  2. `gipity scaffold --type <type>` — re-runs cleanly
-- **User wants a *different* project** — keep the current one, create a fresh one:
-  `gipity project create "<name>"` materializes it under `~/GipityProjects/<slug>` and links this machine. Then tell the user to exit Claude (Ctrl+D) and run `gipity claude` — the new project will be at the top of the picker. Once in that session, run `gipity scaffold --type <type>`.
-- **User told you to keep their existing files** — skip scaffold and build manually using the workflow above
+- **User wants to start over in the *same* project** (most common - they're iterating):
+  1. `gipity file rm src` - removes the old scaffold directory (recursive, no extra flag needed)
+  2. `gipity scaffold --type <type>` - re-runs cleanly
+- **User wants a *different* project** - keep the current one, create a fresh one:
+  `gipity project create "<name>"` materializes it under `~/GipityProjects/<slug>` and links this machine. Then tell the user to exit Claude (Ctrl+D) and run `gipity claude` - the new project will be at the top of the picker. Once in that session, run `gipity scaffold --type <type>`.
+- **User told you to keep their existing files** - skip scaffold and build manually using the workflow above
 
 `gipity file rm <path>` recursively deletes files or directories. Non-scaffold content (media, data, notes) lives outside `src/` and is not touched by the delete-and-rescaffold flow.
 
 ## App Services (HTTP API for deployed apps)
 
-Every project automatically exposes a set of platform services that the **deployed app** (frontend or function) can call over HTTP. No setup, no keys to manage — billing defaults to `owner_pays` (your Gipity credits). These are different from agent tools: they are endpoints your shipped app calls at runtime.
+Every project automatically exposes a set of platform services that the **deployed app** (frontend or function) can call over HTTP. No setup, no keys to manage - billing defaults to `owner_pays` (your Gipity credits). These are different from agent tools: they are endpoints your shipped app calls at runtime.
 
 All services live under `https://a.gipity.ai/api/<PROJECT_GUID>/services/<name>`. The project GUID is the slug of the deployed project (`gipity status --json` → `project.guid`).
 
@@ -147,32 +150,32 @@ All services live under `https://a.gipity.ai/api/<PROJECT_GUID>/services/<name>`
 Every service call needs an app token. Mint one with a POST to the API server:
 
 ```js
-// MUST be the absolute URL — '/api/token' would hit the app host, not the API
+// MUST be the absolute URL - '/api/token' would hit the app host, not the API
 const r = await fetch('https://a.gipity.ai/api/token', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ app: '<PROJECT_GUID>' })
 });
 const { data: { token } } = await r.json();   // NOTE: token is at .data.token
-// Cache for the session — tokens last ~1 hour
+// Cache for the session - tokens last ~1 hour
 ```
 
 Common mistakes:
-- Using a relative URL (`/api/token`) — hits the app host, 404s
+- Using a relative URL (`/api/token`) - hits the app host, 404s
 - Reading `json.token` instead of `json.data.token`
-- Using GET — must be POST with `{ app: '<PROJECT_GUID>' }` body
-- Treating the project GUID as the token — the GUID identifies the app; you still need to mint a bearer token
+- Using GET - must be POST with `{ app: '<PROJECT_GUID>' }` body
+- Treating the project GUID as the token - the GUID identifies the app; you still need to mint a bearer token
 
 For `user_pays` services or `auth_level: "user"` functions, also pass `credentials: 'include'` so the user's `.gipity.ai` session cookie is sent. See **Auth (user sign-in)** below.
 
 ### Rate limits & shared rules
 
 - All `/services/*` endpoints share a per-IP rate limit window. `RateLimit-*` headers are returned on every response.
-- Media outputs (images, audio, video) return a permanent CDN URL on `media.gipity.ai` — no auth required to fetch.
+- Media outputs (images, audio, video) return a permanent CDN URL on `media.gipity.ai` - no auth required to fetch.
 - `credits_used` is included in every response.
-- `provider`/`model` fields are optional — every service has sensible defaults.
+- `provider`/`model` fields are optional - every service has sensible defaults.
 
-### LLM — `POST /services/llm`
+### LLM - `POST /services/llm`
 
 OpenAI-compatible chat completions across Anthropic + OpenAI models. Use `prompt` for one-shot, `messages` for full conversations. Set `stream: true` for SSE.
 
@@ -194,13 +197,13 @@ const answer = data.choices[0].message.content;
 ```
 
 - Models: list via `GET /services/llm/models`
-- Image input: `{ type: 'image_url', image_url: { url: 'data:image/png;base64,...' } }` — only `data:` URIs; external URLs return 400
-- No `response_format: json` — parse the string yourself and strip ` ``` ` fences if present
+- Image input: `{ type: 'image_url', image_url: { url: 'data:image/png;base64,...' } }` - only `data:` URIs; external URLs return 400
+- No `response_format: json` - parse the string yourself and strip ` ``` ` fences if present
 - Streaming chunks: `data: {"choices":[{"delta":{"content":"..."}}]}` then `data: [DONE]`
 
-### TTS — `POST /services/tts`
+### TTS - `POST /services/tts`
 
-Text-to-speech. ElevenLabs (default), OpenAI, or Gemini. Returns an MP3 URL — `new Audio(url).play()` and you're done. **Client-callable. Do NOT write a server-side `speak` function or a browser-fallback.**
+Text-to-speech. ElevenLabs (default), OpenAI, or Gemini. Returns an MP3 URL - `new Audio(url).play()` and you're done. **Client-callable. Do NOT write a server-side `speak` function or a browser-fallback.**
 
 ```js
 const r = await fetch(`https://a.gipity.ai/api/${APP}/services/tts`, {
@@ -220,7 +223,7 @@ new Audio(url).play();
 - Gemini extras: `language` (BCP-47, e.g. `ja-JP`) and `speakers: [{name,voice},...]` for up to 2-speaker dialogue (text uses `Name: line\n` format)
 - Max ~5,000 chars per call
 
-### Image generation — `POST /services/image`
+### Image generation - `POST /services/image`
 
 OpenAI (`gpt-image-1`, `dall-e-3`), BFL/Flux (default), Gemini.
 
@@ -245,7 +248,7 @@ const { url } = await r.json();   // permanent CDN PNG/JPEG
 
 Three separate endpoints, all under the same shared rate limit.
 
-**Sound effects** — `POST /services/sound`
+**Sound effects** - `POST /services/sound`
 ```js
 fetch(`https://a.gipity.ai/api/${APP}/services/sound`, {
   method: 'POST',
@@ -258,7 +261,7 @@ fetch(`https://a.gipity.ai/api/${APP}/services/sound`, {
 }); // → { url, duration_seconds, credits_used }
 ```
 
-**Music** — `POST /services/music`
+**Music** - `POST /services/music`
 ```js
 fetch(`https://a.gipity.ai/api/${APP}/services/music`, {
   method: 'POST',
@@ -271,7 +274,7 @@ fetch(`https://a.gipity.ai/api/${APP}/services/music`, {
 }); // → { url, duration_seconds, credits_used }
 ```
 
-**Transcription (STT)** — `POST /services/transcribe` (multipart)
+**Transcription (STT)** - `POST /services/transcribe` (multipart)
 ```js
 const fd = new FormData();
 fd.append('audio', fileInput.files[0]);   // mp3/wav/m4a/etc, up to 100MB
@@ -286,7 +289,7 @@ const r = await fetch(`https://a.gipity.ai/api/${APP}/services/transcribe`, {
 const { text, words, language, duration_seconds } = await r.json();
 ```
 
-### Video — `POST /services/video`
+### Video - `POST /services/video`
 
 Google Veo 3.1, generates up to 8s with audio. Returns 30–120s after the request.
 
@@ -306,9 +309,9 @@ const { url } = await r.json();   // permanent CDN MP4 with AI audio
 
 CLI shortcut: `gipity generate video "a cat playing piano" --aspect 9:16 -o cat.mp4`.
 
-### File uploads — `/uploads/init` + `/uploads/complete`
+### File uploads - `/uploads/init` + `/uploads/complete`
 
-Presigned S3 URLs — client PUTs directly to S3 (no proxy). Up to 30 GB. Easiest path is the helper script:
+Presigned S3 URLs - client PUTs directly to S3 (no proxy). Up to 30 GB. Easiest path is the helper script:
 
 ```html
 <script src="https://media.gipity.ai/scripts/gipity-upload.js"></script>
@@ -335,7 +338,7 @@ const init = await fetch(`https://a.gipity.ai/api/${APP}/uploads/init`, {
   body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size })
 }).then(r => r.json());
 
-// 2. PUT to S3 (no auth header — URL is pre-signed)
+// 2. PUT to S3 (no auth header - URL is pre-signed)
 await fetch(init.data.url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
 
 // 3. complete
@@ -348,10 +351,10 @@ const done = await fetch(`https://a.gipity.ai/api/${APP}/uploads/complete`, {
 ```
 
 List/read files:
-- `GET /api/<APP>/files?table=incidents&record_id=42` — list
-- `GET /api/<APP>/files/:guid` — metadata + variants
-- `GET /api/<APP>/files/:guid/content` — download (302 to S3)
-- `GET /api/<APP>/files/:guid/variants/:type` — variant (e.g. `thumbnail`, `text`)
+- `GET /api/<APP>/files?table=incidents&record_id=42` - list
+- `GET /api/<APP>/files/:guid` - metadata + variants
+- `GET /api/<APP>/files/:guid/content` - download (302 to S3)
+- `GET /api/<APP>/files/:guid/variants/:type` - variant (e.g. `thumbnail`, `text`)
 
 ### Auth (user sign-in / `user_pays` / `auth_level: "user"`)
 
@@ -372,7 +375,7 @@ if (!auth.authenticated) {
 } else if (!auth.consented) {
   window.open(auth.consentUrl + '&mode=popup', 'gipity_auth', 'width=450,height=600');
 } else {
-  // auth.user.guid is stable — use it for per-user storage in your functions (ctx.auth.userId)
+  // auth.user.guid is stable - use it for per-user storage in your functions (ctx.auth.userId)
 }
 ```
 
@@ -384,11 +387,11 @@ Append `&return=<app_url>` so users come back to your app after auth (must be on
 
 Lightweight identity check (no app context): `GET /api/auth/me` with `credentials: 'include'` → `{ user: {guid,displayName,avatarUrl,accountSlug} | null }`.
 
-### Realtime multiplayer — `wss://rt.gipity.ai`
+### Realtime multiplayer - `wss://rt.gipity.ai`
 
 Colyseus rooms over WebSocket. Two room types:
-- **relay** — pure message broker, no server state. Good for chat, signaling, simple multiplayer.
-- **state** — server-authoritative shared state with auto-tracked players + key-value `data` map. Good for games, collaborative editors, dashboards.
+- **relay** - pure message broker, no server state. Good for chat, signaling, simple multiplayer.
+- **state** - server-authoritative shared state with auto-tracked players + key-value `data` map. Good for games, collaborative editors, dashboards.
 
 Create a room first (one time, from the CLI/agent):
 ```bash
@@ -429,7 +432,7 @@ room.onStateChange((state) => {
 room.send('set_data', { key: 'board', value: JSON.stringify(Array(9).fill(null)) });
 ```
 
-Room discovery (the client lib has **no** `getAvailableRooms()` — use REST):
+Room discovery (the client lib has **no** `getAvailableRooms()` - use REST):
 ```js
 const { rooms } = await (await fetch(
   `https://rt.gipity.ai/rooms?room=game-lobby&token=${encodeURIComponent(token)}`
@@ -442,7 +445,7 @@ const room = open
 ```
 
 Tips:
-- Split state into many small `data` keys, not one big JSON blob — every key change re-syncs the entire value.
+- Split state into many small `data` keys, not one big JSON blob - every key change re-syncs the entire value.
 - For relay rooms, any unrecognized message type is broadcast to all other clients (`room.send('explosion', {...})` → `room.onMessage('explosion', cb)`).
 - For `auth_level: "user"` rooms, pass `credentials: 'include'` to the token fetch and the user's session cookie is used for membership.
 
@@ -484,7 +487,7 @@ Files created by Gip auto-sync to your local directory.
 - **Auto-pull**: Remote changes are pulled before each prompt (hook)
 - **Manual refresh**: `gipity sync check` during long tasks to see if anything changed
 - **After chat**: `gipity chat` auto-pulls files when the agent modifies them
-- **Tool-generated files**: Images, audio, video, and other files created by remote agent tools are project files — they sync like any other file
+- **Tool-generated files**: Images, audio, video, and other files created by remote agent tools are project files - they sync like any other file
 
 ## Database Access
 
@@ -506,7 +509,7 @@ gipity memory list --project                          # Project-scoped memory
 
 ## Important Notes
 
-- This is a **hosted project** — there is no local server, no build step
+- This is a **hosted project** - there is no local server, no build step
 - Files are served as-is from S3/CloudFront when deployed
 - The Gipity agent has access to: sandboxed code execution (Node.js, Python, Bash), Docker containers with pre-installed tools (ImageMagick, FFmpeg, pandas, etc.), databases, memory, image generation, TTS, web search, and more
 - Use `gipity status` to check auth and sync state

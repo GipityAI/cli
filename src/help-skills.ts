@@ -30,6 +30,6 @@ export async function fetchAndPrintSkill(skillName: string): Promise<void> {
       console.log(res.data.content);
     }
   } catch {
-    // Silent — help still works without the skill
+    // Silent - help still works without the skill
   }
 }

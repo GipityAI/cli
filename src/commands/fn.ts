@@ -23,7 +23,7 @@ fnCommand
 
 fnCommand
   .command('logs <name>')
-  .description('Show recent execution logs')
+  .description('Show recent logs')
   .option('--limit <n>', 'Max entries', '20')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Logs', async () => {
@@ -43,7 +43,7 @@ fnCommand
 
 fnCommand
   .command('call <name> [body]')
-  .description('Call a function by name')
+  .description('Call a function')
   .option('--data <json>', 'JSON request body')
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Call', async () => {

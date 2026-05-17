@@ -1,7 +1,7 @@
 /**
  * Provider documentation strings for CLI help text.
  *
- * ⚠️  AUTO-GENERATED — do not edit directly.
+ * ⚠️  AUTO-GENERATED - do not edit directly.
  * Source: platform/server/src/config/constants/provider-docs.ts
  * Run `just sync-docs` to refresh from platform.
  */
@@ -49,16 +49,16 @@ export const IMAGE_GEMINI_ASPECT_RATIOS = `1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 
 
 export const IMAGE_GEMINI_SIZES = `512, 1K, 2K, 4K`;
 
-export const IMAGE_MODELS_DOC = `openai: gpt-image-1, dall-e-3. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-dev. gemini: gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview`;
+export const IMAGE_MODELS_DOC = `openai: gpt-image-1. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-dev. gemini: gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview`;
 
-export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-1, dall-e-3\`
+export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-1\`
 - **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-dev\`
 - **Gemini/Nano Banana**: \`gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview\``;
 
 export const IMAGE_PROVIDERS_LIST = `openai, bfl, gemini`;
 
 export const IMAGE_PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  'openai': `OpenAI (gpt-image-1, dall-e-3)`,
+  'openai': `OpenAI (gpt-image-1)`,
   'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-dev)`,
   'gemini': `Gemini/Nano Banana (gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview)`,
 };
@@ -69,12 +69,12 @@ export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini`;
 
 export const OPENAI_TTS_VOICES_DOC = `alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse`;
 
-export const TRANSCRIBE_PROVIDERS_DOC = `elevenlabs (default, Scribe v2), openai (GPT-4o Transcribe), gemini (Gemini 2.5 Flash — cheapest, multilingual)`;
+export const TRANSCRIBE_PROVIDERS_DOC = `elevenlabs (default, Scribe v2), openai (GPT-4o Transcribe), gemini (Gemini 2.5 Flash - cheapest, multilingual)`;
 
 export const TTS_PROVIDERS_LIST = `elevenlabs, openai, gemini`;
 
 export const TTS_PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  'elevenlabs': `ElevenLabs (many voices — use voice_set list to discover)`,
+  'elevenlabs': `ElevenLabs (many voices - use voice_set list to discover)`,
   'openai': `OpenAI (alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse)`,
   'gemini': `Gemini (30 voices: Kore, Puck, Zephyr, Charon, Fenrir, Leda, Orus, Aoede, and 22 more). Multi-speaker (up to 2) and 60+ languages`,
 };

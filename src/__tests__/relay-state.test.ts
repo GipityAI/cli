@@ -1,5 +1,5 @@
 /**
- * `~/.gipity/relay.json` state module — device info, allowlist, pause flag.
+ * `~/.gipity/relay.json` state module - device info, allowlist, pause flag.
  * Uses HOME to sandbox filesystem writes.
  */
 import { describe, it, beforeEach } from 'node:test';

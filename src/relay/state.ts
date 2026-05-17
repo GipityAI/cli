@@ -4,11 +4,11 @@
  * One file, `~/.gipity/relay.json`, mode 0600:
  *   {
  *     device: { guid, name, platform, token, paired_at },
- *     // (no allowlist — daemon materializes any of the user's projects on demand)
+ *     // (no allowlist - daemon materializes any of the user's projects on demand)
  *     paused: boolean,
  *   }
  *
- * The `token` field is the raw device bearer returned by /pair/claim — it
+ * The `token` field is the raw device bearer returned by /pair/claim - it
  * never leaves this file or the Authorization header. A future chunk will
  * move it to OS keychain (macOS Keychain, libsecret, wincred); the state
  * module's public surface is designed to absorb that change.
@@ -57,7 +57,7 @@ export function loadState(): RelayState {
       onboard_shown: Boolean(raw.onboard_shown),
     };
   } catch {
-    // Corrupted file — bail out to empty so the caller can rewrite cleanly.
+    // Corrupted file - bail out to empty so the caller can rewrite cleanly.
     return emptyState();
   }
 }
@@ -65,7 +65,7 @@ export function loadState(): RelayState {
 export function saveState(state: RelayState): void {
   mkdirSync(RELAY_DIR, { recursive: true });
   writeFileSync(RELAY_FILE, JSON.stringify(state, null, 2) + '\n');
-  // Token is inside — enforce owner-only even if the file existed with
+  // Token is inside - enforce owner-only even if the file existed with
   // looser permissions before.
   try { chmodSync(RELAY_FILE, FILE_MODE); } catch { /* Windows best-effort */ }
 }
@@ -137,14 +137,14 @@ export function getDaemonPidPath(): string {
 }
 
 /** Write the current process PID exclusively. Throws if another daemon
- *  already holds the lock — callers can treat that as "don't start." */
+ *  already holds the lock - callers can treat that as "don't start." */
 export function writeDaemonPid(pid: number): void {
   mkdirSync(RELAY_DIR, { recursive: true });
   writeFileSync(RELAY_PID_FILE, String(pid), { flag: 'wx' });
 }
 
 export function clearDaemonPid(): void {
-  try { unlinkSync(RELAY_PID_FILE); } catch { /* not there — fine */ }
+  try { unlinkSync(RELAY_PID_FILE); } catch { /* not there - fine */ }
 }
 
 /** True if a daemon is currently running (fresh PID in file + process alive). */

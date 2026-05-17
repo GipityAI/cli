@@ -53,7 +53,7 @@ export const domainCommand = new Command('domain')
     switch (sub) {
       case 'list': {
         if (opts.all) {
-          // Account-wide list — no project context needed
+          // Account-wide list - no project context needed
           const res = await get<{ data: AccountDomainsResponse }>('/users/me/domains');
           const { domains, count, limit } = res.data;
 
@@ -146,7 +146,7 @@ export const domainCommand = new Command('domain')
           console.error(clrError('Usage: gipity domain remove <guid>'));
           process.exit(1);
         }
-        // Remove works with just the guid — try account-level first, fall back to project-level
+        // Remove works with just the guid - try account-level first, fall back to project-level
         const config = getConfig();
         if (config) {
           await del(`/projects/${config.projectGuid}/domains/${value}`);

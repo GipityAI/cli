@@ -17,7 +17,7 @@ interface UsageEntry {
 }
 
 export const creditsCommand = new Command('credits')
-  .description('View credits and usage')
+  .description('View credits')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Credits', async () => {
     const res = await get<{ data: BalanceData }>('/credits/balance');
@@ -36,7 +36,7 @@ export const creditsCommand = new Command('credits')
 
 creditsCommand
   .command('usage')
-  .description('Show recent credit usage')
+  .description('Show recent usage')
   .option('--limit <n>', 'Number of entries', '20')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Usage', async () => {

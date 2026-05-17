@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, basename } from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
@@ -16,11 +16,11 @@ function resolveCommand(cmd: string): string {
     return `${cmd}.cmd`;
   }
 }
-import { getAuth, saveAuth, clearAuth } from '../auth.js';
+import { getAuth, saveAuth, clearAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfig, clearConfigCache, getApiBaseOverride } from '../config.js';
-import { syncDown, syncUp } from '../sync.js';
-import { slugify, setupClaudeHooks, setupClaudeMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
+import { sync } from '../sync.js';
+import { slugify, setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
   buildProjectContextBlock as buildProjectContextBlockText,
   buildExistingProjectPrompt as buildExistingProjectPromptText,
@@ -33,6 +33,15 @@ import { maybeOfferRelayOn, ensureDaemonRunning } from '../relay/onboarding.js';
 import { prompt, promptBoxed, pickOne, decodeJwtExp, confirm } from '../utils.js';
 import { brand, bold, faint, info, success, error as clrError, muted } from '../colors.js';
 import { printBanner } from '../banner.js';
+import {
+  scanForAdoption,
+  isLikelyEmpty,
+  canAdoptCwd,
+  formatCwdLabel,
+  formatBytes,
+  adoptCurrentDir,
+  ADOPT_THRESHOLDS,
+} from '../adopt-cwd.js';
 
 const __clDir = dirname(fileURLToPath(import.meta.url));
 const __clPkg = JSON.parse(readFileSync(resolve(__clDir, '../../package.json'), 'utf-8'));
@@ -60,7 +69,7 @@ interface ProjectStats {
 
 /** Ask the server for recursive VFS counts. Server owns the file metadata
  *  (counts, bytes, paths), so a single aggregate query beats walking the
- *  local filesystem — which only sees depth 1 without recursion and led
+ *  local filesystem - which only sees depth 1 without recursion and led
  *  to the "1 top-level entry (src/)" bug for scaffolded projects where
  *  everything is under src/.
  *
@@ -127,7 +136,7 @@ function localFsFallback(dir: string): ProjectStats {
 }
 
 /** Thin wrappers that fetch VFS stats, then delegate the actual prompt
- *  assembly to `prompts.ts`. All wording lives in that module — keep it
+ *  assembly to `prompts.ts`. All wording lives in that module - keep it
  *  that way. */
 interface LocalCtxOpts {
   projectName: string;
@@ -145,6 +154,34 @@ async function buildProjectContextBlock(opts: LocalCtxOpts): Promise<string> {
 async function buildExistingProjectPrompt(opts: LocalCtxOpts): Promise<string> {
   const stats = await fetchProjectStats(opts.projectGuid, opts.cwd);
   return buildExistingProjectPromptText({ ...opts, ...stats });
+}
+
+/** Interactive email+code login flow. Used on first login and when the
+ *  server returns 401 mid-command (session expired). Writes the new auth
+ *  to disk and returns it. */
+async function interactiveLogin(): Promise<AuthData> {
+  const email = await prompt('  Email: ');
+  if (!email) { console.error(`\n  ${clrError('Email required.')}`); process.exit(1); }
+
+  await publicPost('/auth/login', { email });
+  console.log('  Check your email for a 6-digit code.\n');
+
+  const code = await prompt('  Code: ');
+  if (!code) { console.error(`\n  ${clrError('Code required.')}`); process.exit(1); }
+
+  const res = await publicPost<{
+    accessToken: string;
+    refreshToken: string;
+    isNewUser: boolean;
+  }>('/auth/verify', { email, code });
+
+  const exp = decodeJwtExp(res.accessToken);
+  if (!exp) { console.error(`\n  ${clrError('Invalid token received.')}`); process.exit(1); }
+  const expiresAt = new Date(exp * 1000).toISOString();
+
+  saveAuth({ accessToken: res.accessToken, refreshToken: res.refreshToken, email, expiresAt });
+  console.log(`  ${success(`Logged in (${email}).`)}`);
+  return getAuth()!;
 }
 
 // First-run relay onboarding now lives in `relay/onboarding.ts`
@@ -178,7 +215,7 @@ function suggestProjectName(existingSlugs: string[]): string {
 }
 
 export const claudeCommand = new Command('claude')
-  .description('Log in, pair this machine, set up a project, and launch Claude Code (pass -p "msg" / --resume <id> for non-interactive use)')
+  .description('Set up and run Claude Code')
   .option('--no-claude', 'Set up project but skip launching Claude Code')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
@@ -188,7 +225,7 @@ export const claudeCommand = new Command('claude')
       // route directly to `claude -p` after the normal setup (auth, hooks,
       // sync). Used by the upcoming `gipity relay` daemon to dispatch
       // messages from the web CLI into a local Claude Code session without
-      // a human at the terminal. Requires an existing .gipity.json — we
+      // a human at the terminal. Requires an existing .gipity.json - we
       // can't interactively pick or create a project in this mode.
       const rawArgs = process.argv.slice(process.argv.indexOf('claude') + 1);
       const nonInteractive = rawArgs.some(a => a === '-p' || a === '--print' || a.startsWith('--print=') || a.startsWith('-p='));
@@ -217,32 +254,10 @@ export const claudeCommand = new Command('claude')
       }
 
       if (auth) {
-        console.log(`  Logged in as ${auth.email}`);
+        console.log(`  Logged in (${auth.email}).`);
       } else {
         console.log('  Let\'s get you logged in.\n');
-
-        const email = await prompt('  Email: ');
-        if (!email) { console.error(`\n  ${clrError('Email required.')}`); process.exit(1); }
-
-        await publicPost('/auth/login', { email });
-        console.log('  Check your email for a 6-digit code.\n');
-
-        const code = await prompt('  Code: ');
-        if (!code) { console.error(`\n  ${clrError('Code required.')}`); process.exit(1); }
-
-        const res = await publicPost<{
-          accessToken: string;
-          refreshToken: string;
-          isNewUser: boolean;
-        }>('/auth/verify', { email, code });
-
-        const exp = decodeJwtExp(res.accessToken);
-        if (!exp) { console.error(`\n  ${clrError('Invalid token received.')}`); process.exit(1); }
-        const expiresAt = new Date(exp * 1000).toISOString();
-
-        saveAuth({ accessToken: res.accessToken, refreshToken: res.refreshToken, email, expiresAt });
-        auth = getAuth();
-        console.log(`  ${success(`Logged in as ${email}`)}`);
+        auth = await interactiveLogin();
       }
 
       console.log('');
@@ -265,16 +280,13 @@ export const claudeCommand = new Command('claude')
         console.log(`  ${success('Already set up.')}\n`);
         setupClaudeHooks();
         setupClaudeMd();
+        setupAgentsMd();
         setupGitignore();
 
         try {
-          const upResult = await syncUp();
-          if (upResult.pushed > 0) {
-            console.log(`  Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
-          }
-          const downResult = await syncDown({ confirmDeletions: !nonInteractive });
-          if (downResult.pulled > 0) {
-            console.log(`  Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''} from Gipity.`);
+          const result = await sync({ interactive: !nonInteractive });
+          if (result.applied > 0) {
+            console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
           }
         } catch {
           console.log('  Could not sync files (will retry on next prompt).');
@@ -288,87 +300,123 @@ export const claudeCommand = new Command('claude')
           cwd: process.cwd(),
         });
       } else {
-        // Fetch user's projects
+        // Fetch user's projects. If the session expired (401), re-run the
+        // interactive login and retry once - no reason to kick the user out
+        // to a shell just to re-run the same command.
         let projects: ProjectData[] = [];
-        try {
-          const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
-          projects = res.data;
-        } catch (err: any) {
-          const isConnectionError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' ||
-            err?.code === 'ETIMEDOUT' || err?.cause?.code === 'ECONNREFUSED' ||
-            err?.cause?.code === 'ENOTFOUND' || err?.cause?.code === 'ETIMEDOUT';
-          if (isConnectionError) {
-            const apiBase = getApiBaseOverride() || 'https://a.gipity.ai';
-            console.error(`  ${clrError(`Could not connect to ${apiBase}`)}`);
-            console.error(`  ${muted('Check your connection and try again.')}`);
+        let reauthed = false;
+        while (true) {
+          try {
+            const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
+            projects = res.data;
+            break;
+          } catch (err: any) {
+            const isConnectionError = err?.code === 'ECONNREFUSED' || err?.code === 'ENOTFOUND' ||
+              err?.code === 'ETIMEDOUT' || err?.cause?.code === 'ECONNREFUSED' ||
+              err?.cause?.code === 'ENOTFOUND' || err?.cause?.code === 'ETIMEDOUT';
+            if (isConnectionError) {
+              const apiBase = getApiBaseOverride() || 'https://a.gipity.ai';
+              console.error(`  ${clrError(`Could not connect to ${apiBase}`)}`);
+              console.error(`  ${muted('Check your connection and try again.')}`);
+              process.exit(1);
+            }
+            if (err instanceof ApiError && err.statusCode === 401 && !reauthed && !nonInteractive) {
+              clearAuth();
+              console.log(`  ${muted('Your session expired. Let\'s sign you back in.')}\n`);
+              auth = await interactiveLogin();
+              console.log('');
+              reauthed = true;
+              continue;
+            }
+            if (err instanceof ApiError && err.statusCode === 401) {
+              clearAuth();
+              console.error(`  ${clrError('Your session expired.')}`);
+              console.error(`  ${muted('Run: gipity login')}`);
+              process.exit(1);
+            }
+            console.error(`  ${clrError(`Could not load projects: ${err?.message || err}`)}`);
             process.exit(1);
           }
-          if (err instanceof ApiError && err.statusCode === 401) {
-            clearAuth();
-            console.error(`  ${clrError('Your session expired.')}`);
-            console.error(`  ${muted('Run: gipity login')}`);
-            process.exit(1);
-          }
-          console.error(`  ${clrError(`Could not load projects: ${err?.message || err}`)}`);
-          process.exit(1);
         }
 
         const existingSlugs = projects.map(p => p.slug);
         let project: ProjectData;
         let isNewProject = false;
-
-        if (projects.length > 0) {
-          const result = await pickOrCreateProject(projects, existingSlugs);
-          project = result.project;
-          isNewProject = result.isNew;
-        } else {
-          project = await createNewProject(existingSlugs);
-          isNewProject = true;
-        }
-
-        // Resolve project directory under ~/GipityProjects/{slug}
-        const projectDir = join(getProjectsRoot(), project.slug);
-
-        mkdirSync(projectDir, { recursive: true });
-        process.chdir(projectDir);
-        clearConfigCache();
-
-        // Fetch agents
+        let accountSlug = '';
         let agentGuid = '';
-        try {
-          const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
-          if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
-        } catch {
-          // No agents
-        }
 
-        const accountSlug = await getAccountSlug();
+        const result = projects.length > 0
+          ? await pickOrCreateProject(projects, existingSlugs)
+          : { kind: 'create-new' as const, project: await createNewProject(existingSlugs) };
 
-        // Always write config (refresh stale GUIDs from a previous setup)
-        saveConfig({
-          projectGuid: project.short_guid,
-          projectSlug: project.slug,
-          accountSlug,
-          agentGuid,
-          conversationGuid: null,
-          apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
-          ignore: DEFAULT_SYNC_IGNORE,
-        });
-
-        console.log(`\n  Using ${projectDir}`);
-
-        // Sync: push local files up first, then pull any remote-only files down (non-fatal)
-        try {
-          const upResult = await syncUp();
-          if (upResult.pushed > 0) {
-            console.log(`  Pushed ${upResult.pushed} file${upResult.pushed > 1 ? 's' : ''} to Gipity.`);
+        if (result.kind === 'adopt-cwd') {
+          // User chose "Use this directory" - derive a slug from the cwd
+          // basename, find-or-create the server project, write
+          // .gipity.json into cwd (no projects-root materialization).
+          const cwdBase = basename(process.cwd());
+          const adoptSlug = slugify(cwdBase) || 'project';
+          const adoptName = cwdBase || adoptSlug;
+          accountSlug = await getAccountSlug();
+          const adopted = await adoptCurrentDir({
+            cwd: process.cwd(),
+            projectName: adoptName,
+            projectSlug: adoptSlug,
+            accountSlug,
+            confirmDeletions: !nonInteractive,
+          });
+          project = adopted.project;
+          agentGuid = adopted.agentGuid;
+          // Treat as "new project" for the build prompt only when cwd is
+          // genuinely empty - otherwise the user has chosen to adopt
+          // existing content and shouldn't be asked "what to build?".
+          isNewProject = isLikelyEmpty(process.cwd());
+          console.log(`\n  Using ${process.cwd()}`);
+          if (adopted.applied > 0) {
+            console.log(`  Synced ${adopted.applied} change${adopted.applied > 1 ? 's' : ''} with Gipity.`);
           }
-          const downResult = await syncDown({ confirmDeletions: !nonInteractive });
-          if (downResult.pulled > 0) {
-            console.log(`  Pulled ${downResult.pulled} file${downResult.pulled > 1 ? 's' : ''} from Gipity.`);
+        } else {
+          project = result.project;
+          isNewProject = result.kind === 'create-new';
+
+          // Resolve project directory under ~/GipityProjects/{slug}
+          const projectDir = join(getProjectsRoot(), project.slug);
+
+          mkdirSync(projectDir, { recursive: true });
+          process.chdir(projectDir);
+          clearConfigCache();
+
+          // Fetch agents
+          try {
+            const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
+            if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
+          } catch {
+            // No agents
           }
-        } catch {
-          console.log('  Could not sync files (will retry on next prompt).');
+
+          accountSlug = await getAccountSlug();
+
+          // Always write config (refresh stale GUIDs from a previous setup)
+          saveConfig({
+            projectGuid: project.short_guid,
+            projectSlug: project.slug,
+            accountSlug,
+            agentGuid,
+            conversationGuid: null,
+            apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+            ignore: DEFAULT_SYNC_IGNORE,
+          });
+
+          console.log(`\n  Using ${projectDir}`);
+
+          // Unified sync - push and pull resolved via three-way merge (non-fatal)
+          try {
+            const result = await sync({ interactive: !nonInteractive });
+            if (result.applied > 0) {
+              console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
+            }
+          } catch {
+            console.log('  Could not sync files (will retry on next prompt).');
+          }
         }
 
         // ── Step 2b: What do you want to build? (new projects only) ────
@@ -407,6 +455,7 @@ export const claudeCommand = new Command('claude')
 
         setupClaudeHooks();
         setupClaudeMd();
+        setupAgentsMd();
         setupGitignore();
 
         console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
@@ -434,17 +483,24 @@ export const claudeCommand = new Command('claude')
       // capture event is explicitly tagged to the right conversation.
       //
       // Three paths:
-      //   1. Inherited GIPITY_CONVERSATION_GUID — the relay daemon already
+      //   1. Inherited GIPITY_CONVERSATION_GUID - the relay daemon already
       //      created the conv and spawned us with it set. Just pass it
       //      through. Creating another would orphan the dispatch's conv.
-      //   2. `--resume <sid>` — look up the existing conv by Claude Code
+      //   2. `--resume <sid>` - look up the existing conv by Claude Code
       //      session_id.
-      //   3. Otherwise — create a fresh claude_code conv tied to this
+      //   3. Otherwise - create a fresh claude_code conv tied to this
       //      paired device.
       //
-      // Skipped silently if this machine isn't paired — without a device
+      // Skipped silently if this machine isn't paired - without a device
       // we can't satisfy the claude_code ownership rule, so hooks stay
       // offline for this run.
+      //
+      // Note: when `--output-format stream-json` is present in argv, the
+      // relay daemon is capturing Claude's stdout directly and the hook-
+      // based transcript capture would double-post every event. In that
+      // case we intentionally do NOT propagate GIPITY_CONVERSATION_GUID
+      // to the Claude child (see childEnv assignment below) - the hook's
+      // existing "no guid → silent no-op" guard then skips capture.
       let convGuidForHooks: string | null = process.env.GIPITY_CONVERSATION_GUID ?? null;
       if (!convGuidForHooks) {
         const device = relayState.getDevice();
@@ -460,14 +516,18 @@ export const claudeCommand = new Command('claude')
                 );
                 convGuidForHooks = found.data.conversation_guid;
               } catch {
-                // No existing conv for this session id — fall through and
+                // No existing conv for this session id - fall through and
                 // create one so capture still has a home.
               }
             }
             if (!convGuidForHooks && cfg?.projectGuid) {
+              // Terminal `gipity claude` is always origin='local' - marks the
+              // conversation as a local-terminal chat so the web CLI renders
+              // it read-only. Dispatch convs (created by the relay daemon
+              // spawning `gipity claude -p`) use the default 'dispatch'.
               const created = await post<{ data: { conversation_guid: string } }>(
                 '/conversations/claude-code',
-                { project_guid: cfg.projectGuid, device_guid: device.guid },
+                { project_guid: cfg.projectGuid, device_guid: device.guid, origin: 'local' },
               );
               convGuidForHooks = created.data.conversation_guid;
             }
@@ -548,7 +608,17 @@ export const claudeCommand = new Command('claude')
       // passes args through cmd.exe and mangles quotes/special chars.
       const claudeCmd = resolveCommand('claude');
       const childEnv = { ...process.env };
-      if (convGuidForHooks) childEnv.GIPITY_CONVERSATION_GUID = convGuidForHooks;
+      // Gate hook-based capture: when the daemon is streaming via
+      // --output-format stream-json, it owns the capture and any hook
+      // post would be a dupe. Leaving GIPITY_CONVERSATION_GUID unset in
+      // the child's env trips the hook runner's early-return guard.
+      const streamJsonIdx = allArgs.indexOf('--output-format');
+      const daemonCapturing = streamJsonIdx !== -1 && allArgs[streamJsonIdx + 1] === 'stream-json';
+      if (daemonCapturing) {
+        delete childEnv.GIPITY_CONVERSATION_GUID;
+      } else if (convGuidForHooks) {
+        childEnv.GIPITY_CONVERSATION_GUID = convGuidForHooks;
+      }
       const child = spawn(claudeCmd, allArgs, {
         stdio: 'inherit',
         cwd: process.cwd(),
@@ -562,40 +632,126 @@ export const claudeCommand = new Command('claude')
     }
   });
 
+type PickResult =
+  | { kind: 'pick'; project: ProjectData }
+  | { kind: 'create-new'; project: ProjectData }
+  | { kind: 'adopt-cwd' };
+
 async function pickOrCreateProject(
   projects: ProjectData[],
   existingSlugs: string[],
-): Promise<{ project: ProjectData; isNew: boolean }> {
+): Promise<PickResult> {
   const filtered = projects.filter(p => !p.is_default);
-  const recent = filtered.slice(0, 7);
-  const hasMore = filtered.length > 7;
+  const cwd = process.cwd();
+  const showAdopt = canAdoptCwd(cwd);
 
-  console.log(`  ${bold('Choose project to open:')}\n`);
-  console.log(`    ${bold('1.')} Create new project`);
-  recent.forEach((p, i) => console.log(`    ${bold(`${i + 2}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
-  if (hasMore) console.log(`    ${bold(`${recent.length + 2}.`)} Show all projects`);
+  // Reserve slot 1 for "create new", slot 2 for "use this dir" when shown.
+  const reserved = showAdopt ? 2 : 1;
+  // Pickable single-keypress range is 1-9; leave one slot for "Show all"
+  // when there are more projects than fit.
+  const maxRecent = 9 - reserved - 1; // worst case: keep slot 9 free for "show all"
+  const recent = filtered.slice(0, maxRecent);
+  const hasMore = filtered.length > recent.length;
+
+  // Loop so that a refused/declined adopt-cwd re-shows the picker rather
+  // than dropping the user into a shell.
+  while (true) {
+    const newProjectLabel = formatNewProjectLabel(existingSlugs);
+    console.log(`  ${bold('Choose project to open:')}\n`);
+    console.log(`    ${bold('1.')} Create new project          ${muted(`(${newProjectLabel})`)}`);
+    if (showAdopt) {
+      console.log(`    ${bold('2.')} Use this directory          ${muted(`(${formatCwdLabel(cwd)})`)}`);
+    }
+    recent.forEach((p, i) =>
+      console.log(`    ${bold(`${i + reserved + 1}.`)} ${p.name} ${muted(`(${p.slug})`)}`),
+    );
+    if (hasMore) {
+      console.log(`    ${bold(`${recent.length + reserved + 1}.`)} Show all projects`);
+    }
+    console.log('');
+
+    const maxOption = recent.length + reserved + (hasMore ? 1 : 0);
+    const idx = await pickOne('Choose', maxOption, 1);
+
+    // Recent project (slots reserved+1 .. recent.length+reserved).
+    if (idx > reserved && idx <= recent.length + reserved) {
+      return { kind: 'pick', project: recent[idx - reserved - 1] };
+    }
+
+    // Show all projects (one past the last recent slot).
+    if (hasMore && idx === recent.length + reserved + 1) {
+      const picked = await pickFromAll(filtered);
+      if (picked) return { kind: 'pick', project: picked };
+      continue; // user bailed; re-show top picker
+    }
+
+    // Slot 2 = "Use this directory" (only when shown).
+    if (showAdopt && idx === 2) {
+      const ok = await confirmAdoptCwd(cwd);
+      if (!ok) { console.log(''); continue; }
+      return { kind: 'adopt-cwd' };
+    }
+
+    // Default (Enter) or slot 1 = create new project.
+    const project = await createNewProject(existingSlugs);
+    return { kind: 'create-new', project };
+  }
+}
+
+/** Render "Show all projects" with numbered list; returns the picked
+ *  project or null if the user picked "create new" (slot 1) or invalid. */
+async function pickFromAll(filtered: ProjectData[]): Promise<ProjectData | null> {
   console.log('');
+  console.log(`  ${bold('All projects:')}\n`);
+  console.log(`    ${bold('1.')} Create new project`);
+  filtered.forEach((p, i) => console.log(`    ${bold(`${i + 2}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
+  console.log('');
+  const allChoice = await prompt(`  Choose (1-${filtered.length + 1}): `);
+  const allIdx = parseInt(allChoice, 10);
+  if (allIdx >= 2 && allIdx <= filtered.length + 1) return filtered[allIdx - 2];
+  return null;
+}
 
-  const maxOption = hasMore ? recent.length + 2 : recent.length + 1;
-  const idx = await pickOne('Choose', maxOption, 1);
+/** Show "(~/GipityProjects/project-NNN)" - the exact dir option 1 will
+ *  create, so the user can see where their new project will land. */
+function formatNewProjectLabel(existingSlugs: string[]): string {
+  const slug = suggestProjectName(existingSlugs);
+  const root = getProjectsRoot();
+  const home = homedir();
+  const display = root.startsWith(home + '/') || root === home
+    ? '~' + root.slice(home.length)
+    : root;
+  return `${display}/${slug}`;
+}
 
-  // Selected a recent project
-  if (idx >= 2 && idx <= recent.length + 1) return { project: recent[idx - 2], isNew: false };
+/** Run the size-tier scan, surface the right UX:
+ *    - easy   → silent, return true.
+ *    - moderate → confirm prompt with file count + size.
+ *    - refuse → print explanation, return false (caller re-shows picker).
+ *  Returns true if adoption should proceed. */
+async function confirmAdoptCwd(cwd: string): Promise<boolean> {
+  process.stdout.write(`  ${muted('Scanning directory...')} `);
+  const scan = scanForAdoption(cwd);
+  process.stdout.write('\r\x1b[K'); // clear the scanning line
 
-  // Show all projects
-  if (hasMore && idx === recent.length + 2) {
+  if (scan.tier === 'refuse') {
+    const sizeStr = scan.truncated ? `>${formatBytes(ADOPT_THRESHOLDS.REFUSE_BYTES)}` : formatBytes(scan.bytes);
+    const fileStr = scan.truncated ? `>${ADOPT_THRESHOLDS.REFUSE_FILES}` : `${scan.files}`;
+    console.log(`  ${clrError(`Directory has ${fileStr} files (${sizeStr}) - too large to adopt as a Gipity project.`)}`);
+    console.log(`  ${muted('Move into a subdirectory, or use option 1 to create a fresh project under ~/GipityProjects/.')}`);
     console.log('');
-    console.log(`  ${bold('All projects:')}\n`);
-    console.log(`    ${bold('1.')} Create new project`);
-    filtered.forEach((p, i) => console.log(`    ${bold(`${i + 2}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
-    console.log('');
-    const allChoice = await prompt(`  Choose (1-${filtered.length + 1}): `);
-    const allIdx = parseInt(allChoice, 10);
-    if (allIdx >= 2 && allIdx <= filtered.length + 1) return { project: filtered[allIdx - 2], isNew: false };
+    return false;
   }
 
-  // Default (Enter) or 1 = create new project
-  return { project: await createNewProject(existingSlugs), isNew: true };
+  if (scan.tier === 'moderate') {
+    console.log('');
+    return confirm(
+      `  About to adopt ${bold(String(scan.files))} files (${bold(formatBytes(scan.bytes))}) at ${bold(formatCwdLabel(cwd))}. Continue?`,
+      { default: 'yes' },
+    );
+  }
+
+  return true;
 }
 
 async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
@@ -604,7 +760,7 @@ async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
   console.log('');
 
   // Loop until the user picks a free, well-formed name. Bad input or duplicate
-  // slugs re-prompt instead of crashing — duplicates can still slip through
+  // slugs re-prompt instead of crashing - duplicates can still slip through
   // after the initial projects-list fetch (race with another session), so the
   // server-side 409 also routes back here.
   while (true) {

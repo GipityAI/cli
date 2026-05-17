@@ -2,12 +2,12 @@
  * Platform-specific service-unit generation for `gipity relay install`.
  *
  * Each platform returns:
- *   - `path`              — where to write the unit file
- *   - `content`           — the rendered file body
- *   - `enableCmds`        — argv arrays run in sequence (fail-fast) to register
- *   - `disableCmds`       — argv arrays run in sequence (best-effort) to remove
- *   - `statusCmd`         — argv to query whether the service is registered
- *   - `enableDisplay` etc — human-readable strings for log/error messages
+ *   - `path`              - where to write the unit file
+ *   - `content`           - the rendered file body
+ *   - `enableCmds`        - argv arrays run in sequence (fail-fast) to register
+ *   - `disableCmds`       - argv arrays run in sequence (best-effort) to remove
+ *   - `statusCmd`         - argv to query whether the service is registered
+ *   - `enableDisplay` etc - human-readable strings for log/error messages
  *
  * **No shell.** Commands are argv arrays so the embedded `cliPath` (and the
  * unit-file path, which contains `homedir()`) cannot inject via spaces or
@@ -25,7 +25,7 @@ export interface InstallerPlan {
   platform: 'darwin' | 'linux' | 'win32';
   path: string;
   content: string;
-  /** Argv arrays — each spawned without a shell, in sequence. Enable is
+  /** Argv arrays - each spawned without a shell, in sequence. Enable is
    *  treated fail-fast by the runner; disable is best-effort. */
   enableCmds: string[][];
   disableCmds: string[][];
@@ -55,7 +55,7 @@ function display(argvs: string[][]): string {
   return argvs.map(a => a.join(' ')).join(' && ');
 }
 
-// ─── macOS — launchd (user LaunchAgent) ────────────────────────────────
+// ─── macOS - launchd (user LaunchAgent) ────────────────────────────────
 
 function launchdPlan(cliPath: string): InstallerPlan {
   const label = 'ai.gipity.relay';
@@ -103,13 +103,13 @@ function launchdPlan(cliPath: string): InstallerPlan {
   };
 }
 
-// ─── Linux — systemd --user unit ───────────────────────────────────────
+// ─── Linux - systemd --user unit ───────────────────────────────────────
 
 function systemdUserPlan(cliPath: string): InstallerPlan {
   const unitName = 'gipity-relay.service';
   const path = join(homedir(), '.config', 'systemd', 'user', unitName);
   const content = `[Unit]
-Description=Gipity relay — local Claude Code control from the Gipity web CLI
+Description=Gipity relay - local Claude Code control from the Gipity web CLI
 After=network-online.target
 Wants=network-online.target
 
@@ -144,7 +144,7 @@ WantedBy=default.target
   };
 }
 
-// ─── Windows — Task Scheduler XML ──────────────────────────────────────
+// ─── Windows - Task Scheduler XML ──────────────────────────────────────
 
 function windowsTaskPlan(cliPath: string): InstallerPlan {
   const taskName = 'GipityRelay';
@@ -152,7 +152,7 @@ function windowsTaskPlan(cliPath: string): InstallerPlan {
   const content = `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Gipity relay — local Claude Code control from the Gipity web CLI</Description>
+    <Description>Gipity relay - local Claude Code control from the Gipity web CLI</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>

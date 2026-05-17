@@ -44,7 +44,7 @@ function destFor(localFile: string, srcRoot: string, destRoot: string): string {
 }
 
 export const uploadCommand = new Command('upload')
-  .description('Upload a local file or directory to a Gipity project')
+  .description('Upload files')
   .argument('<src>', 'Local source file or directory')
   .argument('[dest]', 'Destination path in the project (defaults to /)')
   .option('-r, --recursive', 'Upload a directory recursively')
@@ -63,7 +63,7 @@ export const uploadCommand = new Command('upload')
       const planned: PlannedFile[] = [];
       if (srcStat.isDirectory()) {
         if (!opts.recursive) {
-          throw new Error(`${src} is a directory — pass -r/--recursive to upload it`);
+          throw new Error(`${src} is a directory - pass -r/--recursive to upload it`);
         }
         // Slice from the parent of src so the directory name itself is preserved
         // in the virtual path (e.g. `hooks/a.sh` → `hooks/a.sh`, not `a.sh`).

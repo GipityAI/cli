@@ -3,7 +3,7 @@ import { get, del, post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { formatSize } from '../utils.js';
 import { info, muted } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 
 interface FileEntry {
   name: string;
@@ -13,11 +13,11 @@ interface FileEntry {
 }
 
 export const fileCommand = new Command('file')
-  .description('Browse remote files (without sync)');
+  .description('Browse remote files');
 
 fileCommand
   .command('ls [path]')
-  .description('List files in remote project')
+  .description('List files')
   .option('--json', 'Output as JSON')
   .action((path: string | undefined, opts) => run('List', async () => {
     const { config } = await resolveProjectContext();
@@ -33,7 +33,7 @@ fileCommand
 
 fileCommand
   .command('cat <path>')
-  .description('Read a remote file')
+  .description('Read a file')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Read', async () => {
     const { config } = await resolveProjectContext();
@@ -50,7 +50,7 @@ fileCommand
 
 fileCommand
   .command('tree [path]')
-  .description('Show full file tree')
+  .description('Show the file tree')
   .option('--json', 'Output as JSON')
   .action((path: string | undefined, opts) => run('Tree', async () => {
     const { config } = await resolveProjectContext();
@@ -67,7 +67,7 @@ fileCommand
 
 fileCommand
   .command('rm <path>')
-  .description('Delete a remote file or directory')
+  .description('Delete a file or folder')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Delete', async () => {
     const { config } = await resolveProjectContext();
@@ -75,11 +75,7 @@ fileCommand
       `/projects/${config.projectGuid}/files?path=${encodeURIComponent(path)}`
     );
 
-    if (opts.json) {
-      console.log(JSON.stringify(res));
-    } else {
-      console.log(`Deleted: ${path}`);
-    }
+    printResult(`Deleted: ${path}`, opts, res);
   }));
 
 interface VersionEntry {
@@ -93,7 +89,7 @@ interface VersionEntry {
 
 fileCommand
   .command('versions <path>')
-  .description('List version history of a file')
+  .description('List file versions')
   .option('--limit <n>', 'Max versions to return', '20')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Versions', async () => {
@@ -112,7 +108,7 @@ fileCommand
 
 fileCommand
   .command('restore <path> <version>')
-  .description('Switch a file to a specific version (older or newer)')
+  .description('Restore a file to a version')
   .option('--json', 'Output as JSON')
   .action((path: string, version: string, opts) => run('Restore', async () => {
     const { config } = await resolveProjectContext();
@@ -121,11 +117,7 @@ fileCommand
       { path, version: Number(version) },
     );
 
-    if (opts.json) {
-      console.log(JSON.stringify(res.data));
-    } else {
-      console.log(`Restored ${res.data.path} to v${res.data.version} (${formatSize(res.data.size)})`);
-    }
+    printResult(`Restored ${res.data.path} to v${res.data.version} (${formatSize(res.data.size)}).`, opts, res.data);
   }));
 
 interface RollbackData {
@@ -139,7 +131,7 @@ interface RollbackData {
 
 fileCommand
   .command('rollback <datetime>')
-  .description('Roll back files to a point in time (or "latest" to undo)')
+  .description('Roll back files to a point in time')
   .option('--path <dir>', 'Scope to a directory')
   .option('--no-recursive', 'Direct children only')
   .option('--json', 'Output as JSON')

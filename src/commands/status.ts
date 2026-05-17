@@ -35,7 +35,7 @@ function checkCaptureHooks(cwd: string): { missing: string[]; ok: boolean } {
 }
 
 export const statusCommand = new Command('status')
-  .description('Show project and auth status, check Claude Code capture hooks')
+  .description('Show project and login status')
   .option('--json', 'Output as JSON')
   .option('--repair-hooks', 'Reinstall the capture hooks in .claude/settings.json if missing')
   .action(async (opts) => {
@@ -82,7 +82,7 @@ export const statusCommand = new Command('status')
         console.log(`${muted('Hooks:')}   ${success('capture hooks installed')}`);
       } else if (opts.repairHooks) {
         setupClaudeHooks();
-        console.log(`${muted('Hooks:')}   ${success('repaired — re-installed capture hooks')}`);
+        console.log(`${muted('Hooks:')}   ${success('repaired - re-installed capture hooks')}`);
       } else {
         console.log(`${muted('Hooks:')}   ${warning(`missing/modified: ${hookCheck.missing.join(', ')}`)}`);
         console.log(`         ${muted('Run `gipity status --repair-hooks` to re-install.')}`);

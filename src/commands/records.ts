@@ -2,15 +2,15 @@ import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { requireConfig } from '../config.js';
 import { bold, muted } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 export const recordsCommand = new Command('records')
-  .description('Query and manage Records API');
+  .description('Manage records');
 
 recordsCommand
   .command('list')
-  .description('List configured record tables')
+  .description('List record tables')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
     const config = requireConfig();
@@ -23,7 +23,7 @@ recordsCommand
 
 recordsCommand
   .command('query <table>')
-  .description('List records from a table')
+  .description('List records')
   .option('--filter <filter>', 'Filter string (e.g., "status:eq:active")')
   .option('--sort <sort>', 'Sort string (e.g., "created_at:desc")')
   .option('--limit <n>', 'Max rows', '20')
@@ -46,16 +46,18 @@ recordsCommand
     if (opts.json) {
       console.log(JSON.stringify(res));
     } else {
+      console.log('');
       console.log(`${res.meta.total} total records`);
       for (const row of res.data) {
         console.log(JSON.stringify(row));
       }
+      console.log('');
     }
   }));
 
 recordsCommand
   .command('get <table> <id>')
-  .description('Get a single record')
+  .description('Get a record')
   .option('--json', 'Output as JSON')
   .action((table: string, id: string, opts) => run('Get', async () => {
     const config = requireConfig();
@@ -72,7 +74,7 @@ recordsCommand
     const config = requireConfig();
     const data = JSON.parse(opts.data);
     const res = await post<{ data: any }>(`/projects/${config.projectGuid}/records/${table}`, data);
-    console.log(opts.json ? JSON.stringify(res.data) : `Created: ${JSON.stringify(res.data)}`);
+    printResult(`Created: ${JSON.stringify(res.data)}`, opts, res.data);
   }));
 
 recordsCommand
@@ -84,7 +86,7 @@ recordsCommand
     const config = requireConfig();
     const data = JSON.parse(opts.data);
     const res = await put<{ data: any }>(`/projects/${config.projectGuid}/records/${table}/${id}`, data);
-    console.log(opts.json ? JSON.stringify(res.data) : `Updated: ${JSON.stringify(res.data)}`);
+    printResult(`Updated: ${JSON.stringify(res.data)}`, opts, res.data);
   }));
 
 recordsCommand
@@ -97,5 +99,5 @@ recordsCommand
     }
     const config = requireConfig();
     await del(`/projects/${config.projectGuid}/records/${table}/${id}`);
-    console.log('Deleted.');
+    printResult('Deleted.', { json: false });
   }));

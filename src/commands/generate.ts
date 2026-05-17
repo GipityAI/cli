@@ -136,7 +136,7 @@ Examples:
 const speechCommand = new Command('speech')
   .description(`Generate speech audio from text using text-to-speech.
 
-Providers: ${Object.entries(TTS_PROVIDER_DESCRIPTIONS).map(([k, v]) => `${k} — ${v}`).join('\n  ')}
+Providers: ${Object.entries(TTS_PROVIDER_DESCRIPTIONS).map(([k, v]) => `${k} - ${v}`).join('\n  ')}
 
 Gemini-specific options:
   --language     BCP-47 language code (e.g. ja-JP, es-ES, fr-FR). 60+ languages supported.
@@ -192,7 +192,7 @@ Examples:
 // ── PARENT COMMAND ─────────────────────────────────────────────────────
 
 export const generateCommand = new Command('generate')
-  .description('Generate media (images, videos, speech) using AI')
+  .description('Generate images, video, or speech')
   .addCommand(imageCommand)
   .addCommand(videoCommand)
   .addCommand(speechCommand);

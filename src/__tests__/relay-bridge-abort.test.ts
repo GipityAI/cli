@@ -33,7 +33,7 @@ describe('bridgeAbort', () => {
     assert.equal(inner.signal.reason, 'pre');
   });
 
-  it('detaches cleanly — does not leak listeners across many calls', () => {
+  it('detaches cleanly - does not leak listeners across many calls', () => {
     const outer = new AbortController();
 
     // Sanity: listenerCount via public API isn't part of EventTarget, so we
@@ -59,7 +59,7 @@ describe('bridgeAbort', () => {
 
     // After all detaches, firing outer.abort must not affect any prior
     // inners (they're out of scope / already detached). Create one more
-    // inner WITHOUT detaching and confirm it receives the abort — proves
+    // inner WITHOUT detaching and confirm it receives the abort - proves
     // the bridge still works after many attach/detach cycles.
     const liveInner = new AbortController();
     bridgeAbort(outer.signal, liveInner);

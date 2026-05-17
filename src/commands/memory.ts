@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, put, del } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { error as clrError, muted } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 interface MemorySummary {
@@ -12,11 +12,11 @@ interface MemorySummary {
 }
 
 export const memoryCommand = new Command('memory')
-  .description('Read/write agent and project memory');
+  .description('Read or write memory');
 
 memoryCommand
   .command('list')
-  .description('List memory topics')
+  .description('List topics')
   .option('--project', 'List project memory (default is agent memory)')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
@@ -33,7 +33,7 @@ memoryCommand
 
 memoryCommand
   .command('read <topic>')
-  .description('Read a memory topic')
+  .description('Read a topic')
   .option('--project', 'Read project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, opts) => run('Read', async () => {
@@ -59,7 +59,7 @@ memoryCommand
 
 memoryCommand
   .command('write <topic> <content>')
-  .description('Write a memory topic')
+  .description('Write a topic')
   .option('--project', 'Write to project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, content: string, opts) => run('Write', async () => {
@@ -69,17 +69,12 @@ memoryCommand
       : `/agents/${config.agentGuid}/memory/${encodeURIComponent(topic)}`;
 
     await put<{ success: boolean }>(endpoint, { content });
-
-    if (opts.json) {
-      console.log(JSON.stringify({ success: true, topic }));
-    } else {
-      console.log(`Wrote "${topic}".`);
-    }
+    printResult(`Wrote "${topic}".`, opts, { success: true, topic });
   }));
 
 memoryCommand
   .command('delete <topic>')
-  .description('Delete a memory topic')
+  .description('Delete a topic')
   .option('--project', 'Delete project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, opts) => run('Delete', async () => {
@@ -93,10 +88,5 @@ memoryCommand
       : `/agents/${config.agentGuid}/memory/${encodeURIComponent(topic)}`;
 
     await del<{ success: boolean }>(endpoint);
-
-    if (opts.json) {
-      console.log(JSON.stringify({ success: true, topic }));
-    } else {
-      console.log(`Deleted "${topic}".`);
-    }
+    printResult(`Deleted "${topic}".`, opts, { success: true, topic });
   }));

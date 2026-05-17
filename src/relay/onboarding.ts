@@ -3,7 +3,7 @@
  * auth + project selection. Asks up to four Y/n questions (all default Y);
  * pressing Enter four times leaves the user with a paired + running
  * daemon that auto-starts on every subsequent `gipity claude` invocation,
- * and — if they said yes to the last question — also starts at OS login.
+ * and - if they said yes to the last question - also starts at OS login.
  */
 import { hostname, platform as osPlatform } from 'os';
 import { spawn, spawnSync } from 'child_process';
@@ -46,7 +46,7 @@ export function ensureDaemonRunning(): void {
  */
 export async function maybeOfferRelayOn(): Promise<void> {
   if (state.getRelayEnabled() !== undefined) {
-    // Already answered — just ensure the daemon is running if they're opted in.
+    // Already answered - just ensure the daemon is running if they're opted in.
     if (state.isRelayEnabled() && !state.isPaused()) ensureDaemonRunning();
     return;
   }
@@ -65,7 +65,7 @@ export async function maybeOfferRelayOn(): Promise<void> {
     return;
   }
 
-  // Device name — show hostname as the default; Enter accepts.
+  // Device name - show hostname as the default; Enter accepts.
   const defaultName = hostname() || 'my-pc';
   const rawName = await prompt(`  Device name [${bold(defaultName)}]: `);
   const name = (rawName || defaultName).trim();
@@ -113,7 +113,7 @@ export async function maybeOfferRelayOn(): Promise<void> {
       const plan = planFor({ cliPath: resolveCliPath() });
       mkdirSync(dirname(plan.path), { recursive: true });
       writeFileSync(plan.path, plan.content);
-      // Run argv directly — no shell — so paths with spaces / shell metas
+      // Run argv directly - no shell - so paths with spaces / shell metas
       // can't break out. Fail-fast on the first non-zero exit.
       let allOk = true;
       for (const argv of plan.enableCmds) {
@@ -121,7 +121,7 @@ export async function maybeOfferRelayOn(): Promise<void> {
         if (r.status !== 0) { allOk = false; break; }
       }
       if (!allOk) {
-        console.log(`  ${muted('Autostart install returned non-zero — you can run')} ${brand('gipity relay install')} ${muted('later.')}`);
+        console.log(`  ${muted('Autostart install returned non-zero - you can run')} ${brand('gipity relay install')} ${muted('later.')}`);
       } else {
         console.log(`  ${success('Auto-start installed.')} ${dim(plan.summary)}`);
       }
@@ -129,7 +129,7 @@ export async function maybeOfferRelayOn(): Promise<void> {
       if (err instanceof UnsupportedPlatformError) {
         console.log(`  ${muted(`Auto-start not supported on ${process.platform}; skipping.`)}`);
       } else {
-        console.log(`  ${muted('Auto-start install hit an error — skipping. You can retry with `gipity relay install`.')}`);
+        console.log(`  ${muted('Auto-start install hit an error - skipping. You can retry with `gipity relay install`.')}`);
       }
     }
   }

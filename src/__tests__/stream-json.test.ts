@@ -1,6 +1,6 @@
 /**
  * Pure unit tests for the relay's stream-json parsing pipeline. No
- * daemon, no spawn, no network — just the `parseEvent`, `mapEventToEntries`,
+ * daemon, no spawn, no network - just the `parseEvent`, `mapEventToEntries`,
  * and `createLineSplitter` logic. Uses node's built-in test runner.
  */
 import { describe, it } from 'node:test';
@@ -190,7 +190,7 @@ describe('createLineSplitter', () => {
   });
 });
 
-describe('mapEventToEntries — round trip shape matches IngestEntry union', () => {
+describe('mapEventToEntries - round trip shape matches IngestEntry union', () => {
   it('every emitted entry has a kind field from the declared union', () => {
     const validKinds: IngestEntry['kind'][] = [
       'attach', 'prompt', 'assistant', 'tool_use', 'tool_result', 'compact', 'system',

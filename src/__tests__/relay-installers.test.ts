@@ -1,5 +1,5 @@
 /**
- * Platform-specific service-unit generation — pure file-content checks.
+ * Platform-specific service-unit generation - pure file-content checks.
  * Actually running launchctl/systemctl/schtasks is user-driven; not tested.
  */
 import { describe, it } from 'node:test';
@@ -89,12 +89,12 @@ describe('installers: enable/disable commands look right', () => {
     assert.ok(p.disableCmds.some(argv => argv.includes('/Delete')));
   });
 
-  it('argv arrays are flat string arrays — no shell metacharacters injected', () => {
+  it('argv arrays are flat string arrays - no shell metacharacters injected', () => {
     // A path with spaces must stay as a single argv slot, not split by sh.
     const cliPath = '/Users/Test User/.npm-global/bin/gipity';
     const p = planFor({ cliPath, platformOverride: 'darwin' });
     // The plist path also contains the homedir, which on the test runner
-    // doesn't contain spaces — but the contract is still: argv elements
+    // doesn't contain spaces - but the contract is still: argv elements
     // are single strings, never shell-tokenized.
     for (const argv of [...p.enableCmds, ...p.disableCmds, p.statusCmd]) {
       for (const part of argv) {
@@ -102,7 +102,7 @@ describe('installers: enable/disable commands look right', () => {
         assert.ok(!part.includes('\n'), 'argv parts should not contain newlines');
       }
     }
-    // CLI path is embedded in the plist content (file body), not the argv —
+    // CLI path is embedded in the plist content (file body), not the argv -
     // sanity check that didn't change.
     assert.match(p.content, /<string>\/Users\/Test User\/\.npm-global\/bin\/gipity<\/string>/);
   });

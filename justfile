@@ -1,5 +1,7 @@
 # Gipity CLI
 
+set dotenv-load := true
+
 # Sync shared docs from platform (provider models, voices, params)
 # Imports the platform module and writes resolved string values for the CLI
 sync-docs:
@@ -25,11 +27,14 @@ cli-link:
     @echo "✓ Linked. If 'gipity' still points to a stale path in THIS shell, run: hash -r"
 
 # Reset to a clean first-run state: run `gipity uninstall` (stops daemon,
-# removes autostart, revokes device, wipes ~/.gipity/), then rebuild + relink.
+# removes autostart, revokes device, wipes ~/.gipity/), then rebuild + relink,
+# log in with dev creds from .env, and start the relay in the foreground.
 # Useful for testing the first-run flow end-to-end.
 cli-reinstall:
     -gipity uninstall --yes
     just cli-link
+    gipity login --email "$GIPITY_DEV_EMAIL" --code "$GIPITY_DEV_CODE"
+    gipity relay run
 
 # Unlink CLI global dev install
 cli-unlink:

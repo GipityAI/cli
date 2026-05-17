@@ -1,6 +1,6 @@
 // ── Gipity CLI Color System ─────────────────────────────────────────────
 // Centralized color definitions matching the Gipity platform palette.
-// All command files should import from here — no inline ANSI codes.
+// All command files should import from here - no inline ANSI codes.
 
 type StyleFn = (s: string) => string;
 

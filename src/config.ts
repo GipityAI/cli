@@ -9,6 +9,11 @@ export interface GipityConfig {
   conversationGuid: string | null;
   apiBase: string;
   ignore: string[];
+  /** Install Claude Code (and other remote agent) lifecycle hooks that
+   *  mirror the terminal session into the Gipity DB so the web CLI can
+   *  display it read-only. Default: true. Set false per-project to opt
+   *  out of capture without losing the other integration features. */
+  captureHooks?: boolean;
 }
 
 const CONFIG_FILE = '.gipity.json';
@@ -98,7 +103,7 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
     const agents = await get<{ data: Array<{ short_guid: string }> }>(`/projects/${match.short_guid}/agents`);
     const accountSlug = await getAccountSlug();
     console.error(dim(`→ One-off mode: targeting project "${match.slug}" (--project override).`));
-    console.error(dim(`→ Files are not synced — outputs will also be downloaded to ./ for you.`));
+    console.error(dim(`→ Files are not synced - outputs will also be downloaded to ./ for you.`));
     return {
       config: {
         projectGuid: match.short_guid,
@@ -124,11 +129,11 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
   }
   const res = await get<{ data: { projectGuid: string; projectSlug: string; projectName: string; accountSlug: string; agentGuid: string | null } }>('/projects/default');
   if (!res.data?.projectGuid) {
-    console.error('Could not resolve your Home project — please contact support.');
+    console.error('Could not resolve your Home project - please contact support.');
     process.exit(1);
   }
   console.error(dim(`→ One-off mode: no .gipity.json in cwd, using your Home project on the server.`));
-  console.error(dim(`→ Files are not synced — outputs will also be downloaded to ./ for you.`));
+  console.error(dim(`→ Files are not synced - outputs will also be downloaded to ./ for you.`));
   return {
     config: {
       projectGuid: res.data.projectGuid,

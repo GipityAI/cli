@@ -1,15 +1,15 @@
 import { Command } from 'commander';
 import { get, post, del } from '../api.js';
 import { requireConfig } from '../config.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 export const rbacCommand = new Command('rbac')
-  .description('Manage RBAC policies');
+  .description('Manage access policies');
 
 rbacCommand
   .command('list')
-  .description('List all RBAC policies')
+  .description('List policies')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
     const config = requireConfig();
@@ -26,7 +26,7 @@ rbacCommand
 
 rbacCommand
   .command('create <table>')
-  .description('Create or update an RBAC policy')
+  .description('Create or update a policy')
   .requiredOption('--role <role>', 'Role: owner, editor, or viewer')
   .requiredOption('--op <operation>', 'Operation: select, insert, update, or delete')
   .option('--condition <sql>', 'SQL WHERE fragment (use $caller_id placeholder)')
@@ -45,12 +45,12 @@ rbacCommand
     if (opts.readonlyColumns) body.readonly_columns = opts.readonlyColumns.split(',').map((s: string) => s.trim());
 
     const res = await post<{ data: any }>(`/projects/${config.projectGuid}/rbac`, body);
-    console.log(opts.json ? JSON.stringify(res.data) : 'Policy created.');
+    printResult('Policy created.', opts, res.data);
   }));
 
 rbacCommand
   .command('delete <table>')
-  .description('Delete an RBAC policy')
+  .description('Delete a policy')
   .requiredOption('--role <role>', 'Role')
   .requiredOption('--op <operation>', 'Operation')
   .action((table: string, opts) => run('Delete', async () => {
@@ -64,5 +64,5 @@ rbacCommand
       role: opts.role,
       operation: opts.op,
     });
-    console.log('Policy deleted.');
+    printResult('Policy deleted.', { json: false });
   }));

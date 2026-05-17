@@ -1,175 +1,204 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffManifest, formatDiff, type SyncChange, type LocalFileInfo } from '../sync.js';
+import { plan, formatPlan, type BaselineEntry } from '../sync.js';
 
-const remoteFiles = [
-  { path: 'src/index.html', size: 500, modified: '2024-01-01', type: 'file', guid: 'f1' },
-  { path: 'src/app.js', size: 1200, modified: '2024-01-01', type: 'file', guid: 'f2' },
-  { path: 'src/styles.css', size: 300, modified: '2024-01-01', type: 'file', guid: 'f3' },
-  { path: 'src/', size: 0, modified: '2024-01-01', type: 'directory', guid: 'd1' },
-];
+type L = { size: number; mtime: string; sha256?: string };
+type R = { path: string; size: number; sha256: string | null; serverVersion: number; modified: string };
 
-describe('diffManifest — down', () => {
-  it('detects added files (remote has, local lacks)', () => {
-    const local = new Map<string, { size: number; modified: string }>();
-    const changes = diffManifest(remoteFiles, local, 'down');
-    const added = changes.filter(c => c.type === 'added');
-    assert.equal(added.length, 3);
+function remote(path: string, sha: string | null, sv = 1, size = 100): R {
+  return { path, size, sha256: sha, serverVersion: sv, modified: '2024-01-01' };
+}
+function local(size = 100, sha?: string): L {
+  return { size, mtime: '2024-01-01', sha256: sha };
+}
+function baselineOf(sha: string, sv = 1, size = 100): BaselineEntry {
+  return { size, mtime: '2024-01-01', sha256: sha, serverVersion: sv };
+}
+
+describe('plan() - 9-cell decision table', () => {
+  it('unchanged × unchanged → noop (no action)', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map([['foo', remote('foo', 'h1', 5)]]),
+      { foo: baselineOf('h1', 5) },
+    );
+    assert.equal(p.actions.length, 0);
   });
 
-  it('detects modified files (size mismatch)', () => {
-    const local = new Map([
-      ['src/index.html', { size: 999, modified: '2024-01-01' }],
-      ['src/app.js', { size: 1200, modified: '2024-01-01' }],
-      ['src/styles.css', { size: 300, modified: '2024-01-01' }],
-    ]);
-    const changes = diffManifest(remoteFiles, local, 'down');
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].type, 'modified');
-    assert.equal(changes[0].path, 'src/index.html');
+  it('unchanged × modified → download', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map([['foo', remote('foo', 'h2', 6)]]),
+      { foo: baselineOf('h1', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
   });
 
-  it('detects deleted files (local has, remote lacks)', () => {
-    const local = new Map([
-      ['src/index.html', { size: 500, modified: '2024-01-01' }],
-      ['src/app.js', { size: 1200, modified: '2024-01-01' }],
-      ['src/styles.css', { size: 300, modified: '2024-01-01' }],
-      ['src/old.js', { size: 100, modified: '2024-01-01' }],
-    ]);
-    const changes = diffManifest(remoteFiles, local, 'down');
-    const deleted = changes.filter(c => c.type === 'deleted');
-    assert.equal(deleted.length, 1);
-    assert.equal(deleted[0].path, 'src/old.js');
+  it('unchanged × deleted → delete-local', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map(),
+      { foo: baselineOf('h1', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'delete-local');
   });
 
-  it('returns empty when in sync', () => {
-    const local = new Map([
-      ['src/index.html', { size: 500, modified: '2024-01-01' }],
-      ['src/app.js', { size: 1200, modified: '2024-01-01' }],
-      ['src/styles.css', { size: 300, modified: '2024-01-01' }],
-    ]);
-    const changes = diffManifest(remoteFiles, local, 'down');
-    assert.equal(changes.length, 0);
+  it('modified × unchanged → upload with CAS=baseline.serverVersion', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-local-new')]]),
+      new Map([['foo', remote('foo', 'h1', 5)]]),
+      { foo: baselineOf('h1', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'upload');
+    assert.equal(p.actions[0].expectedServerVersion, 5);
   });
 
-  it('detects same-size-different-content via hash (the bug)', () => {
-    // Remote and local both report size=500, but content hashes differ.
-    // Size-only diff used to silently skip this; now it's caught.
-    const remote = [
-      { path: 'src/index.html', size: 500, modified: '2024-01-01', type: 'file', guid: 'f1', contentHash: 'aaa' },
-    ];
-    const local = new Map<string, LocalFileInfo>([
-      ['src/index.html', { size: 500, modified: '2024-01-02', sha256: 'bbb' }],
-    ]);
-    // No baseline → no way to decide which side changed → conflict.
-    const changes = diffManifest(remote, local, 'down');
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].type, 'conflict');
+  it('modified × modified (shas differ) → conflict', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-local')]]),
+      new Map([['foo', remote('foo', 'h-remote', 6)]]),
+      { foo: baselineOf('h-base', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'conflict');
+    assert.ok(p.actions[0].renamedLocalTo);
+    assert.ok(p.actions[0].renamedLocalTo!.includes('conflict from'));
   });
 
-  it('pulls when local matches baseline but remote diverged', () => {
-    const remote = [
-      { path: 'src/index.html', size: 500, modified: '2024-02-01', type: 'file', guid: 'f1', contentHash: 'new-hash' },
-    ];
-    const local = new Map<string, LocalFileInfo>([
-      ['src/index.html', { size: 500, modified: '2024-01-01', sha256: 'old-hash' }],
-    ]);
-    const baseline = { 'src/index.html': { size: 500, modified: '2024-01-01', sha256: 'old-hash' } };
-    const changes = diffManifest(remote, local, 'down', baseline);
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].type, 'modified');
+  it('modified × modified (shas happen to match) → noop', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-new')]]),
+      new Map([['foo', remote('foo', 'h-new', 6)]]),
+      { foo: baselineOf('h-base', 5) },
+    );
+    assert.equal(p.actions.length, 0);
   });
 
-  it('skips (no-op) when remote matches baseline but local diverged — protects local edits', () => {
-    const remote = [
-      { path: 'src/index.html', size: 500, modified: '2024-01-01', type: 'file', guid: 'f1', contentHash: 'base-hash' },
-    ];
-    const local = new Map<string, LocalFileInfo>([
-      ['src/index.html', { size: 500, modified: '2024-01-05', sha256: 'local-edit' }],
-    ]);
-    const baseline = { 'src/index.html': { size: 500, modified: '2024-01-01', sha256: 'base-hash' } };
-    const changes = diffManifest(remote, local, 'down', baseline);
-    assert.equal(changes.length, 0);
+  it('modified × deleted → re-upload as new (expected=null)', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-local')]]),
+      new Map(),
+      { foo: baselineOf('h-base', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'upload');
+    assert.equal(p.actions[0].expectedServerVersion, null);
   });
 
-  it('flags conflict when both sides diverged from baseline', () => {
-    const remote = [
-      { path: 'src/index.html', size: 500, modified: '2024-02-01', type: 'file', guid: 'f1', contentHash: 'remote-new' },
-    ];
-    const local = new Map<string, LocalFileInfo>([
-      ['src/index.html', { size: 500, modified: '2024-02-02', sha256: 'local-new' }],
-    ]);
-    const baseline = { 'src/index.html': { size: 500, modified: '2024-01-01', sha256: 'base-hash' } };
-    const changes = diffManifest(remote, local, 'down', baseline);
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].type, 'conflict');
+  it('added × absent → upload as new (expected=null)', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map(),
+      {},
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'upload');
+    assert.equal(p.actions[0].expectedServerVersion, null);
   });
 
-  it('treats matching hash as in-sync even when size/mtime metadata differs', () => {
-    const remote = [
-      { path: 'src/index.html', size: 500, modified: '2024-02-01', type: 'file', guid: 'f1', contentHash: 'same-hash' },
-    ];
-    const local = new Map<string, LocalFileInfo>([
-      ['src/index.html', { size: 500, modified: '2024-01-01', sha256: 'same-hash' }],
-    ]);
-    const changes = diffManifest(remote, local, 'down');
-    assert.equal(changes.length, 0);
+  it('added × added (shas match) → noop', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map([['foo', remote('foo', 'h1', 1)]]),
+      {},
+    );
+    assert.equal(p.actions.length, 0);
+  });
+
+  it('added × added (shas differ) → conflict', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-local')]]),
+      new Map([['foo', remote('foo', 'h-remote', 1)]]),
+      {},
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'conflict');
+  });
+
+  it('deleted × unchanged → delete-remote with CAS=baseline.serverVersion', () => {
+    const p = plan(
+      new Map(),
+      new Map([['foo', remote('foo', 'h1', 5)]]),
+      { foo: baselineOf('h1', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'delete-remote');
+    assert.equal(p.actions[0].expectedServerVersion, 5);
+  });
+
+  it('deleted × modified → download (remote preserved)', () => {
+    const p = plan(
+      new Map(),
+      new Map([['foo', remote('foo', 'h-new', 6)]]),
+      { foo: baselineOf('h-base', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
+  });
+
+  it('deleted × deleted → noop (baseline dropped silently)', () => {
+    const p = plan(new Map(), new Map(), { foo: baselineOf('h1', 5) });
+    assert.equal(p.actions.length, 0);
+  });
+
+  it('absent × added → download (remote added since last sync)', () => {
+    const p = plan(
+      new Map(),
+      new Map([['foo', remote('foo', 'h1', 1)]]),
+      {},
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
   });
 });
 
-describe('diffManifest — up', () => {
-  it('detects locally added files', () => {
-    const local = new Map([
-      ['src/index.html', { size: 500, modified: '2024-01-01' }],
-      ['src/app.js', { size: 1200, modified: '2024-01-01' }],
-      ['src/styles.css', { size: 300, modified: '2024-01-01' }],
-      ['src/new.js', { size: 200, modified: '2024-01-01' }],
-    ]);
-    const changes = diffManifest(remoteFiles, local, 'up');
-    const added = changes.filter(c => c.type === 'added');
-    assert.equal(added.length, 1);
-    assert.equal(added[0].path, 'src/new.js');
-  });
-
-  it('detects locally deleted files', () => {
-    const local = new Map([
-      ['src/index.html', { size: 500, modified: '2024-01-01' }],
-    ]);
-    const changes = diffManifest(remoteFiles, local, 'up');
-    const deleted = changes.filter(c => c.type === 'deleted');
-    assert.equal(deleted.length, 2); // app.js and styles.css
+describe('plan() - summary counts', () => {
+  it('counts uploads, downloads, conflicts, deletes correctly', () => {
+    const p = plan(
+      new Map([
+        ['add', local(100, 'a1')],                 // → upload
+        ['mod', local(100, 'm2')],                 // → upload (CAS)
+        ['keep', local(100, 'k1')],                // unchanged
+        ['conflict', local(100, 'cL')],            // → conflict
+        ['delremote', local(100, 'd1')],           // unchanged, remote deletes → delete-local
+      ]),
+      new Map([
+        ['mod', remote('mod', 'm1', 5)],
+        ['keep', remote('keep', 'k1', 3)],
+        ['conflict', remote('conflict', 'cR', 7)],
+        ['remote-new', remote('remote-new', 'r1', 1)],  // → download
+      ]),
+      {
+        mod: baselineOf('m1', 5),
+        keep: baselineOf('k1', 3),
+        conflict: baselineOf('cBase', 6),
+        delremote: baselineOf('d1', 4),
+      },
+    );
+    assert.equal(p.uploads, 2);
+    assert.equal(p.downloads, 1);
+    assert.equal(p.deletesLocal, 1);
+    assert.equal(p.conflicts, 1);
   });
 });
 
-describe('formatDiff', () => {
-  it('returns no changes message when empty', () => {
-    assert.equal(formatDiff([], 'down'), 'No changes detected.');
+describe('formatPlan', () => {
+  it('returns "Up to date." for empty plan', () => {
+    const p = plan(new Map(), new Map(), {});
+    assert.equal(formatPlan(p), 'Up to date.');
   });
 
-  it('shows recent pull info when no changes and lastPull provided', () => {
-    const lastPull = { timestamp: new Date().toISOString(), count: 2, summary: '2 changes:' };
-    const result = formatDiff([], 'down', lastPull);
-    assert.ok(result.startsWith('Already up to date.'));
-    assert.ok(result.includes('2 files pulled'));
-  });
-
-  it('shows singular file in recent pull message', () => {
-    const lastPull = { timestamp: new Date().toISOString(), count: 1, summary: '1 change:' };
-    const result = formatDiff([], 'down', lastPull);
-    assert.ok(result.includes('1 file pulled'));
-    assert.ok(!result.includes('1 files'));
-  });
-
-  it('formats changes with counts', () => {
-    const changes: SyncChange[] = [
-      { type: 'added', path: 'src/new.js', remoteSize: 100 },
-      { type: 'modified', path: 'src/app.js', localSize: 1000, remoteSize: 1200 },
-      { type: 'deleted', path: 'src/old.js', localSize: 50 },
-    ];
-    const output = formatDiff(changes, 'down');
-    assert.ok(output.includes('3 changes'));
-    assert.ok(output.includes('+ src/new.js'));
-    assert.ok(output.includes('~ src/app.js'));
-    assert.ok(output.includes('- src/old.js'));
+  it('includes action counts in the summary line', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map(),
+      {},
+    );
+    const out = formatPlan(p);
+    assert.ok(out.includes('1 upload'));
+    assert.ok(out.includes('↑ foo'));
   });
 });

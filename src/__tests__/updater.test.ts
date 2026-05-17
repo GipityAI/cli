@@ -58,7 +58,7 @@ describe('state + settings (with isolated HOME)', () => {
 
   it('readState returns defaults when no file exists', async () => {
     const mod = await import(`../updater/state.js?cachebust=${Date.now()}`);
-    // GIPITY_DIR may be cached to original HOME — force-create the path the
+    // GIPITY_DIR may be cached to original HOME - force-create the path the
     // module is actually using, then assert defaults shape.
     const s = mod.readState();
     assert.equal(typeof s.lastCheckAt, 'number');

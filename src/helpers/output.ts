@@ -1,5 +1,5 @@
 /**
- * output.ts — Shared output formatting helpers.
+ * output.ts - Shared output formatting helpers.
  * Eliminates duplicated JSON/list/empty-state patterns.
  */
 
@@ -15,6 +15,17 @@ export function printOutput(data: unknown, opts: { json?: boolean }, formatter: 
   }
 }
 
+/** Print a one-line success message wrapped in blank lines (text mode only). */
+export function printResult(text: string, opts: { json?: boolean }, jsonData?: unknown): void {
+  if (opts.json) {
+    console.log(JSON.stringify(jsonData ?? { success: true }));
+    return;
+  }
+  console.log('');
+  console.log(text);
+  console.log('');
+}
+
 /**
  * Print a list with JSON mode, empty state, and per-item formatting.
  * Replaces the most common output pattern across all commands.
@@ -27,11 +38,15 @@ export function printList<T>(
 ): void {
   if (opts.json) {
     console.log(JSON.stringify(data));
-  } else if (data.length === 0) {
+    return;
+  }
+  console.log('');
+  if (data.length === 0) {
     console.log(emptyMsg);
   } else {
     for (const item of data) {
       console.log(formatter(item));
     }
   }
+  console.log('');
 }

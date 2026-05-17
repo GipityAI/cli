@@ -31,7 +31,7 @@ function rel(t: number): string {
 }
 
 export const doctorCommand = new Command('doctor')
-  .description('Show install health and auto-update status')
+  .description('Check install health')
   .action(() => {
     const state = readState();
     const settings = readSettings();
@@ -40,7 +40,7 @@ export const doctorCommand = new Command('doctor')
     const localOk = existsSync(LOCAL_ENTRY);
 
     console.log('');
-    console.log(bold('Gipity CLI — doctor'));
+    console.log(bold('Gipity CLI - doctor'));
     console.log('');
     console.log(`  ${muted('shim version    ')} ${shimVersion()}`);
     console.log(`  ${muted('local version   ')} ${local ?? dim('not installed')}  ${localOk ? success('✓') : warning('(running from shim fallback)')}`);

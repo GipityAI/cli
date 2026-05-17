@@ -1,5 +1,5 @@
 /**
- * Gipity relay daemon — the `gipity-relay` long-running helper that backs
+ * Gipity relay daemon - the `gipity-relay` long-running helper that backs
  * `gipity relay run`. Runs two concurrent loops against the paired Gipity
  * account using the device's bearer token:
  *
@@ -11,7 +11,7 @@
  *
  * The conversation stream (prompts, tool calls, assistant output) flows
  * back to the web CLI *automatically* via the capture hooks installed in
- * `.claude/settings.json` — the daemon itself doesn't forward content.
+ * `.claude/settings.json` - the daemon itself doesn't forward content.
  *
  * Graceful exit:
  *   - SIGINT / SIGTERM → stop both loops, wait for in-flight child, exit 0.
@@ -28,8 +28,8 @@ import { homedir, hostname, platform as osPlatform } from 'os';
 import { join } from 'path';
 import { getApiBaseOverride, getConfig } from '../config.js';
 import { getProjectsRoot } from './paths.js';
-import { setupClaudeHooks, setupClaudeMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
-import { syncDown } from '../sync.js';
+import { setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
+import { sync } from '../sync.js';
 import { getAuth } from '../auth.js';
 import { post } from '../api.js';
 import * as state from './state.js';
@@ -39,8 +39,13 @@ import {
   parseEvent,
   mapEventToEntries,
 } from './stream-json.js';
+import { deviceFetch, bridgeAbort as bridgeAbortImpl } from './device-http.js';
 
-// Log path — `gipity relay log` tails this file.
+// Re-exported so the existing `relay-bridge-abort.test.ts` keeps working.
+// New callers should import from device-http.js directly.
+export const bridgeAbort = bridgeAbortImpl;
+
+// Log path - `gipity relay log` tails this file.
 export const RELAY_LOG_PATH = join(homedir(), '.gipity', 'relay.log');
 
 // ─── Tunables ──────────────────────────────────────────────────────────
@@ -54,17 +59,10 @@ const BACKOFF_MAX_MS          = parseInt(process.env.GIPITY_RELAY_BACKOFF_MAX_MS
 const CANCEL_POLL_INTERVAL_MS = parseInt(process.env.GIPITY_RELAY_CANCEL_POLL_MS || '3000', 10);
 const MAX_CONCURRENT_DISPATCHES = Math.max(1, parseInt(process.env.GIPITY_RELAY_MAX_CONCURRENT || '6', 10));
 
-// ─── HTTP helpers (device-auth) ────────────────────────────────────────
-
-function apiBase(): string {
-  return getApiBaseOverride() || getConfig()?.apiBase || 'https://a.gipity.ai';
-}
-
-function deviceToken(): string {
-  const d = state.getDevice();
-  if (!d) throw new Error('No device registered. Run: gipity login');
-  return d.token;
-}
+// ─── HTTP helpers ──────────────────────────────────────────────────────
+// Device-auth fetch lives in ./device-http.ts - shared with the capture
+// hook runner so both POST to /remote-sessions/:convGuid/ingest with the
+// same Authorization header.
 
 /** Normalize Node's `os.platform()` to the server-accepted set. */
 function mapPlatform(p: string): 'darwin' | 'linux' | 'win32' {
@@ -92,50 +90,6 @@ async function registerDevice(): Promise<state.RelayDevice> {
   return device;
 }
 
-/** Forward an outer signal's abort into an inner controller exactly once,
- *  and return a disposer that always detaches the listener. Prevents the
- *  listener leak that would otherwise accumulate on the long-lived shutdown
- *  signal across every deviceFetch() call. */
-export function bridgeAbort(outer: AbortSignal, inner: AbortController): () => void {
-  if (outer.aborted) {
-    inner.abort(outer.reason);
-    return () => {};
-  }
-  const onAbort = () => inner.abort(outer.reason);
-  outer.addEventListener('abort', onAbort, { once: true });
-  return () => outer.removeEventListener('abort', onAbort);
-}
-
-async function deviceFetch(
-  method: string,
-  path: string,
-  body?: unknown,
-  timeoutMs?: number,
-  signal?: AbortSignal,
-): Promise<Response> {
-  const controller = timeoutMs ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort('timeout'), timeoutMs) : null;
-
-  // Only bridge when both exist. If there is no timeout controller we pass
-  // `signal` straight to fetch() below, so no listener is needed.
-  const detach = (signal && controller) ? bridgeAbort(signal, controller) : null;
-
-  try {
-    return await fetch(`${apiBase()}${path}`, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${deviceToken()}`,
-        'Content-Type': 'application/json',
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: controller?.signal ?? signal,
-    });
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (detach) detach();
-  }
-}
-
 // ─── Logging ───────────────────────────────────────────────────────────
 // `gipity-relay` runs detached under launchd/systemd/Task Scheduler. stderr
 // is the natural place for structured log lines; systems capture it.
@@ -145,7 +99,7 @@ async function deviceFetch(
 let verboseMode = process.env.GIPITY_RELAY_VERBOSE === '1';
 function setVerbose(on: boolean): void { verboseMode = verboseMode || on; }
 
-// ANSI helpers — only colorize when stderr is a TTY.
+// ANSI helpers - only colorize when stderr is a TTY.
 const TTY = !!(process.stderr as any).isTTY;
 const C = {
   dim:   (s: string) => TTY ? `\x1b[2m${s}\x1b[0m` : s,
@@ -191,11 +145,11 @@ function formatExtra(extra?: Record<string, unknown>): string {
  *  write. The log contains dispatch payloads (message previews, session
  *  ids) which must not be readable by other users on a shared machine.
  *  Dir: 0700, file: 0600. No-op on Windows (chmod is a permission hint
- *  only). Runs once per daemon process — `permsLocked` skips rework. */
+ *  only). Runs once per daemon process - `permsLocked` skips rework. */
 let permsLocked = false;
 function lockLogPerms(dir: string, file: string): void {
   if (permsLocked) return;
-  try { chmodSync(dir, 0o700); } catch { /* ignore — best-effort */ }
+  try { chmodSync(dir, 0o700); } catch { /* ignore - best-effort */ }
   // Ensure file exists before chmod; open+close creates it if missing.
   if (!existsSync(file)) {
     try { closeSync(openSync(file, 'a')); } catch { /* ignore */ }
@@ -244,7 +198,7 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
   if (opts.verbose) setVerbose(true);
   let device = state.getDevice();
   if (!device) {
-    // No local device record — try to register transparently using the
+    // No local device record - try to register transparently using the
     // current user's login. This is the same flow the interactive
     // `gipity claude` onboarding uses; running the daemon directly just
     // skips the prompts.
@@ -280,12 +234,12 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
 
   if (opts.maxRunMs) setTimeout(() => shutdown('maxRunMs'), opts.maxRunMs).unref();
 
-  // Take the PID lock. If another daemon already holds it, exit clean —
+  // Take the PID lock. If another daemon already holds it, exit clean -
   // the caller (usually `gipity claude`'s auto-start) is racing us.
   try {
     state.writeDaemonPid(process.pid);
   } catch (err: any) {
-    log('info', 'another daemon is already running — exiting', { err: err?.message });
+    log('info', 'another daemon is already running - exiting', { err: err?.message });
     if (opts.verbose) {
       process.stderr.write(
         'Another relay daemon is already running (likely the autostarted one).\n' +
@@ -324,7 +278,7 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
     try {
       const r = await deviceFetch('POST', '/remote-devices/heartbeat', {}, 10_000, ctx.abort.signal);
       if (r.status === 401) {
-        log('warn', 'heartbeat 401 — device revoked, exiting clean');
+        log('warn', 'heartbeat 401 - device revoked, exiting clean');
         ctx.abort.abort('revoked');
         return 0;
       }
@@ -345,7 +299,7 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
 // ─── Cancellation loop ────────────────────────────────────────────────
 // Polls the server every few seconds for any dispatch this device is
 // running that the user has asked to cancel. On match: SIGTERM the
-// matching child — handleDispatch will then ack the dispatch as
+// matching child - handleDispatch will then ack the dispatch as
 // `cancelled` and post a "Claude Code cancelled (…)" marker.
 
 async function cancellationLoop(ctx: Ctx): Promise<number> {
@@ -359,7 +313,7 @@ async function cancellationLoop(ctx: Ctx): Promise<number> {
     try {
       const r = await deviceFetch('GET', '/remote-devices/cancellations', undefined, 10_000, ctx.abort.signal);
       if (r.status === 401) {
-        log('warn', 'cancellations 401 — device revoked, exiting clean');
+        log('warn', 'cancellations 401 - device revoked, exiting clean');
         ctx.abort.abort('revoked');
         return 0;
       }
@@ -390,16 +344,19 @@ interface ClaimedDispatch {
   project_guid: string;
   project_slug: string;
   account_slug: string;
-  /** Server-assigned conv guid. We pass it as GIPITY_CONVERSATION_GUID
-   *  to the spawned `gipity claude` so every capture hook tags events
-   *  with it — no placeholder adoption needed. */
+  /** Server-assigned conv guid. Passed as GIPITY_CONVERSATION_GUID to
+   *  the spawned `gipity claude` wrapper so it skips its "create a new
+   *  conv" path. The wrapper does NOT propagate this var to the Claude
+   *  child when `--output-format stream-json` is active (i.e. for relay
+   *  dispatches) - the daemon captures via stdout, and hook capture
+   *  would double-post every event. See claude.ts childEnv gate. */
   conversation_guid: string;
   agent_guid: string | null;
 }
 
 async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
   // In-flight dispatch handlers. Up to MAX_CONCURRENT_DISPATCHES can
-  // run at once — each a separate `claude` child in its own cwd/session,
+  // run at once - each a separate `claude` child in its own cwd/session,
   // so their contexts don't bleed. The cap prevents a user with many
   // open chats from DoS'ing their own laptop.
   const inflight = new Set<Promise<void>>();
@@ -432,7 +389,7 @@ async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
     try {
       const r = await deviceFetch('GET', '/remote-devices/next', undefined, LONG_POLL_TIMEOUT_MS, ctx.abort.signal);
       if (r.status === 401) {
-        log('warn', 'next 401 — device revoked, exiting clean');
+        log('warn', 'next 401 - device revoked, exiting clean');
         ctx.abort.abort('revoked');
         break;
       }
@@ -478,7 +435,7 @@ async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
 
 /** Post a batch of ingest entries with the daemon's device bearer. Returns
  *  whether the server accepted them (2xx). Non-2xx and network errors are
- *  logged but never thrown — the dispatch loop should continue on a missed
+ *  logged but never thrown - the dispatch loop should continue on a missed
  *  post, and the caller decides whether to advance offsets based on `ok`. */
 async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ ok: boolean }> {
   if (!entries.length) return { ok: true };
@@ -498,7 +455,29 @@ async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ o
   }
 }
 
-/** 123 B / 4.2 KB / 1.3 MB — short + readable for the "Invoking…" badge. */
+/** Fire-and-forget dispatch progress heartbeat. Broadcast-only on the
+ *  server (no DB write); a dropped tick just means the web CLI misses one
+ *  liveness update and falls back to its own idle detector, so we don't
+ *  retry and don't surface non-2xx as an error. */
+async function postProgress(
+  convGuid: string,
+  payload: {
+    dispatch_guid: string;
+    proc_alive: boolean;
+    stdout_bytes_total: number;
+    stdout_bytes_delta: number;
+    stdout_idle_ms: number;
+    uptime_ms: number;
+  },
+): Promise<void> {
+  try {
+    await deviceFetch('POST', `/remote-sessions/${encodeURIComponent(convGuid)}/progress`, payload, 5_000);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** 123 B / 4.2 KB / 1.3 MB - short + readable for the "Invoking…" badge. */
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -532,7 +511,7 @@ function collectStrings(node: unknown, emit: (s: string) => void, underTextKey =
 }
 
 /** Read a Claude Code session transcript and return its size in bytes plus a
- *  human-content word count. Returns null if the file is missing or unreadable —
+ *  human-content word count. Returns null if the file is missing or unreadable -
  *  caller should render "transcript unavailable" rather than blocking the dispatch. */
 async function measureTranscript(transcriptPath: string): Promise<{ bytes: number; words: number } | null> {
   try {
@@ -547,7 +526,7 @@ async function measureTranscript(transcriptPath: string): Promise<{ bytes: numbe
           const parts = s.trim().split(/\s+/).filter(Boolean);
           wordCount += parts.length;
         });
-      } catch { /* malformed line — skip */ }
+      } catch { /* malformed line - skip */ }
     }
     return { bytes: size, words: wordCount };
   } catch {
@@ -557,9 +536,9 @@ async function measureTranscript(transcriptPath: string): Promise<{ bytes: numbe
 
 /** Claude Code's own session_id is expected to be an opaque alphanumeric
  *  token (their docs: UUIDs). We never trust an untyped value to become a
- *  filesystem path segment — a `../../etc/passwd` could otherwise escape
+ *  filesystem path segment - a `../../etc/passwd` could otherwise escape
  *  the projects dir. Accept only safe characters; anything else is
- *  treated as "no transcript available" (cosmetic only — stream-json is
+ *  treated as "no transcript available" (cosmetic only - stream-json is
  *  the real capture channel). */
 function isSafeSessionId(s: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(s);
@@ -591,7 +570,7 @@ async function ack(shortGuid: string, status: 'done' | 'error' | 'cancelled', er
       status, error: error ?? null,
     }, 10_000);
     if (!res.ok) {
-      // fetch() doesn't throw on 4xx/5xx — surface it ourselves so a
+      // fetch() doesn't throw on 4xx/5xx - surface it ourselves so a
       // broken server route doesn't silently leave dispatches stuck in
       // `delivering` (and therefore no `dispatch:ack` broadcast).
       const body = await res.text().catch(() => '');
@@ -616,7 +595,7 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   });
 
   if (state.isPaused()) {
-    log('info', 'paused — nacking dispatch', { id: d.short_guid });
+    log('info', 'paused - nacking dispatch', { id: d.short_guid });
     await ack(d.short_guid, 'error', 'Daemon is paused on this device');
     return;
   }
@@ -630,7 +609,7 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // running, SIGTERM it and wait for it to fully unwind (post its
   // "Claude Code cancelled (…)" marker + ack). The new spawn below will
   // then --resume the same session, loading whatever made it to disk.
-  // Two children on one session would corrupt the .jsonl — this is the
+  // Two children on one session would corrupt the .jsonl - this is the
   // serialization point that prevents that.
   await killRunningForConv(d.conversation_guid);
 
@@ -644,11 +623,11 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
     return;
   }
 
-  // Build argv for `gipity claude -p …` (or with --resume). No shell — argv
+  // Build argv for `gipity claude -p …` (or with --resume). No shell - argv
   // as array so the message string can't be interpreted as shell syntax.
   //
   // `--permission-mode bypassPermissions`: a relay dispatch has no
-  // human on the other end to click "Approve" — Claude prompting would
+  // human on the other end to click "Approve" - Claude prompting would
   // just stall the session. The user authorized this flow by pairing
   // the device and dispatching the message; skipping the interactive
   // prompt is correct (same authority as running `claude -p` in a local
@@ -689,7 +668,7 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
         });
       }
     } else {
-      log('warn', 'resume session_id failed safety check — skipping transcript measure', {
+      log('warn', 'resume session_id failed safety check - skipping transcript measure', {
         id: d.short_guid,
         session_id: d.remote_session_id,
       });
@@ -735,18 +714,18 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
 
   // Push any local files Claude wrote/touched during this dispatch
   // back to VFS. The PostToolUse hook only covers Claude's native
-  // Write/Edit tools — Bash-invoked writers (`gipity generate image`,
+  // Write/Edit tools - Bash-invoked writers (`gipity generate image`,
   // `cwebp`, any script that drops a file) stay local without this.
   // Runs before the ack so the web CLI's post-ack refresh sees new
   // files. Skip on spawn errors (no child ran, nothing changed).
   // Future cleanup: see docs/feature-backlog/future-generate-to-vfs.md
-  // — server-side /generate/* should write directly to VFS and make
-  // this syncUp redundant for that case.
+  // - server-side /generate/* should write directly to VFS and make
+  // this sync redundant for that case.
   if (!spawnErr) {
     try {
-      await spawnSyncUp(cwd);
+      await spawnSync(cwd);
     } catch (err: any) {
-      log('warn', 'syncUp after dispatch failed', { id: d.short_guid, err: err?.message });
+      log('warn', 'sync after dispatch failed', { id: d.short_guid, err: err?.message });
     }
   }
   const tail = killed
@@ -775,7 +754,7 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
 /**
  * Auto-resolve the cwd for a dispatched project. If `~/GipityProjects/<slug>/`
  * exists with a matching .gipity.json, use it. Otherwise create the dir,
- * write the config, install capture hooks, and pull project files — so the
+ * write the config, install capture hooks, and pull project files - so the
  * user never has to pre-register a project. This replaces the old
  * per-project allowlist.
  */
@@ -795,7 +774,7 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<string> {
     try {
       const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
       if (cfg.projectGuid === d.project_guid) return path;
-      log('warn', 'project dir exists but guid mismatch — using it anyway', {
+      log('warn', 'project dir exists but guid mismatch - using it anyway', {
         path, expected: d.project_guid, found: cfg.projectGuid,
       });
       return path;
@@ -816,17 +795,18 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<string> {
   }, null, 2) + '\n');
 
   // Set up capture hooks + CLAUDE.md + .gitignore in the new dir. These
-  // helpers take cwd implicitly — run from the target path.
+  // helpers take cwd implicitly - run from the target path.
   const origCwd = process.cwd();
   try {
     process.chdir(path);
     setupClaudeHooks();
     setupClaudeMd();
+    setupAgentsMd();
     setupGitignore();
     try {
-      await syncDown({ confirmDeletions: false });
+      await sync({ interactive: false });
     } catch (err: any) {
-      log('warn', 'initial sync-down failed; project dir created but empty', { err: err?.message });
+      log('warn', 'initial sync failed; project dir created but empty', { err: err?.message });
     }
   } finally {
     process.chdir(origCwd);
@@ -840,8 +820,8 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<string> {
  *  path SIGTERMs entries matching an incoming dispatch's conv_guid.
  *
  *  `exited` resolves when the child's `exit` event fires (not when
- *  `killDispatch` is called). Callers that need to wait for cleanup —
- *  e.g. `killRunningForConv` before spawning a replacement — await it
+ *  `killDispatch` is called). Callers that need to wait for cleanup -
+ *  e.g. `killRunningForConv` before spawning a replacement - await it
  *  so the outgoing child has a chance to post its cancelled marker and
  *  ack before the new one starts. */
 interface RunningEntry {
@@ -869,7 +849,7 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
   if (matches.length === 0) return;
   for (const e of matches) {
     log('info', 'interrupting previous dispatch for conv', { conv: convGuid });
-    try { e.child.kill('SIGTERM'); } catch { /* ignore — already exited */ }
+    try { e.child.kill('SIGTERM'); } catch { /* ignore - already exited */ }
   }
   await Promise.all(matches.map(e => e.exited));
 }
@@ -877,20 +857,20 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
 /** Spawn `gipity claude …` in `cwd` with `--output-format stream-json
  *  --verbose` so every event (assistant messages, tool_use blocks,
  *  tool_result blocks, result summary) lands on stdout as NDJSON. Each
- *  line is parsed and POSTed to `/ingest` — no hooks, no transcript
+ *  line is parsed and POSTed to `/ingest` - no hooks, no transcript
  *  file reads.
  *
  *  Returns `{ exitCode, killed }` where `killed` is true if we SIGTERMed
  *  the child (cancellation). Injectable via GIPITY_RELAY_CLAUDE_CMD env
  *  for tests. */
-/** Spawn `gipity sync up` in the project dir to push any local writes
- *  back to VFS. Runs as a child so we inherit `syncUp`'s cwd-walk for
- *  config resolution (the daemon itself doesn't chdir into projects).
- *  Non-blocking on failure — caller catches and logs. */
-async function spawnSyncUp(cwd: string): Promise<void> {
+/** Spawn `gipity sync` in the project dir to reconcile any local writes
+ *  back to VFS. Runs as a child so we inherit sync's cwd-walk for config
+ *  resolution (the daemon itself doesn't chdir into projects).
+ *  Non-blocking on failure - caller catches and logs. */
+async function spawnSync(cwd: string): Promise<void> {
   const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || 'gipity';
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, ['sync', 'up', '--json'], {
+    const child = spawn(cmd, ['sync', '--json'], {
       cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -903,10 +883,10 @@ async function spawnSyncUp(cwd: string): Promise<void> {
     child.on('error', (err) => reject(err));
     child.on('exit', (code) => {
       if (code === 0) {
-        log('info', 'syncUp after dispatch', { cwd, stdoutLen });
+        log('info', 'sync after dispatch', { cwd, stdoutLen });
         resolve();
       } else {
-        reject(new Error(`gipity sync up exited ${code}${stderrBuf ? `: ${stderrBuf.trim().slice(0, 300)}` : ''}`));
+        reject(new Error(`gipity sync exited ${code}${stderrBuf ? `: ${stderrBuf.trim().slice(0, 300)}` : ''}`));
       }
     });
   });
@@ -940,8 +920,31 @@ export async function spawnGipityClaude(
     // move on to its tail marker while the last batch is still in flight.
     const pendingPosts = new Set<Promise<void>>();
 
+    // Progress heartbeat state. Measured at the daemon boundary - this is
+    // what we actually observe, not anything the child self-reports. These
+    // fields are fully generic (no Claude Code-specific shape) so the same
+    // payload works for a future codex/aider/etc. runner.
+    const dispatchStartedAt = Date.now();
+    let stdoutBytesTotal = 0;
+    let lastStdoutByteAt = dispatchStartedAt;
+    let stdoutBytesAtLastTick = 0;
+
+    const progressTimer = setInterval(() => {
+      const now = Date.now();
+      const delta = stdoutBytesTotal - stdoutBytesAtLastTick;
+      stdoutBytesAtLastTick = stdoutBytesTotal;
+      void postProgress(d.conversation_guid, {
+        dispatch_guid: d.short_guid,
+        proc_alive: child.exitCode === null,
+        stdout_bytes_total: stdoutBytesTotal,
+        stdout_bytes_delta: delta,
+        stdout_idle_ms: Math.max(0, now - lastStdoutByteAt),
+        uptime_ms: Math.max(0, now - dispatchStartedAt),
+      });
+    }, 2000);
+
     // Stdout: NDJSON stream → parse → POST each event's ingest entries
-    // as they arrive. That's the live-streaming path — every assistant
+    // as they arrive. That's the live-streaming path - every assistant
     // message and tool call appears in the web CLI within a second of
     // Claude emitting it.
     const splitter = createLineSplitter((line) => {
@@ -959,7 +962,11 @@ export async function spawnGipityClaude(
         .finally(() => { pendingPosts.delete(p); });
       pendingPosts.add(p);
     });
-    child.stdout?.on('data', (chunk) => splitter.push(chunk));
+    child.stdout?.on('data', (chunk) => {
+      stdoutBytesTotal += chunk.length;
+      lastStdoutByteAt = Date.now();
+      splitter.push(chunk);
+    });
     child.stdout?.on('end', () => splitter.flush());
 
     // Stderr: human-readable only (Claude's progress bars, errors).
@@ -972,6 +979,7 @@ export async function spawnGipityClaude(
 
     let killed = false;
     const cleanup = () => {
+      clearInterval(progressTimer);
       running.delete(d.short_guid);
       errRl?.close();
       resolveExited();

@@ -11,7 +11,7 @@ export function isBootstrapped(): boolean {
  * Install gipity@<version> into ~/.gipity/local/. Synchronous: blocks the
  * user's first run with a one-line status. Returns true on success.
  *
- * `quiet` suppresses the status and fallback-reason lines — used for
+ * `quiet` suppresses the status and fallback-reason lines - used for
  * subcommands where chatty startup output clutters tool transcripts (e.g.
  * `gipity scaffold`, `gipity skills`). Loud output is reserved for bare
  * `gipity`, `gipity claude`, and `gipity --version`.
@@ -36,7 +36,7 @@ export function bootstrap(version: string, quiet = false): boolean {
       const stderr = (res.stderr || '').toString();
       const notPublished = /E404|No matching version|notarget/i.test(stderr);
       if (notPublished) {
-        process.stderr.write(`gipity v${version} is not yet published to npm — using the currently installed build.\n`);
+        process.stderr.write(`gipity v${version} is not yet published to npm - using the currently installed build.\n`);
       } else {
         const firstLine = stderr.split('\n').map(l => l.trim()).find(l => l.length > 0) || `npm exit ${res.status}`;
         const reason = firstLine.length > 160 ? firstLine.slice(0, 157) + '...' : firstLine;
