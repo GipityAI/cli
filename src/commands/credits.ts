@@ -4,8 +4,9 @@ import { brand, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
 interface BalanceData {
-  totalCredits: number;
-  balances: Array<{ source: string; credits: number; expiresAt: string }>;
+  available: number;
+  bySource: { subscription: number; purchase: number; bonus: number };
+  balances: Array<{ source: string; creditsRemaining: number; expiresAt: string }>;
 }
 
 interface UsageEntry {
@@ -24,11 +25,11 @@ export const creditsCommand = new Command('credits')
     if (opts.json) {
       console.log(JSON.stringify(res.data));
     } else {
-      console.log(`Credits: ${brand(res.data.totalCredits.toLocaleString())}`);
+      console.log(`Credits: ${brand(res.data.available.toLocaleString())}`);
       if (res.data.balances.length > 0) {
         for (const b of res.data.balances) {
           const exp = new Date(b.expiresAt).toLocaleDateString();
-          console.log(`  ${b.source}: ${b.credits.toLocaleString()}  ${muted(`expires ${exp}`)}`);
+          console.log(`  ${b.source}: ${b.creditsRemaining.toLocaleString()}  ${muted(`expires ${exp}`)}`);
         }
       }
     }

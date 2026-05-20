@@ -44,3 +44,7 @@ cli-unlink:
     @echo "  OS autostart service, or clear ~/.gipity/. For a true reset, run:"
     @echo "    gipity uninstall"
     @echo "  …BEFORE unlinking."
+    @echo ""
+    @echo "The binary is gone, but THIS shell still caches its old path. Run:"
+    @echo "    hash -r"
+    @echo "…in this shell, or open a new one."

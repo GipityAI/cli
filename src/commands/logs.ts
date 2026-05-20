@@ -10,7 +10,7 @@ interface FnLog {
   duration_ms: number | null;
   trigger_type: string;
   limits_consumed: Record<string, number> | null;
-  error: string | null;
+  error_message: string | null;
   created_at: string;
 }
 
@@ -46,7 +46,7 @@ logsCommand
       const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : warning;
       const status = statusColor(log.status.padEnd(8));
       const trigger = muted(log.trigger_type.padEnd(8));
-      const err = log.error ? `  ${clrError(`"${log.error}"`)}` : '';
+      const err = log.error_message ? `  ${clrError(`"${log.error_message}"`)}` : '';
       console.log(`  ${muted(time)}  ${status} ${dur} ${trigger}${err}`);
     }
   }));

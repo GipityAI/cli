@@ -21,9 +21,10 @@ import { projectCommand } from './commands/project.js';
 import { agentCommand } from './commands/agent.js';
 import { workflowCommand } from './commands/workflow.js';
 import { creditsCommand } from './commands/credits.js';
+import { planCommand } from './commands/plan.js';
 import { fileCommand } from './commands/file.js';
 import { claudeCommand } from './commands/claude.js';
-import { scaffoldCommand } from './commands/scaffold.js';
+import { addCommand } from './commands/add.js';
 import { logsCommand } from './commands/logs.js';
 import { pageInspectCommand } from './commands/page-inspect.js';
 import { pageScreenshotCommand } from './commands/page-screenshot.js';
@@ -35,6 +36,7 @@ import { emailCommand } from './commands/email.js';
 import { generateCommand } from './commands/generate.js';
 import { skillCommand } from './commands/skill.js';
 import { domainCommand } from './commands/domain.js';
+import { realtimeCommand } from './commands/realtime.js';
 import { testCommand } from './commands/test.js';
 import { locationCommand } from './commands/location.js';
 import { doctorCommand } from './commands/doctor.js';
@@ -63,14 +65,14 @@ function configureHelp(cmd: Command): void {
 const program = new Command();
 
 // ── Command groups (logical ordering within each) ──────────────────────
-const commonGroup      = [skillCommand, projectCommand, scaffoldCommand, deployCommand];
+const commonGroup      = [skillCommand, projectCommand, addCommand, deployCommand];
 const connectGroup     = [claudeCommand, relayCommand];
 const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];
-const appBuildingGroup = [testCommand, fnCommand, dbCommand, logsCommand, workflowCommand, rbacCommand, auditCommand, recordsCommand];
+const appBuildingGroup = [testCommand, fnCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
 const utilitiesGroup   = [pageInspectCommand, pageScreenshotCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand];
 const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
-const setupGroup       = [loginCommand, logoutCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
+const setupGroup       = [loginCommand, logoutCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Common',       cmds: commonGroup },

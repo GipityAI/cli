@@ -307,7 +307,7 @@ export const claudeCommand = new Command('claude')
         let reauthed = false;
         while (true) {
           try {
-            const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
+            const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
             projects = res.data;
             break;
           } catch (err: any) {

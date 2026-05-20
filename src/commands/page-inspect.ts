@@ -36,12 +36,13 @@ function shortUrl(url: string, truncate = true, maxLen = 100): string {
 export const pageInspectCommand = new Command('page-inspect')
   .description('Inspect a web page')
   .argument('<url>', 'URL to inspect')
-  .option('--wait <ms>', 'Wait before capture in ms', '3000')
+  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before capturing (lets late async/LCP work settle)', '500')
   .option('--json', 'Output as JSON')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
   .option('--all', 'Include render-blocking, large resources, oversized images, and LCP detail')
   .action((url: string, opts) => run('Page inspect', async () => {
-    const waitMs = parseInt(opts.wait, 10) || 3000;
+    const parsedWait = parseInt(opts.wait, 10);
+    const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
     const truncate = opts.truncate !== false;
     const showAll = opts.all === true;
 

@@ -201,7 +201,7 @@ export async function adoptCurrentDir(opts: {
   // project they previously created from this dir on another machine.
   let project: ProjectData | null = null;
   try {
-    const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
+    const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
     project = res.data.find(p => p.slug === opts.projectSlug) || null;
   } catch {
     // List failed - fall through to POST.
@@ -223,7 +223,7 @@ export async function adoptCurrentDir(opts: {
       if (err instanceof ApiError && err.statusCode === 409) {
         // Race: re-fetch and adopt the conflicting one (someone else just
         // took the slug - likely the same user from another tab).
-        const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
+        const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
         const found = res.data.find(p => p.slug === opts.projectSlug);
         if (!found) throw err;
         project = found;

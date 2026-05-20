@@ -13,7 +13,7 @@ export function isBootstrapped(): boolean {
  *
  * `quiet` suppresses the status and fallback-reason lines - used for
  * subcommands where chatty startup output clutters tool transcripts (e.g.
- * `gipity scaffold`, `gipity skills`). Loud output is reserved for bare
+ * `gipity add`, `gipity skill`). Loud output is reserved for bare
  * `gipity`, `gipity claude`, and `gipity --version`.
  */
 export function bootstrap(version: string, quiet = false): boolean {

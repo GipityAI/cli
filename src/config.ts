@@ -94,7 +94,7 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
       process.exit(1);
     }
     const target = opts.projectOverride;
-    const res = await get<{ data: Array<{ short_guid: string; slug: string; name: string }> }>('/projects?limit=200');
+    const res = await get<{ data: Array<{ short_guid: string; slug: string; name: string }> }>('/projects?limit=1000');
     const match = res.data.find(p => p.short_guid === target || p.slug === target);
     if (!match) {
       console.error(`Project not found: ${target}`);

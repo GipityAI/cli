@@ -48,7 +48,7 @@ skillCommand
     const listRes = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
     const match = listRes.data.find(s => s.name.toLowerCase() === name.toLowerCase());
     if (!match) {
-      console.error(clrError(`Skill "${name}" not found. Run: gipity skills list`));
+      console.error(clrError(`Skill "${name}" not found. Run: gipity skill list`));
       process.exit(1);
     }
 

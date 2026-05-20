@@ -55,15 +55,15 @@ export const HIDDEN_SCAFFOLD_PICKER = HIDDEN_SCAFFOLD_TYPES
 // ---------------------------------------------------------------------------
 
 export const BUILD_VS_NON_BUILD_RULE = [
-  `## When to scaffold`,
-  `If the user wants a deployable app (web, game, API): run \`gipity scaffold --type <type>\` before writing any files. Scaffolding wires up \`gipity.yaml\`, deploy config, and sync; hand-written files miss all of it.`,
-  `If it's a one-off task (analysis, media, data, research): skip scaffolding - use \`gipity sandbox run\` or work with files directly.`,
+  `## When to add a template`,
+  `If the user wants a deployable app (web, game, API): run \`gipity add <template>\` before writing any files. A template wires up \`gipity.yaml\`, deploy config, and sync; hand-written files miss all of it.`,
+  `If it's a one-off task (analysis, media, data, research): skip it - use \`gipity sandbox run\` or work with files directly.`,
   `If ambiguous: ask one short clarifying question.`,
   ``,
-  `Scaffold types:`,
+  `Templates:`,
   SCAFFOLD_TYPE_PICKER,
-  `When unsure, default to \`web-simple\`. After scaffolding, edit the generated files, then \`gipity deploy dev\`.`,
-  `Only skip scaffolding on a build request if the user explicitly says "don't scaffold".`,
+  `When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.`,
+  `Only skip this on a build request if the user explicitly says not to.`,
   ``,
   `Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):`,
   HIDDEN_SCAFFOLD_PICKER,
@@ -148,9 +148,9 @@ const EMPTY_STATE_NOTE =
 const EXISTING_STATE_NOTE = [
   `Project already has files. Before making changes:`,
   `- Read \`README.md\` / \`gipity.yaml\` if present to understand what's here.`,
-  `- Load the relevant skill with \`gipity skills read <name>\` if you need the scaffold's conventions.`,
-  `- Edit in place. Don't re-scaffold over an existing app.`,
-  `- Exception: if the existing files are user content (media, data, notes) and the user wants to build an app around them, scaffolding is allowed - \`gipity scaffold\` will refuse automatically if any file paths would collide.`,
+  `- Load the relevant skill with \`gipity skill read <name>\` if you need the template's conventions.`,
+  `- Edit in place. Don't add a template over an existing app.`,
+  `- Exception: if the existing files are user content (media, data, notes) and the user wants to build an app around them, \`gipity add <template>\` is allowed - it refuses automatically if any file paths would collide.`,
 ].join('\n');
 
 /** Compact project-context preamble - header + capabilities + state note + definition of done.
@@ -256,8 +256,8 @@ export function buildFreshWrap(contextBlock: string, userMsg: string): string {
 
 /** Plain ASCII, no apostrophes or backslashes - embedded inside a node -e shell command. */
 export const SCAFFOLD_HOOK_WARNING =
-  `[gipity] Heads up: this project has no scaffold yet. If you are building an app/game/API to deploy, ` +
-  `stop and run: gipity scaffold --type <${SCAFFOLD_TYPE_KEYS}>  (default: web-simple). ` +
+  `[gipity] Heads up: this project has no app yet. If you are building an app/game/API to deploy, ` +
+  `stop and run: gipity add <${SCAFFOLD_TYPE_KEYS}>  (default: web-simple). ` +
   `If this is a one-off task (analysis, data, PDFs, scratch work), proceed.`;
 
 // ---------------------------------------------------------------------------
@@ -270,20 +270,20 @@ Gipity is the agent-tuned platform where AI-built apps live. Real compute, stora
 
 This Claude Code session is connected to a Gipity project. Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
 
-1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers scaffold, deploy, db, fn, logs, browser, sync, memory, skills, and more. Run \`gipity --help\` for the full list. All commands support \`--json\`.
-2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skills read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
+1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, and more. Run \`gipity --help\` for the full list. All commands support \`--json\`.
+2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
 3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
 4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
 
 You are the developer. Write files in this directory - they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
 
-## When to scaffold
+## When to add a template
 
-The full scaffolding rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity scaffold --type <type>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` - do not scaffold.
+The full rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity add <template>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead. To add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
 
 ## CLI quick reference
 
-Key commands: \`gipity scaffold --type <type>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page-inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity skills read <name>\`.
+Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page-inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity skill read <name>\`.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
 ## Files and sync
@@ -292,7 +292,7 @@ Write files locally - hooks auto-push to Gipity on every save. Remote-generated 
 
 ## Skills (detailed documentation)
 
-Run \`gipity skills list\` to see all available skill docs. Run \`gipity skills read <name>\` to read one. Load the relevant skill before starting a task - they contain the correct API patterns, code examples, and common mistakes.
+Run \`gipity skill list\` to see all available skill docs. Run \`gipity skill read <name>\` to read one. Load the relevant skill before starting a task - they contain the correct API patterns, code examples, and common mistakes.
 
 App services skills (load before calling \`/services/*\` endpoints):
 - \`app-llm\` - chat completions, streaming, image input

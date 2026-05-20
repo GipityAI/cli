@@ -149,5 +149,6 @@ export const uninstallCommand = new Command('uninstall')
 
     console.log('');
     console.log(`  ${success('Uninstall complete.')} ${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the binary too.')}`);
+    console.log(`  ${dim('Then run')} ${brand('hash -r')} ${dim('(or open a new shell) so bash forgets the old binary path.')}`);
     console.log('');
   });

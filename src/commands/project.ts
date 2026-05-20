@@ -34,7 +34,7 @@ export const projectCommand = new Command('project')
 
     if (name) {
       // Switch to project
-      const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
+      const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
       const match = res.data.find(p => p.slug === name || p.name === name || p.short_guid === name);
       if (!match) {
         console.error(clrError(`Project "${name}" not found.`));
@@ -46,7 +46,7 @@ export const projectCommand = new Command('project')
     }
 
     // List projects
-    const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=100');
+    const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
     printList(res.data, opts, 'No projects.', p => {
       const active = p.short_guid === config.projectGuid ? ` ${brand('*')}` : '';
       const def = p.is_default ? ` ${muted('(default)')}` : '';
@@ -144,7 +144,7 @@ projectCommand
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Delete', async () => {
     // Resolve name to guid
-    const res = await get<{ data: ProjectData[] }>('/projects?limit=100');
+    const res = await get<{ data: ProjectData[] }>('/projects?limit=1000');
     const match = res.data.find(p => p.slug === name || p.name === name || p.short_guid === name);
     if (!match) {
       console.error(`Project "${name}" not found.`);
@@ -163,7 +163,7 @@ projectCommand
   .description('Rename a project')
   .option('--json', 'Output as JSON')
   .action((name: string, newName: string, opts) => run('Rename', async () => {
-    const res = await get<{ data: ProjectData[] }>('/projects?limit=100');
+    const res = await get<{ data: ProjectData[] }>('/projects?limit=1000');
     const match = res.data.find(p => p.slug === name || p.name === name || p.short_guid === name);
     if (!match) {
       console.error(clrError(`Project "${name}" not found.`));
