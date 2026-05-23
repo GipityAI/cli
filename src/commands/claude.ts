@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { join, dirname, resolve, basename } from 'path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -18,7 +18,7 @@ function resolveCommand(cmd: string): string {
 }
 import { getAuth, saveAuth, clearAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
-import { getConfig, saveConfig, clearConfigCache, getApiBaseOverride } from '../config.js';
+import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
@@ -189,6 +189,52 @@ async function interactiveLogin(): Promise<AuthData> {
 // selection, and also calls `ensureDaemonRunning` unconditionally before
 // launching Claude Code so a paired user doesn't have to think about it.
 
+/** Format a millisecond duration as hh:mm:ss.s (one decimal on seconds). */
+function formatElapsed(ms: number): string {
+  const totalSec = ms / 1000;
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  return `${pad2(h)}:${pad2(m)}:${s.toFixed(1).padStart(4, '0')}`;
+}
+
+/** Pre-accept Claude Code's per-directory workspace-trust dialog for a
+ *  Gipity-managed project directory. `gipity claude` only ever launches the
+ *  agent in a project the user created or explicitly chose, so the dialog is
+ *  pure friction here - and a fresh `project-NNN` dir is untrusted on every
+ *  interactive run.
+ *
+ *  Writes `projects["<dir>"].hasTrustDialogAccepted = true` into
+ *  `~/.claude.json` - the exact entry Claude records when the user clicks
+ *  "Yes". Purely additive (a path Claude hadn't seen); every other key is
+ *  preserved, and the write is atomic (temp + rename) so a crash can't
+ *  truncate the file. Best-effort: a malformed or unreadable config is left
+ *  untouched and never blocks the launch. Headless `-p` runs skip the dialog
+ *  already, so this is only needed for interactive launches. */
+export function markFolderTrusted(dir: string): void {
+  try {
+    const file = join(homedir(), '.claude.json');
+    const cfg: Record<string, any> = existsSync(file)
+      ? JSON.parse(readFileSync(file, 'utf-8'))
+      : {};
+    if (typeof cfg !== 'object' || cfg === null) return;
+    if (typeof cfg.projects !== 'object' || cfg.projects === null) cfg.projects = {};
+    const entry: Record<string, any> =
+      typeof cfg.projects[dir] === 'object' && cfg.projects[dir] !== null
+        ? cfg.projects[dir]
+        : {};
+    if (entry.hasTrustDialogAccepted === true) return; // already trusted - no write
+    entry.hasTrustDialogAccepted = true;
+    cfg.projects[dir] = entry;
+    const tmp = `${file}.gipity-tmp`;
+    writeFileSync(tmp, JSON.stringify(cfg, null, 2));
+    renameSync(tmp, file);
+  } catch {
+    // A config-file hiccup must never block launching the agent.
+  }
+}
+
 function suggestProjectName(existingSlugs: string[]): string {
   // Canonical format: `project-NNN` (3-digit, zero-padded, hyphenated).
   // Same shape the web "+ New Project" button uses, so both entry points
@@ -216,11 +262,17 @@ function suggestProjectName(existingSlugs: string[]): string {
 
 export const claudeCommand = new Command('claude')
   .description('Set up and run Claude Code')
-  .option('--no-claude', 'Set up project but skip launching Claude Code')
+  .option('--setup-only', 'Do the Gipity setup but skip launching the agent')
+  .option('--new-project', 'Create a fresh Gipity project instead of using cwd or the picker')
+  .option('--name <name>', 'Name for --new-project (default: project-NNN)')
+  .option('--project <slug>', 'Open an existing project by slug or id')
+  .option('--here', 'Use the current directory instead of ~/GipityProjects/<slug>/')
+  .option('--quiet', "Suppress Claude's live progress output (headless --new-project/--project runs)")
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (opts) => {
     try {
+      const runStart = Date.now();
       // Non-interactive passthrough: `gipity claude -p "msg"` (and --print)
       // route directly to `claude -p` after the normal setup (auth, hooks,
       // sync). Used by the upcoming `gipity relay` daemon to dispatch
@@ -230,11 +282,34 @@ export const claudeCommand = new Command('claude')
       const rawArgs = process.argv.slice(process.argv.indexOf('claude') + 1);
       const nonInteractive = rawArgs.some(a => a === '-p' || a === '--print' || a.startsWith('--print=') || a.startsWith('-p='));
 
-      // In non-interactive mode, route all banner/progress output to stderr
-      // so the child's stream-json on stdout stays clean.
+      // Headless progress emitter: routes to stderr (stdout stays clean for
+      // the child's result), drops the interactive 2-space indent, collapses
+      // blank-line runs, and emits one leading blank to frame the block.
+      const headlessOut = (() => {
+        let started = false;
+        let prevBlank = false;
+        return (text: string): void => {
+          for (const raw of String(text).split('\n')) {
+            const line = raw.replace(/^[ \t]+/, '');
+            const blank = line === '';
+            if (!started) { process.stderr.write('\n'); started = true; prevBlank = true; }
+            if (blank && prevBlank) continue;
+            process.stderr.write(`${line}\n`);
+            prevBlank = blank;
+          }
+        };
+      })();
+
+      // In non-interactive mode, all banner/progress output goes through the
+      // headless emitter (stderr) so the child's stream-json stays clean.
       if (nonInteractive) {
-        const origLog = console.log;
-        console.log = (...args: unknown[]) => { void origLog; console.error(...args); };
+        console.log = (...args: unknown[]) =>
+          headlessOut(args.map(a => (typeof a === 'string' ? a : String(a))).join(' '));
+      }
+
+      if (opts.newProject && opts.project) {
+        console.error(`  ${clrError('Use --new-project or --project, not both.')}`);
+        process.exit(1);
       }
 
       // ── Step 1: Auth ──────────────────────────────────────────────────
@@ -244,8 +319,8 @@ export const claudeCommand = new Command('claude')
         console.error(`  ${clrError('Not logged in. Run: gipity login')}`);
         process.exit(1);
       }
-      if (nonInteractive && !getConfig()) {
-        console.error(`  ${clrError('No Gipity project in cwd. Run `gipity claude` (interactive) first to set one up.')}`);
+      if (nonInteractive && !getConfig() && !opts.newProject && !opts.project) {
+        console.error(`  ${clrError('No Gipity project in cwd. Run `gipity claude` (interactive) first, or pass --new-project / --project <slug>.')}`);
         process.exit(1);
       }
 
@@ -272,10 +347,154 @@ export const claudeCommand = new Command('claude')
 
       // ── Step 2: Project ───────────────────────────────────────────────
       let initialPrompt = '';
+      let headlessNewProject = false;
 
-      // If cwd already has .gipity.json, use it (user ran from inside a project)
-      const existing = getConfig();
-      if (existing) {
+      // Single status line for the (otherwise silent) sync phases, so a long
+      // sync of a large tree no longer reads as a hang.
+      const syncProgress = (msg: string): void => {
+        if (!nonInteractive) console.log(`  ${muted(msg)}`);
+      };
+
+      let existing = getConfig();
+      let forceAdoptCwd = false;
+
+      // Ambiguity guard: a `.gipity.json` inherited from an ANCESTOR directory
+      // (cwd has none of its own) plus an empty cwd is genuinely ambiguous -
+      // it could mean "work inside the parent project" or "start a new project
+      // here". Ask, rather than silently adopting the parent. Flag-driven runs
+      // (--project / --new-project) and headless (-p) runs are unambiguous.
+      if (existing && !opts.newProject && !opts.project && !nonInteractive) {
+        const cwdHasConfig = existsSync(resolve(process.cwd(), '.gipity.json'));
+        if (!cwdHasConfig && isLikelyEmpty(process.cwd())) {
+          const ancestorRoot = dirname(getConfigPath()!);
+          console.log(`  ${bold('You are inside an existing Gipity project.')}\n`);
+          console.log(`    ${bold('1.')} Continue in ${brand(existing.projectSlug)} ${muted(`(rooted at ${formatCwdLabel(ancestorRoot)})`)}`);
+          console.log(`    ${bold('2.')} Create a new project here ${muted(`(${formatCwdLabel(process.cwd())})`)}`);
+          console.log('');
+          const choice = await pickOne('Choose', 2, 1);
+          console.log('');
+          if (choice === 2) {
+            existing = null;
+            forceAdoptCwd = true;
+            clearConfigCache();
+          }
+        }
+      }
+
+      if (opts.newProject || opts.project) {
+        // Flag-driven resolution: create or open a named project without the
+        // interactive picker. Powers single-command runs such as
+        // `gipity claude --new-project -p "..."` and `--project <slug> -p`.
+
+        // Fetch the account's projects - needed to suggest/validate a name
+        // for --new-project and to resolve the target for --project.
+        let projects: ProjectData[];
+        try {
+          const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
+          projects = res.data;
+        } catch (err: any) {
+          if (err instanceof ApiError && err.statusCode === 401) {
+            clearAuth();
+            console.error(`  ${clrError('Your session expired.')} ${muted('Run: gipity login')}`);
+          } else {
+            console.error(`  ${clrError(`Could not load projects: ${err?.message || err}`)}`);
+          }
+          process.exit(1);
+          return;
+        }
+        const existingSlugs = projects.map(p => p.slug);
+
+        let project: ProjectData;
+        let isNewProject = false;
+
+        if (opts.newProject) {
+          const explicit = Boolean(opts.name);
+          const presetName = explicit ? String(opts.name).trim() : suggestProjectName(existingSlugs);
+          project = await createNewProject(existingSlugs, { name: presetName, explicit });
+          isNewProject = true;
+        } else {
+          const target = String(opts.project);
+          const found = projects.find(p => p.slug === target || p.short_guid === target);
+          if (!found) {
+            console.error(`  ${clrError(`No project matching "${target}".`)} ${muted('List projects with: gipity project')}`);
+            process.exit(1);
+            return;
+          }
+          project = found;
+        }
+
+        // Materialize the project directory, chdir in, write config, sync.
+        // Default: ~/GipityProjects/<slug>/. With --here: the current dir.
+        // For --project this pulls the server's files into that dir.
+        const projectDir = opts.here ? process.cwd() : join(getProjectsRoot(), project.slug);
+        mkdirSync(projectDir, { recursive: true });
+        process.chdir(projectDir);
+        clearConfigCache();
+
+        let agentGuid = '';
+        try {
+          const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
+          if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
+        } catch { /* no agents */ }
+
+        const accountSlug = await getAccountSlug();
+        saveConfigAt(projectDir, {
+          projectGuid: project.short_guid,
+          projectSlug: project.slug,
+          accountSlug,
+          agentGuid,
+          conversationGuid: null,
+          apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+          ignore: DEFAULT_SYNC_IGNORE,
+        });
+
+        console.log(`\n  Using ${projectDir}`);
+        try {
+          const result = await sync({ interactive: !nonInteractive, onProgress: syncProgress });
+          if (result.applied > 0) {
+            console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
+          }
+        } catch {
+          console.log('  Could not sync files (will retry on next prompt).');
+        }
+
+        setupClaudeHooks();
+        setupClaudeMd();
+        setupAgentsMd();
+        setupGitignore();
+
+        if (nonInteractive) {
+          // Headless: the -p message is wrapped later (Step 3). Just record
+          // whether to use the new-project framing for that wrap.
+          headlessNewProject = isNewProject;
+        } else if (isNewProject) {
+          console.log('');
+          console.log(`  ${bold("What's next? What would you like to build?")}`);
+          console.log('');
+          const buildIdea = (await promptBoxed()).trim();
+          const stats = await fetchProjectStats(project.short_guid, process.cwd());
+          initialPrompt = buildNewProjectPrompt({
+            projectName: project.name,
+            projectSlug: project.slug,
+            projectGuid: project.short_guid,
+            accountSlug,
+            cwd: process.cwd(),
+            ...stats,
+            buildIdea,
+          });
+        } else {
+          initialPrompt = await buildExistingProjectPrompt({
+            projectName: project.name,
+            projectSlug: project.slug,
+            projectGuid: project.short_guid,
+            accountSlug,
+            cwd: process.cwd(),
+          });
+        }
+
+        console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
+      } else if (existing) {
+        // cwd already has (or inherits) a .gipity.json - run inside it.
         console.log(`  Project: ${brand(existing.projectSlug)} ${muted(`(${existing.projectGuid})`)}`);
         console.log(`  ${success('Already set up.')}\n`);
         setupClaudeHooks();
@@ -283,13 +502,30 @@ export const claudeCommand = new Command('claude')
         setupAgentsMd();
         setupGitignore();
 
-        try {
-          const result = await sync({ interactive: !nonInteractive });
-          if (result.applied > 0) {
-            console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
+        // Warn before syncing a very large project tree. An oversized root
+        // (or a config accidentally rooted high up, e.g. at $HOME) makes the
+        // sync slow, and a silent multi-GB walk reads as a hang.
+        let doSync = true;
+        const projectRoot = dirname(getConfigPath()!);
+        const scan = scanForAdoption(projectRoot);
+        if (scan.tier === 'refuse' && !nonInteractive) {
+          const sizeStr = scan.truncated ? `>${formatBytes(ADOPT_THRESHOLDS.REFUSE_BYTES)}` : formatBytes(scan.bytes);
+          const fileStr = scan.truncated ? `>${ADOPT_THRESHOLDS.REFUSE_FILES}` : `${scan.files}`;
+          console.log(`  ${clrError(`Large project: ${fileStr} files (${sizeStr}) under ${formatCwdLabel(projectRoot)}.`)}`);
+          console.log(`  ${muted('Syncing this many files with Gipity may be slow.')}`);
+          doSync = await confirm('  Sync with Gipity now?', { default: 'yes' });
+          console.log('');
+        }
+
+        if (doSync) {
+          try {
+            const result = await sync({ interactive: !nonInteractive, onProgress: syncProgress });
+            if (result.applied > 0) {
+              console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
+            }
+          } catch {
+            console.log('  Could not sync files (will retry on next prompt).');
           }
-        } catch {
-          console.log('  Could not sync files (will retry on next prompt).');
         }
 
         initialPrompt = await buildExistingProjectPrompt({
@@ -305,7 +541,9 @@ export const claudeCommand = new Command('claude')
         // to a shell just to re-run the same command.
         let projects: ProjectData[] = [];
         let reauthed = false;
-        while (true) {
+        // When the user already chose "create a new project here", skip the
+        // project list entirely - we go straight to the adopt-cwd path.
+        while (!forceAdoptCwd) {
           try {
             const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
             projects = res.data;
@@ -345,9 +583,11 @@ export const claudeCommand = new Command('claude')
         let accountSlug = '';
         let agentGuid = '';
 
-        const result = projects.length > 0
-          ? await pickOrCreateProject(projects, existingSlugs)
-          : { kind: 'create-new' as const, project: await createNewProject(existingSlugs) };
+        const result = forceAdoptCwd
+          ? { kind: 'adopt-cwd' as const }
+          : projects.length > 0
+            ? await pickOrCreateProject(projects, existingSlugs)
+            : { kind: 'create-new' as const, project: await createNewProject(existingSlugs) };
 
         if (result.kind === 'adopt-cwd') {
           // User chose "Use this directory" - derive a slug from the cwd
@@ -396,7 +636,7 @@ export const claudeCommand = new Command('claude')
           accountSlug = await getAccountSlug();
 
           // Always write config (refresh stale GUIDs from a previous setup)
-          saveConfig({
+          saveConfigAt(projectDir, {
             projectGuid: project.short_guid,
             projectSlug: project.slug,
             accountSlug,
@@ -410,7 +650,7 @@ export const claudeCommand = new Command('claude')
 
           // Unified sync - push and pull resolved via three-way merge (non-fatal)
           try {
-            const result = await sync({ interactive: !nonInteractive });
+            const result = await sync({ interactive: !nonInteractive, onProgress: syncProgress });
             if (result.applied > 0) {
               console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
             }
@@ -462,8 +702,8 @@ export const claudeCommand = new Command('claude')
       }
 
       // ── Step 3: Launch Claude Code ────────────────────────────────────
-      if (opts.claude === false) {
-        console.log(`  Done. cd ${process.cwd()} && claude`);
+      if (opts.setupOnly) {
+        console.log(`  Done. cd ${process.cwd()} && gipity claude`);
         return;
       }
 
@@ -539,21 +779,21 @@ export const claudeCommand = new Command('claude')
         }
       }
 
-      // Pass through all unknown args to claude (everything after 'claude')
+      // Pass through all unknown args to claude (everything after 'claude').
+      // Gipity-level flags are stripped: boolean flags dropped outright,
+      // value-bearing flags drop the flag and its value (both `--f v` and
+      // `--f=v` forms).
       const claudeIdx = process.argv.indexOf('claude');
-      const knownFlags = ['--no-claude', '--api-base'];
-      const claudeArgs = process.argv.slice(claudeIdx + 1).filter(arg => {
-        for (const flag of knownFlags) {
-          if (arg === flag) return false;
-          if (arg.startsWith('--api-base=')) return false;
-        }
-        return true;
-      });
-      // Filter out the value after --api-base if space-separated and after claude
-      const apiBaseIdx = process.argv.indexOf('--api-base', claudeIdx);
-      if (apiBaseIdx !== -1) {
-        const valueIdx = claudeArgs.indexOf(process.argv[apiBaseIdx + 1]);
-        if (valueIdx !== -1) claudeArgs.splice(valueIdx, 1);
+      const rawClaudeArgs = process.argv.slice(claudeIdx + 1);
+      const gipityBooleanFlags = new Set(['--setup-only', '--new-project', '--here', '--quiet']);
+      const gipityValueFlags = ['--api-base', '--name', '--project'];
+      const claudeArgs: string[] = [];
+      for (let i = 0; i < rawClaudeArgs.length; i++) {
+        const arg = rawClaudeArgs[i];
+        if (gipityBooleanFlags.has(arg)) continue;
+        if (gipityValueFlags.includes(arg)) { i++; continue; } // skip flag + its value
+        if (gipityValueFlags.some(f => arg.startsWith(`${f}=`))) continue;
+        claudeArgs.push(arg);
       }
 
       if (!nonInteractive) {
@@ -584,7 +824,12 @@ export const claudeCommand = new Command('claude')
             cwd: process.cwd(),
           };
           let wrapped: string;
-          if (hasResume) {
+          if (headlessNewProject) {
+            // Brand-new empty project - use the new-project framing so Claude
+            // picks a template and scaffolds, with the -p message as the idea.
+            const stats = await fetchProjectStats(ctxOpts.projectGuid, ctxOpts.cwd);
+            wrapped = buildNewProjectPrompt({ ...ctxOpts, ...stats, buildIdea: userMsg });
+          } else if (hasResume) {
             // Resume wrap only needs project identity (no file stats), so
             // skip the stats API call on every resumed message.
             wrapped = buildResumeWrap(ctxOpts, userMsg);
@@ -593,17 +838,36 @@ export const claudeCommand = new Command('claude')
           }
           allArgs = [...claudeArgs];
           allArgs[pIdx + 1] = wrapped;
-          process.stderr.write(
-            `\n── full prompt → claude (${wrapped.length} chars) ──\n` +
-            wrapped +
-            `\n── end prompt ──\n\n`
-          );
+          headlessOut(`\nSending to Claude Code: ${userMsg}\n`);
         } else {
           allArgs = claudeArgs;
         }
       } else {
         allArgs = initialPrompt ? [initialPrompt, ...claudeArgs] : claudeArgs;
       }
+
+      // Single-command headless flows (`--new-project` / `--project` with -p)
+      // have no human to approve tool use - auto-bypass so Claude can actually
+      // execute. Same authority as the relay daemon spawning `gipity claude -p`.
+      // Skipped if the user already set a permission flag themselves.
+      if (nonInteractive && (opts.newProject || opts.project)) {
+        const hasPermFlag = allArgs.some(a =>
+          a === '--permission-mode' || a.startsWith('--permission-mode=') ||
+          a === '--dangerously-skip-permissions');
+        if (!hasPermFlag) allArgs.push('--permission-mode', 'bypassPermissions');
+      }
+
+      // Live progress: a human typed this single-command run, so stream
+      // Claude's turn-by-turn output instead of going silent until the final
+      // result. Scoped to --new-project/--project, so the relay daemon's own
+      // invocation (which never sets those) is unaffected. Skipped if the user
+      // opted out (--quiet) or already chose their own verbosity / format.
+      if (nonInteractive && (opts.newProject || opts.project) && !opts.quiet) {
+        if (!allArgs.includes('--verbose') && !allArgs.includes('--output-format')) {
+          allArgs.push('--verbose');
+        }
+      }
+
       // Resolve full path on Windows so we can avoid shell:true, which
       // passes args through cmd.exe and mangles quotes/special chars.
       const claudeCmd = resolveCommand('claude');
@@ -619,12 +883,23 @@ export const claudeCommand = new Command('claude')
       } else if (convGuidForHooks) {
         childEnv.GIPITY_CONVERSATION_GUID = convGuidForHooks;
       }
+      // A Gipity project directory is trusted by construction - the user
+      // created or explicitly chose it. Pre-accept Claude's per-directory
+      // trust dialog so an interactive launch doesn't stop to ask. Headless
+      // `-p` runs skip the dialog already, so this is only needed interactively.
+      if (!nonInteractive) markFolderTrusted(process.cwd());
+
       const child = spawn(claudeCmd, allArgs, {
         stdio: 'inherit',
         cwd: process.cwd(),
         env: childEnv,
       });
-      child.on('exit', (code) => process.exit(code ?? 0));
+      child.on('exit', (code) => {
+        const doneLine = `Done (${formatElapsed(Date.now() - runStart)})`;
+        if (nonInteractive) process.stderr.write(`\n${doneLine}\n\n`);
+        else console.log(`\n  ${doneLine}`);
+        process.exit(code ?? 0);
+      });
 
     } catch (err: any) {
       console.error(`\n  ${clrError(`Error: ${err.message}`)}`);
@@ -754,7 +1029,10 @@ async function confirmAdoptCwd(cwd: string): Promise<boolean> {
   return true;
 }
 
-async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
+async function createNewProject(
+  existingSlugs: string[],
+  preset?: { name: string; explicit: boolean },
+): Promise<ProjectData> {
   const taken = new Set(existingSlugs);
   let suggested = suggestProjectName(existingSlugs);
   console.log('');
@@ -763,33 +1041,46 @@ async function createNewProject(existingSlugs: string[]): Promise<ProjectData> {
   // slugs re-prompt instead of crashing - duplicates can still slip through
   // after the initial projects-list fetch (race with another session), so the
   // server-side 409 also routes back here.
+  //
+  // `preset` drives the headless path (no human at the terminal):
+  //   - explicit (--name X) → a clash fails loudly, never silently renames.
+  //   - non-explicit (suggested project-NNN) → a clash bumps to the next
+  //     number and retries, same as the interactive default.
   while (true) {
-    const name = await prompt(`  ${bold('Project name')} [${bold(suggested)}]: `);
-    const projectName = name || suggested;
+    let projectName: string;
+    if (preset) {
+      projectName = preset.explicit ? preset.name : suggested;
+    } else {
+      const name = await prompt(`  ${bold('Project name')} [${bold(suggested)}]: `);
+      projectName = name || suggested;
+    }
     const projectSlug = slugify(projectName);
 
     if (!projectSlug) {
       console.error(`  ${clrError('Invalid project name. Use letters, numbers, and hyphens.')}`);
+      if (preset) process.exit(1);
       continue;
     }
     if (taken.has(projectSlug)) {
       console.error(`  ${clrError(`"${projectSlug}" already exists. Pick a different name.`)}`);
+      if (preset?.explicit) process.exit(1);
       suggested = suggestProjectName([...taken]);
       continue;
     }
 
-    process.stdout.write(`  ${info(`Creating "${projectName}"...`)}`);
     try {
       const device = relayState.getDevice();
       const body: { name: string; slug: string; autoChat?: 'claude_code'; deviceGuid?: string } = { name: projectName, slug: projectSlug };
       if (device) { body.autoChat = 'claude_code'; body.deviceGuid = device.guid; }
       const res = await post<{ data: ProjectData }>('/projects', body);
-      console.log(` ${success('Created.')}`);
+      // Single console.log keeps the line on the headless stderr stream -
+      // process.stdout.write would leak the message onto the child's stdout.
+      console.log(`  ${info(`Creating "${projectName}"...`)} ${success('Created.')}`);
       return res.data;
     } catch (err) {
       if (err instanceof ApiError && err.statusCode === 409) {
-        console.log('');
         console.error(`  ${clrError(`"${projectSlug}" was just taken. Pick a different name.`)}`);
+        if (preset?.explicit) process.exit(1);
         taken.add(projectSlug);
         suggested = suggestProjectName([...taken]);
         continue;

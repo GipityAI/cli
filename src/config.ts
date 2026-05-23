@@ -154,7 +154,19 @@ export function clearConfigCache(): void {
 }
 
 export function saveConfig(data: GipityConfig): void {
-  const path = getConfigPath() || resolve(process.cwd(), CONFIG_FILE);
+  // saveConfig only ever *updates* an existing project config. It must never
+  // create a new `.gipity.json`: a one-off command (e.g. `gipity chat`) run
+  // in an unrelated folder resolves to the server's Home project, and a
+  // create-on-save here would silently turn that folder - in the wild, often
+  // `$HOME` itself - into a Gipity project. Creating a config is always an
+  // explicit act and must go through `saveConfigAt(dir, …)`.
+  const path = getConfigPath();
+  if (!path) {
+    throw new Error(
+      'saveConfig: no .gipity.json found to update. ' +
+      'Use saveConfigAt(dir, …) to create a new project config.',
+    );
+  }
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
   cached = data;
   cachedPath = path;

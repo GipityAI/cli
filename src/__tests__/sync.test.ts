@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { plan, formatPlan, type BaselineEntry } from '../sync.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { plan, formatPlan, walkLocal, type BaselineEntry } from '../sync.js';
 
 type L = { size: number; mtime: string; sha256?: string };
 type R = { path: string; size: number; sha256: string | null; serverVersion: number; modified: string };
@@ -200,5 +203,45 @@ describe('formatPlan', () => {
     const out = formatPlan(p);
     assert.ok(out.includes('1 upload'));
     assert.ok(out.includes('↑ foo'));
+  });
+});
+
+describe('walkLocal - nested-project boundary', () => {
+  it('does not descend into a subdirectory carrying its own .gipity.json', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-walk-'));
+    try {
+      writeFileSync(join(root, 'a.txt'), 'a');
+      mkdirSync(join(root, 'sub'));
+      writeFileSync(join(root, 'sub', 'b.txt'), 'b');
+      mkdirSync(join(root, 'nested'));
+      writeFileSync(join(root, 'nested', '.gipity.json'), '{}');
+      writeFileSync(join(root, 'nested', 'c.txt'), 'c');
+
+      const result = walkLocal(root, [], {});
+
+      assert.ok(result.has('a.txt'));
+      assert.ok(result.has('sub/b.txt'), 'ordinary subdirectories are still walked');
+      assert.equal(
+        result.has('nested/c.txt'), false,
+        'files of a nested Gipity project must not be scooped by the parent',
+      );
+      assert.equal(result.has('nested/.gipity.json'), false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still walks a project root that has its own .gipity.json', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-walk-'));
+    try {
+      writeFileSync(join(root, '.gipity.json'), '{}');
+      writeFileSync(join(root, 'a.txt'), 'a');
+
+      const result = walkLocal(root, ['.gipity.json'], {});
+
+      assert.ok(result.has('a.txt'), 'the boundary check applies to subdirs, never the root itself');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

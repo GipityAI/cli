@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { setApiBaseOverride } from './config.js';
 import { setAutoConfirm } from './utils.js';
+import { GIPITY_TAGLINE } from './knowledge.js';
+import { getAuth, getTimeRemaining, isExpired } from './auth.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { initCommand } from './commands/init.js';
@@ -46,11 +48,38 @@ import { uninstallCommand } from './commands/uninstall.js';
 import { approvalCommand } from './commands/approval.js';
 import { gmailCommand } from './commands/gmail.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
-import { bold, dim, brand, muted } from './colors.js';
+import { bold, dim, brand, muted, success } from './colors.js';
 import { normalizeAliases } from './flag-aliases.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
+
+// Custom -v/--version output: include auth status so agents know whether
+// the next CLI call will succeed. Intercepted before Commander parses,
+// because Commander's built-in `.version()` only prints a string and exits.
+{
+  const args = process.argv.slice(2);
+  if (args.length === 1 && (args[0] === '-v' || args[0] === '--version')) {
+    // Three states, not two: a stale auth.json reads as "have an account"
+    // but its tokens may be expired. Calling that "Logged in (expired)" is
+    // self-contradictory and reads as a bug; surface expiry as its own line
+    // that points at the same fix as the not-logged-in case.
+    const auth = getAuth();
+    let authLine: string;
+    if (!auth) {
+      authLine = `${muted('Not logged in.')} Run: ${brand('gipity login')}`;
+    } else if (isExpired()) {
+      authLine = `${muted('Session expired for')} ${auth.email}${muted('. Run:')} ${brand('gipity login')}`;
+    } else {
+      authLine = `${success('Logged in')} as ${auth.email} ${muted(`(${getTimeRemaining()})`)}`;
+    }
+    console.log('');
+    console.log(`${brand(bold('Gipity'))} ${muted(`v${pkg.version}`)}`);
+    console.log(authLine);
+    console.log('');
+    process.exit(0);
+  }
+}
 
 // ── Custom help formatting (subcommand pages keep default look) ─────────
 function configureHelp(cmd: Command): void {
@@ -87,7 +116,7 @@ const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
 
 program
   .name('gipity')
-  .description(`${brand(bold('Gipity CLI'))} ${dim('-')} The agent-tuned platform where AI-built apps live\n\n  ${dim('Hosting, databases, deploys, workflows, code execution, and monitoring - one place, agent-tuned. Pair with Claude Code or use standalone.')}`)
+  .description(`${brand(bold('Gipity CLI'))} ${dim('-')} ${GIPITY_TAGLINE.replace(/\.$/, '')}\n\n  ${dim('Hosting, databases, deploys, workflows, code execution, and monitoring - one place, agent-tuned. Pair with Claude Code or use standalone.')}`)
   .version(pkg.version, '-v, --version')
   .addOption(new Option('--api-base <url>', 'API base URL').hideHelp())
   .option('-y, --yes', 'Skip confirmation prompts');
@@ -112,13 +141,15 @@ program.configureHelp({
 
     lines.push('');
     lines.push(`${brand(bold('Gipity CLI'))} ${muted(`v${pkg.version}`)}`);
-    lines.push(dim('The agent-tuned platform where AI-built apps live.'));
+    lines.push(dim(GIPITY_TAGLINE));
     lines.push(dim('Hosting, databases, deploys, workflows - one place. Pair with Claude Code or use standalone.'));
+    lines.push(dim('Works with Claude Code, Codex, Aider, or any AI coding tool - no MCP server needed.'));
     lines.push('');
 
     lines.push(bold('Quick start:'));
-    lines.push(`  ${brand('gipity claude')}   ${dim('- launch Claude Code with Gipity tools wired in')}`);
     lines.push(`  ${brand('gipity login')}    ${dim('- authenticate first if you haven\'t already')}`);
+    lines.push(`  ${brand('gipity init')}     ${dim('- link this dir + write CLAUDE.md/AGENTS.md primers for your AI tool')}`);
+    lines.push(`  ${brand('gipity claude')}   ${dim('- or launch Claude Code with Gipity tools wired in')}`);
     lines.push('');
 
     lines.push(bold('Usage:'));

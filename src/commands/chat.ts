@@ -18,7 +18,7 @@ export const chatCommand = new Command('chat')
   .option('--json', 'Output as JSON')
   .action(async (message: string, opts) => {
     try {
-      const { config } = await resolveProjectContext();
+      const { config, oneOff } = await resolveProjectContext();
 
       const useExisting = config.conversationGuid && !opts.new;
 
@@ -50,8 +50,11 @@ export const chatCommand = new Command('chat')
         };
       }>(endpoint, body);
 
-      // Save conversation guid for continuity
-      if (res.data.conversationGuid !== config.conversationGuid) {
+      // Save conversation guid for continuity. Skipped in one-off mode: the
+      // config was resolved from the server's Home project and there is no
+      // local `.gipity.json` to update - persisting here would create one in
+      // an unrelated directory.
+      if (!oneOff && res.data.conversationGuid !== config.conversationGuid) {
         saveConfig({ ...config, conversationGuid: res.data.conversationGuid });
       }
 

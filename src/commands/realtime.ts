@@ -1,8 +1,22 @@
+import { existsSync } from 'fs';
+import { dirname, resolve } from 'path';
 import { Command } from 'commander';
 import { get, post, del } from '../api.js';
-import { requireConfig } from '../config.js';
+import { requireConfig, getConfigPath } from '../config.js';
 import { error as clrError, success, muted, bold } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
+
+/**
+ * True when this project is a Gipity-deployed app - i.e. it has a gipity.yaml
+ * deploy manifest next to its .gipity.json. Projects that use Gipity purely as
+ * realtime infrastructure (the app itself is hosted elsewhere) have no
+ * manifest; for them imperative room creation is the right and only path.
+ */
+function hasDeployManifest(): boolean {
+  const cfgPath = getConfigPath();
+  if (!cfgPath) return false;
+  return existsSync(resolve(dirname(cfgPath), 'gipity.yaml'));
+}
 
 interface RealtimeRoom {
   name: string;
@@ -54,6 +68,16 @@ const roomCommand = new Command('room')
         } else {
           const r = res.data;
           console.log(success(`Created room '${r.name}' (${r.room_type}, ${r.auth_level}, max ${r.max_clients}).`));
+          // Only nudge toward the declarative path for Gipity-deployed apps -
+          // an imperative room isn't tracked in gipity.yaml, so it won't be
+          // recreated on redeploy or for teammates. Infra-only projects have
+          // no manifest and are using this command exactly as intended.
+          if (hasDeployManifest()) {
+            console.log('');
+            console.log(muted('This project has a gipity.yaml - if this room backs the app,'));
+            console.log(muted('declare it there (run `gipity add realtime`) so it is recreated'));
+            console.log(muted('on every deploy and for teammates, instead of imperatively.'));
+          }
         }
         break;
       }

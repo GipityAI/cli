@@ -2,11 +2,14 @@
 
 set dotenv-load := true
 
-# Sync shared docs from platform (provider models, voices, params)
-# Imports the platform module and writes resolved string values for the CLI
+# Sync shared docs from platform (provider models, voices, params) and the
+# generated knowledge constants (CLAUDE.md body, build rules). Both write
+# committed files under src/ from platform-owned sources.
 sync-docs:
     cd ../platform && node --import tsx scripts/export-provider-docs.ts > ../cli/src/provider-docs.ts
     echo "✓ Synced provider-docs.ts from platform"
+    cd ../platform && node --import tsx scripts/build-knowledge.ts
+    echo "✓ Synced knowledge.ts from platform"
 
 # Build CLI (sync docs, auto-bump patch version, compile TypeScript)
 cli-build:

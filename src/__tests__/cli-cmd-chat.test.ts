@@ -1,5 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
@@ -67,4 +70,37 @@ test('gipity chat delete <guid> sends DELETE', async () => {
   const r = await fresh(['chat', 'delete', 'c_Conv00001']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Deleted c_Conv00001/);
+});
+
+test('gipity chat in a non-project dir falls back to the Home project and writes no .gipity.json', async () => {
+  mock.reset();
+  // No .gipity.json in cwd or any ancestor → resolveProjectContext hits the
+  // server's Home project (one-off mode).
+  mock.on('GET /projects/default', { body: { data: {
+    projectGuid: 'p_HomeProj00',
+    projectSlug: 'home',
+    projectName: 'Home',
+    accountSlug: 'acct',
+    agentGuid: 'a_HomeAgent0',
+  } } });
+  mock.on('POST /conversations', { body: { data: {
+    content: 'Hi from Home!',
+    conversationGuid: 'c_OneOff0001',
+    messageGuid: 'm_OneOff0001',
+    model: 'claude-sonnet-4-6',
+    inputTokens: 1, outputTokens: 1, costUsd: 0,
+    filesChanged: false,
+    toolsUsed: [],
+  } } });
+
+  const dir = mkdtempSync(join(tmpdir(), 'gipity-cli-oneoff-'));
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'chat', 'Hello'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Hi from Home!/);
+  // The one-off guard must not persist the conversation guid by materializing
+  // a project config in an unrelated directory.
+  assert.equal(
+    existsSync(join(dir, '.gipity.json')), false,
+    'one-off chat must not create a .gipity.json in cwd',
+  );
 });

@@ -12,9 +12,12 @@ import { run } from '../helpers/index.js';
 // Templates scaffold a whole app (blank wiring or a working starter demo).
 // Kits are reusable building blocks added into an existing app's src/packages/.
 const TEMPLATES = ['web-simple', '3d-engine'];
-const STARTERS = ['web-fullstack', '2d-game', '3d-world', 'api'];
+const STARTERS = ['web-fullstack', 'web-vision-cam', '2d-game', '3d-world', 'api'];
 const HIDDEN = [{ key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' }];
-const KITS = [{ key: 'realtime', hint: 'multiplayer / presence / shared state' }];
+const KITS = [
+  { key: 'realtime', hint: 'multiplayer / presence / shared state' },
+  { key: 'web-vision-mediapipe', hint: 'browser camera vision - gesture, pose, object detection' },
+];
 
 function printCatalog(): void {
   console.log('');
@@ -77,6 +80,13 @@ export const addCommand = new Command('add')
     if (data.notes?.length) {
       console.log('');
       for (const n of data.notes) console.log(n);
+    }
+    // After scaffolding an app, point at kits as the next step - they add
+    // features (multiplayer, etc.) into the app you just created.
+    if (data.kind !== 'kit' && KITS.length > 0) {
+      console.log('');
+      console.log(muted('Add features with kits (gipity add <kit>):'));
+      for (const k of KITS) console.log(muted(`  ${k.key}  - ${k.hint}`));
     }
     if (syncResult.applied > 0) {
       console.log(`\nPulled ${syncResult.applied} files to local.`);

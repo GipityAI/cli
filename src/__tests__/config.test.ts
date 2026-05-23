@@ -1,6 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldIgnore } from '../config.js';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  shouldIgnore,
+  saveConfig,
+  saveConfigAt,
+  clearConfigCache,
+  type GipityConfig,
+} from '../config.js';
 
 describe('shouldIgnore', () => {
   const patterns = ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '*.log'];
@@ -33,5 +42,75 @@ describe('shouldIgnore', () => {
 
   it('handles empty patterns', () => {
     assert.equal(shouldIgnore('anything.ts', []), false);
+  });
+});
+
+const SAMPLE: GipityConfig = {
+  projectGuid: 'p_Test00000',
+  projectSlug: 'test-proj',
+  accountSlug: 'test-acct',
+  agentGuid: 'a_Test00000',
+  conversationGuid: null,
+  apiBase: 'https://a.gipity.ai',
+  ignore: [],
+};
+
+describe('saveConfig / saveConfigAt', () => {
+  it('saveConfigAt writes .gipity.json at the given directory', () => {
+    const cwd0 = process.cwd();
+    const dir = mkdtempSync(join(tmpdir(), 'gipity-cfg-'));
+    try {
+      saveConfigAt(dir, SAMPLE);
+      assert.ok(existsSync(join(dir, '.gipity.json')));
+      const parsed = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
+      assert.equal(parsed.projectSlug, 'test-proj');
+    } finally {
+      process.chdir(cwd0);
+      clearConfigCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('saveConfig throws - and creates nothing - when there is no config to update', () => {
+    const cwd0 = process.cwd();
+    const dir = mkdtempSync(join(tmpdir(), 'gipity-cfg-'));
+    try {
+      process.chdir(dir);
+      clearConfigCache();
+      assert.throws(() => saveConfig(SAMPLE), /no \.gipity\.json/);
+      assert.equal(
+        existsSync(join(dir, '.gipity.json')), false,
+        'saveConfig must never create a new config file',
+      );
+    } finally {
+      process.chdir(cwd0);
+      clearConfigCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('saveConfig updates the ancestor config found via walk-up, not the subdir', () => {
+    const cwd0 = process.cwd();
+    const dir = mkdtempSync(join(tmpdir(), 'gipity-cfg-'));
+    try {
+      saveConfigAt(dir, SAMPLE);
+      const sub = join(dir, 'a', 'b');
+      mkdirSync(sub, { recursive: true });
+      process.chdir(sub);
+      clearConfigCache();
+
+      saveConfig({ ...SAMPLE, conversationGuid: 'c_Updated000' });
+
+      assert.equal(
+        existsSync(join(sub, '.gipity.json')), false,
+        'saveConfig must not drop a config into the subdirectory',
+      );
+      const parsed = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
+      assert.equal(parsed.conversationGuid, 'c_Updated000');
+    } finally {
+      process.chdir(cwd0);
+      clearConfigCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

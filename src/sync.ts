@@ -28,6 +28,9 @@ import { get, del, downloadStream, ApiError } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
 import { formatSize, prompt, getAutoConfirm } from './utils.js';
 import { uploadOneFile, hashFile, UploadConflictError } from './upload.js';
+import { DEFAULT_SYNC_IGNORE } from './setup.js';
+
+const CONFIG_FILE = '.gipity.json';
 import * as tar from 'tar-stream';
 
 // ─── Tunables ──────────────────────────────────────────────────
@@ -107,6 +110,10 @@ export interface SyncOptions {
   force?: boolean;
   /** Allow interactive prompts (guard confirmation). Defaults to TTY-detected. */
   interactive?: boolean;
+  /** Optional phase-progress callback. Called with a short human-readable
+   *  message at each major step (scan, remote check, hashing, transfer) so
+   *  callers can show the user that a long sync is still working. */
+  onProgress?: (message: string) => void;
 }
 
 export interface SyncResult {
@@ -201,7 +208,7 @@ export function writeBaseline(b: Baseline): void {
 
 // ─── Local walk ────────────────────────────────────────────────
 
-function walkLocal(
+export function walkLocal(
   root: string,
   ignorePatterns: string[],
   baseline: Record<string, BaselineEntry>,
@@ -220,6 +227,11 @@ function walkLocal(
       const rel = relative(root, full).replace(/\\/g, '/');
       if (shouldIgnore(rel, ignorePatterns)) continue;
       if (entry.isDirectory()) {
+        // Nested-project boundary: a subdirectory carrying its own
+        // `.gipity.json` is a separate Gipity project that syncs itself.
+        // Don't descend - a parent project must never scoop up the files
+        // of a child project nested inside it.
+        if (existsSync(join(full, CONFIG_FILE))) continue;
         walk(full);
       } else if (entry.isFile()) {
         try {
@@ -545,9 +557,17 @@ export async function sync(opts: SyncOptions = {}): Promise<SyncResult> {
   const root = projectDir();
   const interactive = opts.interactive ?? process.stdout.isTTY ?? false;
 
+  // A config written with an empty `ignore` (older projects, or one produced
+  // by the one-off Home-fallback path) would make sync walk and hash the
+  // entire tree - node_modules, .git, caches and all. Fall back to the
+  // standard ignore set so an empty list never means "sync everything".
+  const ignore = config.ignore && config.ignore.length
+    ? config.ignore
+    : [...DEFAULT_SYNC_IGNORE];
+
   const releaseLock = await acquireLock();
   try {
-    return await syncInner(config.projectGuid, root, config.ignore, opts, interactive);
+    return await syncInner(config.projectGuid, root, ignore, opts, interactive);
   } finally {
     releaseLock();
   }
@@ -561,8 +581,12 @@ async function syncInner(
   // shape. The two fields we actually use are the ones we took as args.
   const config = { projectGuid, ignore };
 
+  const report = opts.onProgress ?? (() => { /* no-op */ });
+
   const baseline = readBaseline(projectGuid);
+  report('Scanning local files…');
   const local = walkLocal(root, ignore, baseline.files);
+  report('Checking Gipity for changes…');
   const remote = await fetchRemote(projectGuid);
 
   // Hash everything we might classify ambiguously. Any local path also on
@@ -575,6 +599,7 @@ async function syncInner(
     const r = remote.get(path);
     if (r?.sha256 || baseline.files[path]) needHash.push(path);
   }
+  if (needHash.length) report(`Hashing ${needHash.length} file${needHash.length === 1 ? '' : 's'}…`);
   await ensureLocalHashes(root, local, needHash);
 
   const planned = plan(local, remote, baseline.files);
@@ -604,6 +629,7 @@ async function syncInner(
   const downloadedBytes = new Map<string, Buffer>();
   const needsBulkDownload = plannedToApply.some(a => a.kind === 'download' || a.kind === 'conflict');
   if (needsBulkDownload) {
+    report('Downloading updates from Gipity…');
     try {
       const all = await downloadAll(config.projectGuid);
       for (const a of plannedToApply) {
@@ -689,6 +715,7 @@ async function syncInner(
   }
 
   // Uploads: bounded concurrency. On 409, rewrite as a conflict inline.
+  if (uploadQueue.length) report(`Uploading ${uploadQueue.length} file${uploadQueue.length === 1 ? '' : 's'} to Gipity…`);
   let cursor = 0;
   const workers: Array<Promise<void>> = [];
   for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, uploadQueue.length); w++) {

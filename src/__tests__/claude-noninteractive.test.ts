@@ -68,3 +68,36 @@ describe('gipity claude -p (non-interactive)', () => {
     assert.match(r.stdout, /Gipity CLI/);
   });
 });
+
+describe('gipity claude --new-project / --project', () => {
+  it('rejects --new-project and --project used together', () => {
+    const home = freshHome();
+    const r = runCli(['claude', '--new-project', '--project', 'foo'], { env: { HOME: home }, cwd: home });
+    assert.notEqual(r.status, 0, 'should exit non-zero');
+    assert.match(r.stderr, /not both/);
+  });
+
+  it('still requires login with --new-project', () => {
+    const home = freshHome();
+    const r = runCli(['claude', '--new-project', '-p', 'build a thing'], { env: { HOME: home }, cwd: home });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /Not logged in/);
+    assert.equal(r.stdout, '');
+  });
+
+  it('--new-project lifts the "no project in cwd" guard (proceeds to resolve a project)', () => {
+    // Logged in but cwd has no .gipity.json. Without --new-project this errors
+    // with "No Gipity project in cwd". With it, the command proceeds past that
+    // guard to fetch projects - here pointed at a dead port so it fails fast.
+    const home = freshHome();
+    writeFakeAuth(home);
+    const r = runCli(
+      ['claude', '--new-project', '-p', 'build a thing', '--api-base', 'http://127.0.0.1:1'],
+      { env: { HOME: home }, cwd: home },
+    );
+    assert.notEqual(r.status, 0);
+    assert.doesNotMatch(r.stderr, /No Gipity project in cwd/);
+    assert.match(r.stderr, /Could not load projects|session expired/);
+    assert.equal(r.stdout, '');
+  });
+});

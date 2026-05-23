@@ -14,6 +14,7 @@ import { prompt, confirm } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted, info } from '../colors.js';
 import * as state from './state.js';
 import { planFor, UnsupportedPlatformError } from './installers.js';
+import { getMachineId } from './machine-id.js';
 
 /** Normalize Node's `os.platform()` to what the backend accepts. */
 function mapPlatform(p: string): 'darwin' | 'linux' | 'win32' {
@@ -81,7 +82,7 @@ export async function maybeOfferRelayOn(): Promise<void> {
   try {
     const res = await post<{
       data: { short_guid: string; name: string; platform: string; token: string };
-    }>('/remote-devices', { name, platform: mapPlatform(osPlatform()) });
+    }>('/remote-devices', { name, platform: mapPlatform(osPlatform()), machine_id: getMachineId() });
     token = res.data.token;
     shortGuid = res.data.short_guid;
   } catch (err: any) {

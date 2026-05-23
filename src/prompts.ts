@@ -13,6 +13,11 @@
  *  - Section headings are `## `, lists are `-` or `1.`.
  */
 
+// The build-vs-non-build rule and definition-of-done are now sourced from
+// platform/docs/knowledge/*.md and regenerated into ./knowledge.ts. Edit the
+// markdown, not this file. See `just sync-knowledge`.
+import { BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
+
 // ---------------------------------------------------------------------------
 // Canonical scaffold types. Keep in sync with SCAFFOLD_TEMPLATES in
 // platform/packages/shared/src/constants.ts.
@@ -33,6 +38,7 @@ export const SCAFFOLD_TYPES: readonly ScaffoldType[] = [
   { key: 'web-fullstack', for: 'Web app with login, database, or API - CRM, invoice tracker, booking system, admin panel' },
   { key: '2d-game',       for: 'Platformer, arcade, puzzle, endless runner, physics toy (Phaser 3)' },
   { key: '3d-world',      for: 'Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)' },
+  { key: '3d-engine',     for: 'Minimal 3D multiplayer base - Three.js + Rapier + Colyseus, no gameplay; build your own on top' },
   { key: 'api',           for: 'Backend service, webhook, data pipeline, chatbot, cron job - no frontend' },
 ] as const;
 
@@ -51,33 +57,13 @@ export const HIDDEN_SCAFFOLD_PICKER = HIDDEN_SCAFFOLD_TYPES
   .join('\n');
 
 // ---------------------------------------------------------------------------
-// Single source of truth for the build-vs-non-build rule.
+// The build-vs-non-build rule and definition-of-done. Canonical source is
+// platform/docs/knowledge/{build-vs-non-build,definition-of-done}.md;
+// imported from the generated ./knowledge.ts above and re-exported here so
+// the CLI's public prompt surface is unchanged.
 // ---------------------------------------------------------------------------
 
-export const BUILD_VS_NON_BUILD_RULE = [
-  `## When to add a template`,
-  `If the user wants a deployable app (web, game, API): run \`gipity add <template>\` before writing any files. A template wires up \`gipity.yaml\`, deploy config, and sync; hand-written files miss all of it.`,
-  `If it's a one-off task (analysis, media, data, research): skip it - use \`gipity sandbox run\` or work with files directly.`,
-  `If ambiguous: ask one short clarifying question.`,
-  ``,
-  `Templates:`,
-  SCAFFOLD_TYPE_PICKER,
-  `When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.`,
-  `Only skip this on a build request if the user explicitly says not to.`,
-  ``,
-  `Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):`,
-  HIDDEN_SCAFFOLD_PICKER,
-].join('\n');
-
-export const DEFINITION_OF_DONE = [
-  `## Definition of done (build tasks)`,
-  `1. \`gipity deploy dev\` succeeds and you have a live URL.`,
-  `2. \`gipity page-inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen).`,
-  `3. For apps with functions: \`gipity test\` passes.`,
-  `4. You told the user the live URL.`,
-  ``,
-  `If any step fails, fix it before claiming done - do not report success on a broken deploy.`,
-].join('\n');
+export { BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE };
 
 export const CAPABILITIES_BLURB_SHORT =
   `Full platform reference is in CLAUDE.md. ` +
@@ -261,54 +247,9 @@ export const SCAFFOLD_HOOK_WARNING =
   `If this is a one-off task (analysis, data, PDFs, scratch work), proceed.`;
 
 // ---------------------------------------------------------------------------
-// Per-project CLAUDE.md (written by `gipity claude` / `gipity init` setup)
+// Per-project CLAUDE.md / AGENTS.md body.
+//
+// The content (`SKILLS_CONTENT`) is sourced from
+// platform/docs/knowledge/cli-integration.md and regenerated into
+// ./knowledge.ts. setup.ts imports it from there directly. Edit the markdown.
 // ---------------------------------------------------------------------------
-
-export const SKILLS_CONTENT = `# Gipity Integration
-
-Gipity is the agent-tuned platform where AI-built apps live. Real compute, storage, hosting, databases, deployment, workflows, code execution, and monitoring - always on. Gip is the cloud agent that runs on Gipity.
-
-This Claude Code session is connected to a Gipity project. Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
-
-1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, and more. Run \`gipity --help\` for the full list. All commands support \`--json\`.
-2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
-3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
-4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
-
-You are the developer. Write files in this directory - they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
-
-## When to add a template
-
-The full rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity add <template>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead. To add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
-
-## CLI quick reference
-
-Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page-inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity skill read <name>\`.
-Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
-
-## Files and sync
-
-Write files locally - hooks auto-push to Gipity on every save. Remote-generated files (images, audio from \`gipity chat\`) auto-pull. Use \`gipity sync\` if things get out of sync. Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
-
-## Skills (detailed documentation)
-
-Run \`gipity skill list\` to see all available skill docs. Run \`gipity skill read <name>\` to read one. Load the relevant skill before starting a task - they contain the correct API patterns, code examples, and common mistakes.
-
-App services skills (load before calling \`/services/*\` endpoints):
-- \`app-llm\` - chat completions, streaming, image input
-- \`app-tts\` - voices, multi-speaker, languages
-- \`app-image\` - providers, sizes, aspect ratios
-- \`app-audio\` - sound effects, music, transcription
-- \`app-video\` - Veo models, aspect, resolution
-- \`app-files\` - uploads, variants, file listing
-- \`app-auth\` - sign in with Gipity, popup vs redirect
-- \`app-realtime\` - Colyseus rooms, relay vs state
-
-Other key skills:
-- \`web-app-basics\` - coding guidelines, file structure, HTML/CSS/JS patterns
-- \`app-development\` - functions, database and API
-- \`3d-world\` - 3D multiplayer game template (Three.js + Rapier + Colyseus)
-- \`2d-game\` - 2D game template (Phaser 3)
-- \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
-- \`tts-guide\` - agent-side speech tools (different from the \`app-tts\` HTTP service)
-`;

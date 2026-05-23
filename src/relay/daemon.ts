@@ -30,7 +30,7 @@ import { getApiBaseOverride, getConfig } from '../config.js';
 import { getProjectsRoot } from './paths.js';
 import { setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
 import { sync } from '../sync.js';
-import { getAuth } from '../auth.js';
+import { getAuth, readAuthFresh } from '../auth.js';
 import { post } from '../api.js';
 import * as state from './state.js';
 import {
@@ -40,6 +40,8 @@ import {
   mapEventToEntries,
 } from './stream-json.js';
 import { deviceFetch, bridgeAbort as bridgeAbortImpl } from './device-http.js';
+import { redactEntries, normalizeSecrets } from './redact.js';
+import { getMachineId } from './machine-id.js';
 
 // Re-exported so the existing `relay-bridge-abort.test.ts` keeps working.
 // New callers should import from device-http.js directly.
@@ -77,7 +79,7 @@ async function registerDevice(): Promise<state.RelayDevice> {
   const name = (hostname() || 'my-pc').trim().slice(0, 100) || 'my-pc';
   const res = await post<{
     data: { short_guid: string; name: string; platform: string; token: string };
-  }>('/remote-devices', { name, platform: mapPlatform(osPlatform()) });
+  }>('/remote-devices', { name, platform: mapPlatform(osPlatform()), machine_id: getMachineId() });
   const device: state.RelayDevice = {
     guid: res.data.short_guid,
     name: res.data.name,
@@ -433,15 +435,40 @@ async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
 
 // ─── Per-dispatch handler ──────────────────────────────────────────────
 
+/** Collect the secret strings the daemon must scrub from every captured
+ *  entry before it reaches the web CLI: the shared Claude credential
+ *  (whichever of the two env vars Claude Code is using) and this host's own
+ *  Gipity + device tokens. Recomputed per batch - cheap, and picks up a
+ *  token refresh without a daemon restart. */
+function getRelaySecrets(): string[] {
+  // Read auth.json fresh - a child process may have refreshed the tokens
+  // since the daemon's cached getAuth(). (The JWT-pattern pass in
+  // redactEntries is the backstop if this still races a refresh.)
+  const auth = readAuthFresh();
+  const device = state.getDevice();
+  return normalizeSecrets([
+    process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    process.env.ANTHROPIC_API_KEY,
+    auth?.accessToken,
+    auth?.refreshToken,
+    device?.token,
+  ]);
+}
+
 /** Post a batch of ingest entries with the daemon's device bearer. Returns
  *  whether the server accepted them (2xx). Non-2xx and network errors are
  *  logged but never thrown - the dispatch loop should continue on a missed
- *  post, and the caller decides whether to advance offsets based on `ok`. */
+ *  post, and the caller decides whether to advance offsets based on `ok`.
+ *
+ *  Every entry is run through `redactEntries` first: a dispatched
+ *  `bypassPermissions` session can read the host's credentials, so this is
+ *  the single chokepoint that keeps a leaked secret out of the transcript. */
 async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ ok: boolean }> {
   if (!entries.length) return { ok: true };
+  const safeEntries = redactEntries(entries, getRelaySecrets());
   try {
     const res = await deviceFetch('POST', `/remote-sessions/${encodeURIComponent(convGuid)}/ingest`, {
-      entries,
+      entries: safeEntries,
     }, 10_000);
     if (!res.ok) {
       const body = await res.text().catch(() => '');

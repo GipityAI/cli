@@ -9,10 +9,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_VERSION = JSON.parse(readFileSync(resolve(__dirname, '..', '..', 'package.json'), 'utf-8')).version;
 
 describe('cli-smoke: --version and --help', () => {
-  it('--version prints the package version', () => {
+  it('--version prints the package version + auth status', () => {
     const r = runCli(['--version']);
     assert.equal(r.status, 0);
-    assert.equal(r.stdout.trim(), PKG_VERSION);
+    // Branded line: "Gipity v1.2.3"
+    assert.match(r.stdout, new RegExp(`Gipity\\s+v${PKG_VERSION.replace(/\./g, '\\.')}`));
+    // Auth status: logged-in, session expired, or never logged in.
+    assert.match(r.stdout, /Logged in as |Session expired for |Not logged in\. Run: gipity login/);
   });
 
   it('--help shows version banner near the top and grouped sections in order', () => {
@@ -21,6 +24,8 @@ describe('cli-smoke: --version and --help', () => {
 
     const out = r.stdout;
     assert.match(out, new RegExp(`Gipity CLI\\s+v${PKG_VERSION.replace(/\./g, '\\.')}`));
+    // Cross-agent positioning line surfaces in top-level help.
+    assert.match(out, /no MCP server needed/);
 
     const sections = ['Common:', 'Connect:', 'Project:', 'Files:', 'App building:', 'Utilities:', 'Agent:', 'Setup:'];
     let lastIdx = -1;

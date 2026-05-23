@@ -14,7 +14,7 @@ import { readdirSync, statSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { get, post, ApiError } from './api.js';
-import { isSyncIgnored } from './setup.js';
+import { isSyncIgnored, SUPPORTED_TOOLS } from './setup.js';
 import { finalizeLocalProject } from './project-setup.js';
 import { getProjectsRoot } from './relay/paths.js';
 import * as relayState from './relay/state.js';
@@ -196,6 +196,8 @@ export async function adoptCurrentDir(opts: {
   confirmDeletions: boolean;
   /** Force a specific agent guid; skip the auto-lookup. */
   agentOverride?: string;
+  /** Subset of AI-tool primers to write. Defaults to all. */
+  tools?: typeof SUPPORTED_TOOLS;
 }): Promise<AdoptResult> {
   // Try to match an existing project by slug. Lets the user re-adopt a
   // project they previously created from this dir on another machine.
@@ -250,6 +252,7 @@ export async function adoptCurrentDir(opts: {
     agentGuid,
     sync: 'strict',
     interactive: opts.confirmDeletions,
+    tools: opts.tools,
   });
 
   return { project, isNew, agentGuid, accountSlug: opts.accountSlug, applied };

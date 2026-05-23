@@ -26,6 +26,19 @@ export function getAuth(): AuthData | null {
   }
 }
 
+/** Read auth.json directly from disk, bypassing the in-process cache.
+ *  The relay daemon's secret-redaction needs the *current* tokens: a child
+ *  `gipity sync` / `gipity claude` process can refresh and rewrite the file
+ *  mid-run, after which the daemon's cached `getAuth()` would be stale. */
+export function readAuthFresh(): AuthData | null {
+  if (!existsSync(AUTH_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(AUTH_FILE, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
 export function saveAuth(data: AuthData): void {
   mkdirSync(AUTH_DIR, { recursive: true });
   writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2));
