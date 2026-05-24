@@ -19,21 +19,22 @@
 import { BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 
 // ---------------------------------------------------------------------------
-// Canonical scaffold types. Keep in sync with SCAFFOLD_TEMPLATES in
-// platform/packages/shared/src/constants.ts.
+// Canonical template catalog (CLI mirror). Keep in sync with TEMPLATES in
+// platform/packages/shared/src/constants.ts. The CLI ships standalone, so it
+// can't import @easyclaw/shared at runtime.
 //
-// Visible types are the default picker. Hidden types are real, working
-// templates that aren't yet promoted for default suggestions - the agent
+// Visible templates are the default picker. Hidden templates are real, working
+// scaffolds that aren't yet promoted for default suggestions - the agent
 // must NOT suggest them unsolicited, but SHOULD use them when the user
 // explicitly asks for that domain ("build me a helpdesk" → app-itsm).
 // ---------------------------------------------------------------------------
 
-export interface ScaffoldType {
+export interface TemplateEntry {
   key: string;
   for: string;
 }
 
-export const SCAFFOLD_TYPES: readonly ScaffoldType[] = [
+export const TEMPLATES: readonly TemplateEntry[] = [
   { key: 'web-simple',    for: 'Landing page, dashboard, calculator, canvas demo, visualization, animation, single-page tool' },
   { key: 'web-fullstack', for: 'Web app with login, database, or API - CRM, invoice tracker, booking system, admin panel' },
   { key: '2d-game',       for: 'Platformer, arcade, puzzle, endless runner, physics toy (Phaser 3)' },
@@ -42,17 +43,17 @@ export const SCAFFOLD_TYPES: readonly ScaffoldType[] = [
   { key: 'api',           for: 'Backend service, webhook, data pipeline, chatbot, cron job - no frontend' },
 ] as const;
 
-export const HIDDEN_SCAFFOLD_TYPES: readonly ScaffoldType[] = [
+export const HIDDEN_TEMPLATES: readonly TemplateEntry[] = [
   { key: 'app-itsm',      for: 'IT service management - helpdesk, ticketing, incident management, agent console + portal' },
 ] as const;
 
-export const SCAFFOLD_TYPE_KEYS = SCAFFOLD_TYPES.map(t => t.key).join('|');
+export const TEMPLATE_KEY_PATTERN = TEMPLATES.map(t => t.key).join('|');
 
-export const SCAFFOLD_TYPE_PICKER = SCAFFOLD_TYPES
+export const TEMPLATE_PICKER = TEMPLATES
   .map(t => `    - \`${t.key}\` - ${t.for}`)
   .join('\n');
 
-export const HIDDEN_SCAFFOLD_PICKER = HIDDEN_SCAFFOLD_TYPES
+export const HIDDEN_TEMPLATE_PICKER = HIDDEN_TEMPLATES
   .map(t => `    - \`${t.key}\` - ${t.for}`)
   .join('\n');
 
@@ -243,7 +244,7 @@ export function buildFreshWrap(contextBlock: string, userMsg: string): string {
 /** Plain ASCII, no apostrophes or backslashes - embedded inside a node -e shell command. */
 export const SCAFFOLD_HOOK_WARNING =
   `[gipity] Heads up: this project has no app yet. If you are building an app/game/API to deploy, ` +
-  `stop and run: gipity add <${SCAFFOLD_TYPE_KEYS}>  (default: web-simple). ` +
+  `stop and run: gipity add <${TEMPLATE_KEY_PATTERN}>  (default: web-simple). ` +
   `If this is a one-off task (analysis, data, PDFs, scratch work), proceed.`;
 
 // ---------------------------------------------------------------------------

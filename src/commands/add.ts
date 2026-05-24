@@ -5,11 +5,11 @@ import { sync } from '../sync.js';
 import { success, muted, bold } from '../colors.js';
 import { run } from '../helpers/index.js';
 
-// Catalog mirrored from platform/packages/shared (SCAFFOLD_TEMPLATES + KITS) -
+// Catalog mirrored from platform/packages/shared (TEMPLATES + KITS) -
 // the CLI ships as a standalone npm package and can't depend on the private
 // shared workspace. Keep these lists in sync when catalog entries change.
 //
-// Templates scaffold a whole app (blank wiring or a working starter demo).
+// Templates install a whole app (blank wiring or a working starter demo).
 // Kits are reusable building blocks added into an existing app's src/packages/.
 const TEMPLATES = ['web-simple', '3d-engine'];
 const STARTERS = ['web-fullstack', 'web-vision-cam', '2d-game', '3d-world', 'api'];
@@ -21,7 +21,7 @@ const KITS = [
 
 function printCatalog(): void {
   console.log('');
-  console.log(`${bold('Templates')}  ${muted('- scaffold a whole app into an empty project')}`);
+  console.log(`${bold('Templates')}  ${muted('- install a whole app into an empty project')}`);
   console.log(`  ${TEMPLATES.join(', ')}  ${muted('(blank wiring)')}`);
   console.log(`  ${STARTERS.join(', ')}  ${muted('(working demos)')}`);
   console.log('');

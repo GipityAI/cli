@@ -1,7 +1,7 @@
 {
   "name": "gipity",
   "version": "1.0.339",
-  "description": "The agent-tuned platform where AI-built apps live. Hosting, databases, deploys, workflows, code execution, and monitoring - one place, agent-tuned. Pair with Claude Code or use standalone.",
+  "description": "The full-stack platform tuned for AI agents. Database, storage, auth, functions, deploy, and drop-in kits - all agent-tuned. Pair with Claude Code or use standalone.",
   "bin": {
     "gipity": "./dist/updater/shim.js",
     "gipcc": "./dist/gipcc.js",

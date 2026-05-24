@@ -22,7 +22,7 @@ All code execution happens on Gipity's hosted platform.
 | `gipity agent [list\|create\|switch\|set]` | Manage agents |
 | `gipity approval [list\|create\|answer\|cancel]` | Manage pending approvals |
 | `gipity workflow [list\|run\|enable\|disable]` | Manage workflows |
-| `gipity scaffold [title] --type <type>` | Create app structure (web, 2d-game, 3d-world, app-itsm, api) |
+| `gipity add <template>` | Add a template (web-simple, 2d-game, 3d-world, web-fullstack, api) |
 | `gipity fn [list\|call <name> [body]\|logs <name>]` | Manage and call serverless functions |
 | `gipity test [path]` | Run project tests in sandboxed containers |
 | `gipity page-inspect <url>` | One-shot page inspect: console errors, timing, failed resources. For interactive debugging (screenshots, clicks, eval), use the `browser` agent tool. |
@@ -126,18 +126,18 @@ test('get-items returns items', async (ctx) => {
 4. `gipity deploy dev --json`
 5. `gipity test --json`
 
-### When Scaffold Fails
+### When `add` Fails
 
-If `gipity scaffold` fails because the project already has files:
+If `gipity add` fails because the project already has files:
 
 - **User wants to start over in the *same* project** (most common - they're iterating):
-  1. `gipity file rm src` - removes the old scaffold directory (recursive, no extra flag needed)
-  2. `gipity scaffold --type <type>` - re-runs cleanly
+  1. `gipity file rm src` - removes the old template directory (recursive, no extra flag needed)
+  2. `gipity add <template>` - re-runs cleanly
 - **User wants a *different* project** - keep the current one, create a fresh one:
-  `gipity project create "<name>"` materializes it under `~/GipityProjects/<slug>` and links this machine. Then tell the user to exit Claude (Ctrl+D) and run `gipity claude` - the new project will be at the top of the picker. Once in that session, run `gipity scaffold --type <type>`.
-- **User told you to keep their existing files** - skip scaffold and build manually using the workflow above
+  `gipity project create "<name>"` materializes it under `~/GipityProjects/<slug>` and links this machine. Then tell the user to exit Claude (Ctrl+D) and run `gipity claude` - the new project will be at the top of the picker. Once in that session, run `gipity add <template>`.
+- **User told you to keep their existing files** - skip `add` and build manually using the workflow above
 
-`gipity file rm <path>` recursively deletes files or directories. Non-scaffold content (media, data, notes) lives outside `src/` and is not touched by the delete-and-rescaffold flow.
+`gipity file rm <path>` recursively deletes files or directories. Non-template content (media, data, notes) lives outside `src/` and is not touched by the delete-and-re-add flow.
 
 ## App Services (HTTP API for deployed apps)
 

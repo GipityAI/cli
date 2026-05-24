@@ -1,8 +1,8 @@
 # Gipity CLI
 
-The agent-tuned platform where AI-built apps live.
+The full-stack platform tuned for AI agents.
 
-[Gipity](https://gipity.ai) is the platform: hosting, databases, file storage, deployment, workflows, code execution, and monitoring. Agent-tuned from scaffold to deploy. Use standalone, or pair with Claude Code to give your local agent cloud superpowers. Any model, any infra, always your code.
+[Gipity](https://gipity.ai) is the platform: hosting, databases, file storage, deployment, workflows, code execution, and monitoring. Agent-tuned from idea to deploy. Use standalone, or pair with Claude Code to give your local agent cloud superpowers. Any model, any infra, always your code.
 
 This CLI connects [Claude Code](https://claude.ai/claude-code) to Gipity's cloud platform - databases, deployment, browser testing, image gen, and 50+ other capabilities your local agent doesn't have. It also syncs files so Claude Code and the Gipity web agent share the same project.
 
@@ -138,7 +138,7 @@ gipity sync down     # Pull remote changes
 | `gipity approval` | List, create, answer, or cancel pending approvals |
 | `gipity workflow` | Manage and trigger automated workflows |
 | `gipity file` | Browse remote files (ls, cat, tree) |
-| `gipity scaffold [title]` | Create app structure (`--type web`, `--type 2d-game`, or `--type 3d-world`) |
+| `gipity add <template>` | Add a template (web-simple, 2d-game, 3d-world, web-fullstack, api) |
 | `gipity test` | Run project tests in sandboxed containers |
 | `gipity logs fn <name>` | View function execution logs |
 | `gipity page-inspect <url>` | Inspect a URL: console errors, performance, failed resources |

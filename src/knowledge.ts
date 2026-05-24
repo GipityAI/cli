@@ -82,12 +82,6 @@ App development skills:
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
 - \`web-app-basics\` - coding guidelines, file structure, HTML/CSS/JS patterns
 
-Templates:
-- \`2d-game\` - 2D game starter (Phaser 3)
-- \`3d-engine\` - minimal 3D multiplayer template (Three.js + Rapier + Colyseus)
-- \`3d-world\` - 3D multiplayer game starter (Three.js + Rapier + Colyseus)
-- \`web-vision-mediapipe\` - web-vision-mediapipe kit: MediaPipe gesture/pose/object detection, web only
-
 Other key skills:
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
 - \`tts\` - agent-side speech tools (different from the \`app-tts\` HTTP service)`;

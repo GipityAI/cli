@@ -1,7 +1,22 @@
 import { Command } from 'commander';
+import { spawn } from 'node:child_process';
 import { get } from '../api.js';
 import { brand, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
+
+const PRICING_URL = 'https://prompt.gipity.ai/pricing';
+
+function openInBrowser(url: string): void {
+  const cmd =
+    process.platform === 'darwin' ? 'open' :
+    process.platform === 'win32' ? 'start' :
+    'xdg-open';
+  try {
+    spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+  } catch {
+    // Spawn failed (no xdg-open on minimal Linux, etc.) - caller prints the URL.
+  }
+}
 
 interface BalanceData {
   available: number;
@@ -33,6 +48,15 @@ export const creditsCommand = new Command('credits')
         }
       }
     }
+  }));
+
+creditsCommand
+  .command('buy')
+  .description('Open the credits purchase page in your browser')
+  .action(() => run('Buy credits', async () => {
+    console.log(`Opening ${brand(PRICING_URL)} in your browser...`);
+    openInBrowser(PRICING_URL);
+    console.log(muted("If your browser didn't open automatically, copy the URL above."));
   }));
 
 creditsCommand
