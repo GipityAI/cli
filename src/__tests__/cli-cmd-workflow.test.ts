@@ -7,7 +7,7 @@ import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 let mock: MockServer;
 let home: string;
 
-const WF_A = { short_guid: 'wf_WflowAa0', name: 'Daily', description: 'Runs every day', is_active: 1, trigger_type: 'cron', cron_expression: '0 8 * * *', project_name: 'Test', project_slug: 'test-project' };
+const WF_A = { short_guid: 'wf_WflowAa0', name: 'Daily', description: 'Runs every day', is_active: 1, trigger_type: 'schedule', cron_expression: '0 8 * * *', project_name: 'Test', project_slug: 'test-project' };
 const WF_B = { short_guid: 'wf_WflowBb0', name: 'Manual', description: null, is_active: 0, trigger_type: 'manual', cron_expression: null, project_name: null, project_slug: null };
 
 before(async () => { mock = await startMockServer(); home = makeAuthedHome(); });
@@ -37,7 +37,7 @@ test('gipity workflow info <name> resolves by name and shows details', async () 
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Name:\s+Daily/);
   assert.match(r.stdout, /Active:\s+yes/);
-  assert.match(r.stdout, /Trigger:\s+cron/);
+  assert.match(r.stdout, /Trigger:\s+schedule/);
   assert.match(r.stdout, /step1/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });

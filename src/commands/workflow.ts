@@ -27,32 +27,41 @@ interface RunData {
   started_at: string;
   completed_at: string | null;
   total_tokens: number;
+  error_message: string | null;
+}
+
+async function listWorkflows(opts: { json?: boolean }): Promise<void> {
+  const res = await get<WorkflowListResponse>('/workflows');
+
+  if (opts.json) {
+    console.log(JSON.stringify(res));
+    return;
+  }
+
+  if (res.meta) {
+    console.log('');
+    console.log(`Active workflows: ${res.meta.activeCount}/${res.meta.activeLimit}`);
+  }
+
+  printList(res.data, opts, 'No workflows.', w => {
+    const statusText = w.is_active ? success('on') : clrError('off');
+    const cron = w.cron_expression ? `  ${muted(`cron: ${w.cron_expression}`)}` : '';
+    const proj = w.project_slug ? `  ${muted(`(${w.project_slug})`)}` : '';
+    const line = `${bold(w.name)}  [${statusText}]  ${muted(w.trigger_type)}${cron}${proj}`;
+    return w.description ? `${line}\n  ${muted(w.description)}` : line;
+  });
 }
 
 export const workflowCommand = new Command('workflow')
   .description('Manage workflows')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('Workflow', async () => {
-    const res = await get<WorkflowListResponse>('/workflows');
+  .action((opts) => run('Workflow', () => listWorkflows(opts)));
 
-    if (opts.json) {
-      console.log(JSON.stringify(res));
-      return;
-    }
-
-    if (res.meta) {
-      console.log('');
-      console.log(`Active workflows: ${res.meta.activeCount}/${res.meta.activeLimit}`);
-    }
-
-    printList(res.data, opts, 'No workflows.', w => {
-      const statusText = w.is_active ? success('on') : clrError('off');
-      const cron = w.cron_expression ? `  ${muted(`cron: ${w.cron_expression}`)}` : '';
-      const proj = w.project_slug ? `  ${muted(`(${w.project_slug})`)}` : '';
-      const line = `${bold(w.name)}  [${statusText}]  ${muted(w.trigger_type)}${cron}${proj}`;
-      return w.description ? `${line}\n  ${muted(w.description)}` : line;
-    });
-  }));
+workflowCommand
+  .command('list')
+  .description('List workflows')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('List', () => listWorkflows(opts)));
 
 workflowCommand
   .command('info <name>')
@@ -102,7 +111,9 @@ workflowCommand
         ? `${((new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000).toFixed(1)}s`
         : 'running';
       const statusColor = r.status === 'completed' ? success : r.status === 'failed' ? clrError : muted;
-      return `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${r.total_tokens} tokens  ${muted(new Date(r.started_at).toLocaleString())}`;
+      const line = `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${r.total_tokens} tokens  ${muted(new Date(r.started_at).toLocaleString())}`;
+      // Surface why a run failed inline so you don't have to hit the REST API.
+      return r.error_message ? `${line}\n  ${clrError(r.error_message)}` : line;
     });
   }));
 
@@ -112,8 +123,12 @@ workflowCommand
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Enable', async () => {
     const wf = await resolveWorkflow(name);
-    await put(`/workflows/${wf.short_guid}`, { is_active: true });
-    printResult(`Enabled "${wf.name}".`, opts, { enabled: wf.name });
+    const res = await put<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`, { is_active: true });
+    if (!res.data?.is_active) {
+      console.error(clrError(`Workflow "${wf.name}" is still inactive after enable — not enabled.`));
+      process.exit(1);
+    }
+    printResult(`Enabled "${wf.name}".`, opts, { enabled: wf.name, is_active: true });
   }));
 
 workflowCommand
@@ -122,8 +137,12 @@ workflowCommand
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Disable', async () => {
     const wf = await resolveWorkflow(name);
-    await put(`/workflows/${wf.short_guid}`, { is_active: false });
-    printResult(`Disabled "${wf.name}".`, opts, { disabled: wf.name });
+    const res = await put<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`, { is_active: false });
+    if (res.data?.is_active) {
+      console.error(clrError(`Workflow "${wf.name}" is still active after disable — not disabled.`));
+      process.exit(1);
+    }
+    printResult(`Disabled "${wf.name}".`, opts, { disabled: wf.name, is_active: false });
   }));
 
 workflowCommand
@@ -167,15 +186,47 @@ workflowCommand
   .action((name: string, opts) => run('Delete', async () => {
     const wf = await resolveWorkflow(name);
     await del(`/workflows/${wf.short_guid}`);
-    printResult(`Deleted "${wf.name}".`, opts, { deleted: wf.name });
+    // Delete is a soft-delete (is_active → 0). Verify the targeted record
+    // actually went inactive rather than trusting the request was accepted.
+    const after = await get<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`);
+    if (after.data?.is_active) {
+      console.error(clrError(`Workflow "${wf.name}" (${wf.short_guid}) is still active — delete had no effect.`));
+      process.exit(1);
+    }
+    printResult(`Deleted "${wf.name}".`, opts, { deleted: wf.name, short_guid: wf.short_guid });
   }));
 
+// Resolve a workflow by name within the linked project (like `gipity fn`), or
+// by short_guid anywhere. Names are unique per active project workflow (DB
+// constraint), so a bare name in this project is unambiguous; the same name in
+// another project is a different workflow and simply isn't matched here.
 async function resolveWorkflow(name: string): Promise<WorkflowData> {
-  const res = await get<{ data: WorkflowData[] }>('/workflows');
-  const match = res.data.find(w => w.name === name || w.short_guid === name);
-  if (!match) {
-    console.error(clrError(`Workflow "${name}" not found.`));
+  const { projectGuid } = requireConfig();
+  const res = await get<{ data: WorkflowData[] }>(`/projects/${projectGuid}/workflows`);
+  const list = res.data ?? [];
+
+  // Exact short_guid match wins — unambiguous override.
+  const byGuid = list.find(w => w.short_guid === name);
+  if (byGuid) return byGuid;
+
+  const byName = list.filter(w => w.name === name);
+  if (byName.length === 0) {
+    // Fall back to a global short_guid lookup (e.g. account-level workflows).
+    const all = await get<{ data: WorkflowData[] }>('/workflows');
+    const global = (all.data ?? []).find(w => w.short_guid === name);
+    if (global) return global;
+    console.error(clrError(`Workflow "${name}" not found in this project.`));
     process.exit(1);
   }
-  return match;
+  if (byName.length === 1) return byName[0]!;
+
+  // More than one (an active + soft-deleted carrying the same name): prefer the
+  // active one; refuse if still ambiguous.
+  const active = byName.filter(w => w.is_active);
+  if (active.length === 1) return active[0]!;
+  console.error(clrError(
+    `${byName.length} workflows named "${name}" in this project — pass a short_guid:\n` +
+    byName.map(w => `  ${w.short_guid}${w.is_active ? '' : ' (inactive)'}`).join('\n'),
+  ));
+  process.exit(1);
 }

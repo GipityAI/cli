@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { post } from '../api.js';
 import { formatSize } from '../utils.js';
 import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
@@ -16,6 +16,13 @@ interface DebugBundle {
   renderBlocking: string[];
   oversizedImages: { src: string; natural: string; displayed: string }[];
   lcp: { time: number; element: string; url: string | null; size: number } | null;
+  overflow: {
+    scrollWidth: number;
+    clientWidth: number;
+    overflowX: boolean;
+    amount: number;
+    culprits: { tag: string; cls: string; left: number; right: number; width: number }[];
+  } | null;
 }
 
 function shortUrl(url: string, truncate = true, maxLen = 100): string {
@@ -33,14 +40,23 @@ function shortUrl(url: string, truncate = true, maxLen = 100): string {
   return result.slice(0, headLen) + '…' + result.slice(-tailLen);
 }
 
-export const pageInspectCommand = new Command('page-inspect')
-  .description('Inspect a web page')
+export const pageInspectCommand = new Command('inspect')
+  .description('Inspect a web page (console, failed resources, timing, layout overflow)')
   .argument('<url>', 'URL to inspect')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before capturing (lets late async/LCP work settle)', '500')
   .option('--json', 'Output as JSON')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
-  .option('--all', 'Include render-blocking, large resources, oversized images, and LCP detail')
-  .action((url: string, opts) => run('Page inspect', async () => {
+  .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
+  // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
+  // an image here (`page screenshot` is the single path for that) — just point there.
+  .addOption(new Option('--screenshot [path]', 'Capture a screenshot').hideHelp())
+  .action((url: string, opts) => {
+    if (opts.screenshot !== undefined) {
+      console.error(clrError('page inspect does not capture screenshots. Use page screenshot:'));
+      console.error(`  gipity page screenshot ${url}${typeof opts.screenshot === 'string' ? ` -o ${opts.screenshot}` : ''}`);
+      process.exit(1);
+    }
+    return run('Page inspect', async () => {
     const parsedWait = parseInt(opts.wait, 10);
     const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
     const truncate = opts.truncate !== false;
@@ -93,6 +109,24 @@ export const pageInspectCommand = new Command('page-inspect')
       }
     }
 
+    // ── Layout (horizontal overflow) ──
+    if (b.overflow) {
+      if (b.overflow.overflowX) {
+        console.log(`\n  ${clrError(`Horizontal overflow: +${b.overflow.amount}px`)} ${muted(`(content ${b.overflow.scrollWidth}px vs viewport ${b.overflow.clientWidth}px)`)}`);
+        if (showAll && b.overflow.culprits.length > 0) {
+          console.log(`  ${muted('Overflowing elements:')}`);
+          for (const c of b.overflow.culprits) {
+            const sel = c.cls ? `${c.tag}.${c.cls.split(/\s+/)[0]}` : c.tag;
+            console.log(`    ${sel} ${muted(`(right ${c.right}px, width ${c.width}px)`)}`);
+          }
+        } else if (b.overflow.culprits.length > 0) {
+          console.log(`    ${muted(`${b.overflow.culprits.length} overflowing element(s) - use --all to list`)}`);
+        }
+      } else {
+        console.log(`\n  ${bold('Layout:')} ${muted('no horizontal overflow')}`);
+      }
+    }
+
     if (showAll) {
       // ── Render Blocking ──
       if (b.renderBlocking?.length > 0) {
@@ -120,4 +154,5 @@ export const pageInspectCommand = new Command('page-inspect')
     }
 
     console.log('');
-  }));
+    });
+  });

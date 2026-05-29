@@ -30,6 +30,19 @@ function baseUrl(): string {
   return getApiBaseOverride() || getConfig()?.apiBase || 'https://a.gipity.ai';
 }
 
+/** Exposed so streaming consumers (SSE) can build URLs without re-implementing
+ *  the override / config resolution. */
+export function getBaseUrl(): string {
+  return baseUrl();
+}
+
+/** Returns the access-token Authorization header value so streaming consumers
+ *  can attach it to fetch/EventSource calls. */
+export async function getAuthHeader(): Promise<string | undefined> {
+  const headers = await getHeaders();
+  return headers.Authorization;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;

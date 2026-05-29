@@ -25,7 +25,7 @@ All code execution happens on Gipity's hosted platform.
 | `gipity add <template>` | Add a template (web-simple, 2d-game, 3d-world, web-fullstack, api) |
 | `gipity fn [list\|call <name> [body]\|logs <name>]` | Manage and call serverless functions |
 | `gipity test [path]` | Run project tests in sandboxed containers |
-| `gipity page-inspect <url>` | One-shot page inspect: console errors, timing, failed resources. For interactive debugging (screenshots, clicks, eval), use the `browser` agent tool. |
+| `gipity page inspect <url>` | One-shot page inspect: console errors, timing, failed resources. For interactive debugging (screenshots, clicks, eval), use the `browser` agent tool. |
 | `gipity records [query\|schema]` | Query and manage Records API tables |
 | `gipity domain [list\|add\|remove]` | Manage custom domains |
 | `gipity credits` | Check balance and usage |
@@ -311,14 +311,12 @@ CLI shortcut: `gipity generate video "a cat playing piano" --aspect 9:16 -o cat.
 
 ### File uploads - `/uploads/init` + `/uploads/complete`
 
-Presigned S3 URLs - client PUTs directly to S3 (no proxy). Up to 30 GB. Easiest path is the helper script:
+Presigned S3 URLs - client PUTs directly to S3 (no proxy). Up to 30 GB. The umbrella `gipity.js` SDK (auto-injected via `{{ANALYTICS_SCRIPT}}` in every template) exposes `Gipity.upload`:
 
 ```html
-<script src="https://media.gipity.ai/scripts/gipity-upload.js"></script>
+<!-- already injected by the template; no extra script tag needed -->
 <script>
   const result = await Gipity.upload(fileInput.files[0], {
-    appGuid: '<PROJECT_GUID>',
-    appToken: token,
     onProgress: pct => bar.style.width = pct + '%',
     public: false,
     table: 'attachments',         // optional: associate with a record
@@ -457,7 +455,7 @@ Tips:
 | Speak text aloud in the browser | `/services/tts` → `new Audio(url).play()` (no browser-TTS fallback needed) |
 | Speech-to-text from a recording | `/services/transcribe` (multipart, client-side) |
 | Generate an image/video | `/services/image` or `/services/video` |
-| User-uploaded files | `gipity-upload.js` helper or `/uploads/init`+`/uploads/complete` |
+| User-uploaded files | `Gipity.upload(file)` (from the auto-injected `gipity.js` SDK) or raw `/uploads/init`+`/uploads/complete` |
 | Per-user data, paid by the user | `auth: user` function + `user_pays` LLM + popup login |
 | Live shared state across users | `wss://rt.gipity.ai` state room |
 

@@ -7,12 +7,17 @@
 import { clearConfigCache, saveConfigAt, getApiBaseOverride, GipityConfig } from './config.js';
 import { sync } from './sync.js';
 import { setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
+import { substituteDir } from './template-vars.js';
+import { muted } from './colors.js';
 
 export interface FinalizeLocalProjectOpts {
   /** Absolute path to the project dir (already mkdir'd by the caller). */
   dir: string;
   projectGuid: string;
   projectSlug: string;
+  /** Project display name — used to resolve `{{TITLE}}` and friends in any
+   *  template files that contain placeholders. */
+  projectName: string;
   accountSlug: string;
   agentGuid: string;
   /** When true, sync operations are non-fatal and fall through with a log. Used
@@ -48,6 +53,28 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
   saveConfigAt(opts.dir, config);
   process.chdir(opts.dir);
   clearConfigCache();
+
+  // Resolve `{{PROJECT_GUID}}` / `{{TITLE}}` / `{{ANALYTICS_SCRIPT}}` etc.
+  // BEFORE sync uploads. Otherwise a template's placeholder strings would
+  // ship verbatim to production (we hit this with karaoke-captions where
+  // `APP_GUID` resolved to the literal `'{{PROJECT_GUID}}'` and every API
+  // call 404'd). Mirrors what installTemplate does server-side for `gipity
+  // add` — keeps the two install paths behaviorally consistent.
+  try {
+    const sub = await substituteDir(opts.dir, {
+      projectGuid: opts.projectGuid,
+      projectName: opts.projectName,
+    });
+    if (sub.changed.length) {
+      console.log(muted(`Resolved template vars in ${sub.changed.length} file${sub.changed.length > 1 ? 's' : ''}.`));
+    }
+    for (const u of sub.unresolved) {
+      console.warn(muted(`  ${u.path}: unknown placeholder${u.tokens.length > 1 ? 's' : ''} ${u.tokens.join(', ')}`));
+    }
+  } catch (err) {
+    // Substitution failure shouldn't block init — log and continue.
+    console.warn(muted(`Template substitution skipped: ${(err as Error).message}`));
+  }
 
   let applied = 0;
   try {

@@ -141,7 +141,7 @@ gipity sync down     # Pull remote changes
 | `gipity add <template>` | Add a template (web-simple, 2d-game, 3d-world, web-fullstack, api) |
 | `gipity test` | Run project tests in sandboxed containers |
 | `gipity logs fn <name>` | View function execution logs |
-| `gipity page-inspect <url>` | Inspect a URL: console errors, performance, failed resources |
+| `gipity page inspect <url>` | Inspect a URL: console errors, performance, failed resources |
 | `gipity records` | Query and manage Records API tables |
 | `gipity fn` | Manage and call serverless functions |
 | `gipity rbac` | Manage RBAC policies |

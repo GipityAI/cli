@@ -123,7 +123,7 @@ function appendOption(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
-export const pageScreenshotCommand = new Command('page-screenshot')
+export const pageScreenshotCommand = new Command('screenshot')
   .description('Screenshot a web page')
   .argument('<url>', 'URL to screenshot')
   .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms', '1000')

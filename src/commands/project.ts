@@ -110,6 +110,7 @@ projectCommand
       dir,
       projectGuid: project.short_guid,
       projectSlug: project.slug,
+      projectName: project.name,
       accountSlug,
       agentGuid,
       sync: 'soft',

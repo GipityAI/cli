@@ -19,15 +19,19 @@ Templates:
     - \`3d-engine\` - Minimal 3D multiplayer base - Three.js + Rapier + Colyseus, no gameplay; build your own scene and mechanics on top
     - \`3d-world\` - Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)
     - \`api\` - Backend service, webhook, data pipeline, chatbot, cron job - no frontend
+    - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
 Only skip this on a build request if the user explicitly says not to.
 
 Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):
     - \`app-itsm\` - IT Service Management app (helpdesk, ticketing, incident management).
+    - \`monitor\` - Account-wide observability dashboard - auto-installed; rarely picked manually.
 
 Kits are reusable building blocks added to an existing app, not whole templates - their files land in \`src/packages/<name>/\`:
     - \`gipity add realtime\` - Multiplayer / presence / shared state - channels, host election, server-persisted sync. Engine-agnostic; works in any app.
-    - \`gipity add web-vision-mediapipe\` - On-device camera vision - gesture recognition, body pose, object detection. Runs fully client-side via MediaPipe Tasks; no server, no upload. Web only.`;
+    - \`gipity add web-vision-mediapipe\` - On-device camera vision - gesture recognition, body pose, object detection. Runs fully client-side via MediaPipe Tasks; no server, no upload. Web only.
+    - \`gipity add chatbot\` - Drop-in chatbot - configurable persona, scope guardrails, static knowledge (20k budget), streaming responses. Headless engine + bubble widget; bring your own UI if you want. Works in any app.
+    - \`gipity add audio-align\` - Audio + lyrics -> word-level timing JSON. Demucs vocal isolation + MMS_FA forced alignment, runs as a Modal L4 GPU job (~$0.01 per 3-min song). For karaoke captions, subtitling, language learning, dubbing alignment.`;
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
@@ -50,11 +54,11 @@ Gipity ships its own services for things apps usually pull from a third party - 
 
 The full rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity add <template>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead. To add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
 
-Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page-inspect <url>\` → fix any errors → repeat until the definition of done is met.
+Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page inspect <url>\` → fix any errors → repeat until the definition of done is met.
 
 ## CLI quick reference
 
-Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page-inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
+Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
 ## Files and sync
@@ -77,10 +81,15 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-video\` - Veo models, aspect, resolution
 
 App development skills:
-- \`app-debugging\` - debug a deployed app: page-inspect, screenshots, function logs
+- \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
+- \`jobs\` - long-running CPU + GPU compute jobs (Python / Node / bash)
+- \`realtime-scheduled-app\` - recipe: realtime presence/messages + DB function + scheduled poster, end-to-end
 - \`web-app-basics\` - coding guidelines, file structure, HTML/CSS/JS patterns
+
+Kit skills (reusable building blocks - \`gipity add <kit>\`):
+- \`audio-align\` - the audio-align kit: forced alignment of audio + lyrics into word-level timing JSON
 
 Other key skills:
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
@@ -88,7 +97,7 @@ Other key skills:
 
 export const DEFINITION_OF_DONE = `## Definition of done (build tasks)
 1. \`gipity deploy dev\` succeeds and you have a live URL.
-2. \`gipity page-inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen).
+2. \`gipity page inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen).
 3. For apps with functions: \`gipity test\` passes.
 4. You told the user the live URL.
 

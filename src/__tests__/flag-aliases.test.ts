@@ -1,6 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Command } from 'commander';
 import { normalizeAliases } from '../flag-aliases.js';
+
+/** Minimal program mirroring the real flag collision: `logs` aliases --from to
+ * --since, while `workflow create` declares --from for real. */
+function buildProgram(): Command {
+  const program = new Command();
+  program.command('logs').option('--since <when>', 'start time');
+  const wf = program.command('workflow');
+  wf.command('create').requiredOption('--from <path>', 'yaml path');
+  return program;
+}
 
 describe('normalizeAliases', () => {
   it('rewrites --out to --output', () => {
@@ -61,5 +72,23 @@ describe('normalizeAliases', () => {
       normalizeAliases(['--output-dir']),
       ['--output-dir'],
     );
+  });
+
+  describe('command-scoped suppression', () => {
+    it('leaves --from alone for a command that declares it for real', () => {
+      const program = buildProgram();
+      assert.deepEqual(
+        normalizeAliases(['node', 'gipity', 'workflow', 'create', '--from', 'workflows/x.yaml'], program),
+        ['node', 'gipity', 'workflow', 'create', '--from', 'workflows/x.yaml'],
+      );
+    });
+
+    it('still aliases --from to --since for a command that does not', () => {
+      const program = buildProgram();
+      assert.deepEqual(
+        normalizeAliases(['node', 'gipity', 'logs', '--from', '1h'], program),
+        ['node', 'gipity', 'logs', '--since', '1h'],
+      );
+    });
   });
 });

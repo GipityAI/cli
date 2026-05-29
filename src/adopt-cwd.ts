@@ -248,6 +248,7 @@ export async function adoptCurrentDir(opts: {
     dir: opts.cwd,
     projectGuid: project.short_guid,
     projectSlug: project.slug,
+    projectName: project.name,
     accountSlug: opts.accountSlug,
     agentGuid,
     sync: 'strict',

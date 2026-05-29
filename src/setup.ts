@@ -57,7 +57,7 @@ export const PERMISSIONS_SETTINGS = {
       'Bash(gipity db list *)',
       'Bash(gipity db create *)',
       'Bash(gipity memory *)',
-      'Bash(gipity page-inspect *)',
+      'Bash(gipity page *)',
       'Bash(gipity logs *)',
       'Bash(gipity sandbox *)',
       'Bash(gipity chat *)',
