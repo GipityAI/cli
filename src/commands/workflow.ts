@@ -197,24 +197,21 @@ workflowCommand
   }));
 
 // Resolve a workflow by name within the linked project (like `gipity fn`), or
-// by short_guid anywhere. Names are unique per active project workflow (DB
-// constraint), so a bare name in this project is unambiguous; the same name in
-// another project is a different workflow and simply isn't matched here.
+// by short_guid anywhere. Uses the single account-wide `/workflows` list (the
+// same endpoint the bare `workflow` list hits) so the whole command stays on
+// one route tree. Names are unique per active project workflow (DB constraint),
+// so we scope by the current project's slug; a short_guid resolves anywhere.
 async function resolveWorkflow(name: string): Promise<WorkflowData> {
-  const { projectGuid } = requireConfig();
-  const res = await get<{ data: WorkflowData[] }>(`/projects/${projectGuid}/workflows`);
-  const list = res.data ?? [];
+  const { projectSlug } = requireConfig();
+  const res = await get<WorkflowListResponse>('/workflows');
+  const all = res.data ?? [];
 
-  // Exact short_guid match wins — unambiguous override.
-  const byGuid = list.find(w => w.short_guid === name);
+  // Exact short_guid match wins anywhere — unambiguous override.
+  const byGuid = all.find(w => w.short_guid === name);
   if (byGuid) return byGuid;
 
-  const byName = list.filter(w => w.name === name);
+  const byName = all.filter(w => w.project_slug === projectSlug && w.name === name);
   if (byName.length === 0) {
-    // Fall back to a global short_guid lookup (e.g. account-level workflows).
-    const all = await get<{ data: WorkflowData[] }>('/workflows');
-    const global = (all.data ?? []).find(w => w.short_guid === name);
-    if (global) return global;
     console.error(clrError(`Workflow "${name}" not found in this project.`));
     process.exit(1);
   }

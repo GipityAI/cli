@@ -69,6 +69,7 @@ export const PERMISSIONS_SETTINGS = {
       'Bash(gipity file versions *)',
       'Bash(gipity records *)',
       'Bash(gipity fn *)',
+      'Bash(gipity service *)',
       'Bash(gipity rbac *)',
       'Bash(gipity audit *)',
       'Bash(gipity generate *)',

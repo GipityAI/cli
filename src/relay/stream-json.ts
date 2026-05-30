@@ -14,17 +14,18 @@
 
 // ─── Ingest wire format (matches server's /ingest Zod schema) ──────────
 
-// Note: no `ts` field. The server uses `messages.created_at = NOW()` as
-// the authoritative timestamp; a client-supplied hint isn't read and is
-// now rejected by the strict ingest schema.
+// `ts` is an optional informational hint (the daemon stamps it at the
+// moment it reads the event off the stream). The server stores it in the
+// untrusted `messages.event_at` column for per-event timing; `created_at`
+// stays server-authoritative (NOW()), so a hint can't backdate history.
 export type IngestEntry =
-  | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact' }
-  | { kind: 'prompt'; prompt: string }
-  | { kind: 'assistant'; text: string; blocks: any[] }
-  | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown }
-  | { kind: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean }
-  | { kind: 'compact'; trigger?: string }
-  | { kind: 'system'; content: string };
+  | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; ts?: string }
+  | { kind: 'prompt'; prompt: string; ts?: string }
+  | { kind: 'assistant'; text: string; blocks: any[]; ts?: string }
+  | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; ts?: string }
+  | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; ts?: string }
+  | { kind: 'compact'; trigger?: string; ts?: string }
+  | { kind: 'system'; content: string; ts?: string };
 
 // ─── Stream-json event shapes ──────────────────────────────────────────
 // Only the fields we actually read are typed - everything else is passed
@@ -134,8 +135,14 @@ function joinAssistantText(content: any[] | undefined): string {
  *  assistant event may yield one `assistant` entry AND one `tool_use`
  *  entry per tool_use block within it (server persists each tool call
  *  as its own `role='tool'` row, then updates it when the matching
- *  `tool_result` arrives). */
-export function mapEventToEntries(evt: StreamJsonEvent): IngestEntry[] {
+ *  `tool_result` arrives).
+ *
+ *  `toolNames` (optional) is a per-dispatch `tool_use_id → tool_name`
+ *  map threaded across events by the daemon: assistant events record
+ *  each tool call's name, the later user event with the paired
+ *  `tool_result` reads it back so the server can denormalize `tool_name`
+ *  onto the tool row even when the result lands as a stub. */
+export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, string>): IngestEntry[] {
   const out: IngestEntry[] = [];
 
   if (evt.type === 'system' && (evt as StreamJsonSystemInit).subtype === 'init') {
@@ -153,10 +160,12 @@ export function mapEventToEntries(evt: StreamJsonEvent): IngestEntry[] {
     }
     for (const block of content) {
       if (block?.type === 'tool_use' && typeof block.id === 'string') {
+        const toolName = typeof block.name === 'string' ? block.name : 'tool';
+        toolNames?.set(block.id, toolName);
         out.push({
           kind: 'tool_use',
           tool_use_id: block.id,
-          tool_name: typeof block.name === 'string' ? block.name : 'tool',
+          tool_name: toolName,
           tool_input: block.input ?? null,
         });
       }
@@ -172,6 +181,7 @@ export function mapEventToEntries(evt: StreamJsonEvent): IngestEntry[] {
         out.push({
           kind: 'tool_result',
           tool_use_id: block.tool_use_id,
+          tool_name: toolNames?.get(block.tool_use_id),
           content: block.content ?? null,
           is_error: Boolean(block.is_error),
         });

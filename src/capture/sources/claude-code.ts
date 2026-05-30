@@ -25,14 +25,17 @@
  * messages(conversation_id, source_uuid).
  */
 
+// Every entry can carry an optional `ts` - the transcript line's ISO
+// timestamp. The server stores it in the untrusted `messages.event_at`
+// column for per-message timing; `created_at` stays server-authoritative.
 export type IngestEntry =
-  | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; source_uuid?: string }
-  | { kind: 'prompt'; prompt: string; source_uuid?: string }
-  | { kind: 'assistant'; text: string; blocks: any[]; source_uuid?: string }
-  | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; source_uuid?: string }
-  | { kind: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean; source_uuid?: string }
-  | { kind: 'compact'; trigger?: string; source_uuid?: string }
-  | { kind: 'system'; content: string; source_uuid?: string };
+  | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; source_uuid?: string; ts?: string }
+  | { kind: 'prompt'; prompt: string; source_uuid?: string; ts?: string }
+  | { kind: 'assistant'; text: string; blocks: any[]; source_uuid?: string; ts?: string }
+  | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; source_uuid?: string; ts?: string }
+  | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; source_uuid?: string; ts?: string }
+  | { kind: 'compact'; trigger?: string; source_uuid?: string; ts?: string }
+  | { kind: 'system'; content: string; source_uuid?: string; ts?: string };
 
 /** Extract joined `{type:'text', text}` blocks into a single string.
  *  The full blocks array is emitted separately so the client can render
@@ -46,8 +49,39 @@ function joinText(content: any[] | undefined): string {
   return parts.join('\n');
 }
 
-/** Map a single parsed transcript line to zero or more ingest entries. */
-export function transcriptLineToEntries(line: any): IngestEntry[] {
+/** Stamp a unique `source_uuid` on every entry parsed from one transcript line.
+ *
+ *  One transcript line yields many entries (an assistant line emits its text
+ *  entry PLUS one tool_use entry per tool call). The server dedupes ingest on
+ *  the partial unique index messages(conversation_id, source_uuid) with
+ *  ON CONFLICT DO NOTHING. If all siblings shared the bare `line.uuid`, the
+ *  first entry (the assistant text) would claim the row and every subsequent
+ *  tool_use would be silently dropped - leaving the later tool_result to land
+ *  as a name-less stub. That bug made 100% of terminal-session tool calls lose
+ *  their tool_name.
+ *
+ *  The primary entry keeps the bare line uuid (so it still dedupes against rows
+ *  written before this fix); each sibling gets a deterministic `#N` suffix.
+ *  Determinism matters: a retried POST re-parses the same line in the same
+ *  order, producing identical suffixes, so dedup still collapses retries. */
+function stampEntries(entries: IngestEntry[], lineUuid: string, lineTs?: string): IngestEntry[] {
+  return entries.map((e, i) => ({
+    ...e,
+    source_uuid: i === 0 ? lineUuid : `${lineUuid}#${i}`,
+    ...(lineTs ? { ts: lineTs } : {}),
+  }));
+}
+
+/** Map a single parsed transcript line to zero or more ingest entries.
+ *
+ *  `toolNames` (optional) is a per-transcript `tool_use_id → tool_name`
+ *  map threaded across lines by `parseTranscript`: an assistant line
+ *  records each tool call's name into it, and the later user line that
+ *  carries the paired `tool_result` reads the name back out. This lets
+ *  the server denormalize `tool_name` onto the tool row even when the
+ *  result lands as a stub (the tool_use row missing/deduped). The
+ *  `tool_result` block itself never carries the name. */
+export function transcriptLineToEntries(line: any, toolNames?: Map<string, string>): IngestEntry[] {
   if (!line || typeof line !== 'object') return [];
   if (typeof line.type !== 'string') return [];
   if (typeof line.uuid !== 'string' || !line.uuid) return [];
@@ -57,13 +91,14 @@ export function transcriptLineToEntries(line: any): IngestEntry[] {
   if (line.toolUseResult && !line.message) return [];
 
   const srcUuid: string = line.uuid;
+  const lineTs: string | undefined = typeof line.timestamp === 'string' ? line.timestamp : undefined;
   const msg = line.message ?? {};
 
   if (line.type === 'user') {
     const content = msg.content;
     if (typeof content === 'string') {
       if (!content) return [];
-      return [{ kind: 'prompt', prompt: content, source_uuid: srcUuid }];
+      return stampEntries([{ kind: 'prompt', prompt: content }], srcUuid, lineTs);
     }
     if (Array.isArray(content)) {
       const out: IngestEntry[] = [];
@@ -72,17 +107,17 @@ export function transcriptLineToEntries(line: any): IngestEntry[] {
           out.push({
             kind: 'tool_result',
             tool_use_id: b.tool_use_id,
+            tool_name: toolNames?.get(b.tool_use_id),
             content: b.content ?? null,
             is_error: Boolean(b.is_error),
-            source_uuid: srcUuid,
           });
         } else if (b?.type === 'text' && typeof b.text === 'string' && b.text) {
           // A user message with raw text blocks (rare - first-turn preamble
           // is sometimes split this way). Treat like a prompt.
-          out.push({ kind: 'prompt', prompt: b.text, source_uuid: srcUuid });
+          out.push({ kind: 'prompt', prompt: b.text });
         }
       }
-      return out;
+      return stampEntries(out, srcUuid, lineTs);
     }
     return [];
   }
@@ -92,20 +127,21 @@ export function transcriptLineToEntries(line: any): IngestEntry[] {
     const text = joinText(content);
     const out: IngestEntry[] = [];
     if (text || content.length) {
-      out.push({ kind: 'assistant', text, blocks: content, source_uuid: srcUuid });
+      out.push({ kind: 'assistant', text, blocks: content });
     }
     for (const block of content) {
       if (block?.type === 'tool_use' && typeof block.id === 'string') {
+        const toolName = typeof block.name === 'string' ? block.name : 'tool';
+        toolNames?.set(block.id, toolName);
         out.push({
           kind: 'tool_use',
           tool_use_id: block.id,
-          tool_name: typeof block.name === 'string' ? block.name : 'tool',
+          tool_name: toolName,
           tool_input: block.input ?? null,
-          source_uuid: srcUuid,
         });
       }
     }
-    return out;
+    return stampEntries(out, srcUuid, lineTs);
   }
 
   // Other envelope types (system notes, hook-emitted, …) - not captured.
@@ -128,6 +164,11 @@ export function parseTranscript(
   let seenWatermark = afterUuid === null;
   let lastUuid: string | null = afterUuid;
   const out: IngestEntry[] = [];
+  // tool_use_id → tool_name, accumulated across lines so a later
+  // tool_result can be denormalized with its tool's name. Built from the
+  // whole file (including pre-watermark lines) so a result whose tool_use
+  // was forwarded in an earlier sweep still resolves its name.
+  const toolNames = new Map<string, string>();
 
   for (const raw of content.split('\n')) {
     const line = raw.trim();
@@ -135,12 +176,21 @@ export function parseTranscript(
     let parsed: any;
     try { parsed = JSON.parse(line); } catch { continue; }
 
+    // Record tool names from every assistant line we scan, even before the
+    // watermark - the map is read-only side state, it doesn't emit entries.
     if (!seenWatermark) {
+      if (Array.isArray(parsed?.message?.content)) {
+        for (const block of parsed.message.content) {
+          if (block?.type === 'tool_use' && typeof block.id === 'string') {
+            toolNames.set(block.id, typeof block.name === 'string' ? block.name : 'tool');
+          }
+        }
+      }
       if (parsed?.uuid === afterUuid) seenWatermark = true;
       continue;
     }
 
-    const entries = transcriptLineToEntries(parsed);
+    const entries = transcriptLineToEntries(parsed, toolNames);
     if (entries.length) {
       for (const e of entries) out.push(e);
       lastUuid = parsed.uuid;

@@ -19,14 +19,16 @@ import { mapEventToEntries, type IngestEntry } from '../relay/stream-json.js';
 
 /** Mirror of the server's `entrySchema` in
  *  platform/server/src/routes/remote-sessions.ts. Keep in sync. */
+// Every kind also allows the optional `ts` event-time hint (stored in
+// the server's untrusted `event_at` column).
 const ALLOWED_KEYS_BY_KIND: Record<IngestEntry['kind'], readonly string[]> = {
-  attach:      ['kind', 'session_id', 'cwd', 'source'],
-  prompt:      ['kind', 'prompt'],
-  tool_use:    ['kind', 'tool_use_id', 'tool_name', 'tool_input'],
-  tool_result: ['kind', 'tool_use_id', 'content', 'is_error'],
-  assistant:   ['kind', 'text', 'blocks'],
-  compact:     ['kind', 'trigger'],
-  system:      ['kind', 'content'],
+  attach:      ['kind', 'session_id', 'cwd', 'source', 'ts'],
+  prompt:      ['kind', 'prompt', 'ts'],
+  tool_use:    ['kind', 'tool_use_id', 'tool_name', 'tool_input', 'ts'],
+  tool_result: ['kind', 'tool_use_id', 'tool_name', 'content', 'is_error', 'ts'],
+  assistant:   ['kind', 'text', 'blocks', 'ts'],
+  compact:     ['kind', 'trigger', 'ts'],
+  system:      ['kind', 'content', 'ts'],
 };
 
 /** Sample stream-json events covering every branch of mapEventToEntries.
@@ -69,6 +71,28 @@ describe('ingest contract: daemon entries match server-allowed keys', () => {
       }
     });
   }
+
+  it('tool_result resolves tool_name from the threaded toolNames map', () => {
+    // The tool_result block itself has no name; the daemon threads a
+    // tool_use_id → tool_name map across events so the result can be
+    // denormalized. Replay the assistant (records the name) then the user
+    // (reads it back) through one shared map, as the daemon does.
+    const toolNames = new Map<string, string>();
+    mapEventToEntries(
+      { type: 'assistant', message: { content: [
+        { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+      ] } },
+      toolNames,
+    );
+    const [result] = mapEventToEntries(
+      { type: 'user', message: { content: [
+        { type: 'tool_result', tool_use_id: 't1', content: 'ok', is_error: false },
+      ] } },
+      toolNames,
+    );
+    assert.equal(result?.kind, 'tool_result');
+    assert.equal((result as { tool_name?: string }).tool_name, 'Bash');
+  });
 
   it('manifest covers every IngestEntry kind in the type union', () => {
     // Compile-time check: TypeScript ensures ALLOWED_KEYS_BY_KIND has an

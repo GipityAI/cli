@@ -31,6 +31,7 @@ import { logsCommand } from './commands/logs.js';
 import { pageCommand } from './commands/page.js';
 import { recordsCommand } from './commands/records.js';
 import { fnCommand } from './commands/fn.js';
+import { serviceCommand } from './commands/service.js';
 import { jobCommand } from './commands/job.js';
 import { rbacCommand } from './commands/rbac.js';
 import { auditCommand } from './commands/audit.js';
@@ -93,12 +94,19 @@ function configureHelp(cmd: Command): void {
 
 const program = new Command();
 
+// Global value-options (`--api-base <url>`) are only meaningful before the
+// subcommand. Without this, commander interleaves program + subcommand option
+// parsing and mis-reads a subcommand's `.requiredOption()` as missing when a
+// global value-option precedes it (e.g. `gipity --api-base X workflow create
+// --from Y`). enablePositionalOptions draws the boundary at the first command.
+program.enablePositionalOptions();
+
 // ── Command groups (logical ordering within each) ──────────────────────
 const commonGroup      = [skillCommand, projectCommand, addCommand, deployCommand];
 const connectGroup     = [claudeCommand, relayCommand];
 const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];
-const appBuildingGroup = [testCommand, fnCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
+const appBuildingGroup = [testCommand, fnCommand, serviceCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
 const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand];
 const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
 const setupGroup       = [loginCommand, logoutCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
