@@ -407,8 +407,15 @@ export function plan(
     }
     // unchanged × unchanged → noop
     if (lSide === 'unchanged' && rSide === 'unchanged') continue;
-    // unchanged × modified → download
+    // unchanged × modified → download, but ONLY if the remote genuinely advanced.
+    // Guards a read-after-write race: right after a local write+push, the push can
+    // advance the local baseline to the new version while the remote tree API still
+    // serves the OLD bytes (stale read). That makes remote look "modified" vs an
+    // already-updated baseline, and a blind download would silently clobber the
+    // just-written local file with a stale older version. A real remote change
+    // always carries a strictly newer serverVersion; an equal/older one is stale.
     if (lSide === 'unchanged' && rSide === 'modified') {
+      if (B && R!.serverVersion <= B.serverVersion) continue;
       actions.push({ path, kind: 'download', remoteSize: R!.size });
       continue;
     }
@@ -461,8 +468,11 @@ export function plan(
       actions.push({ path, kind: 'delete-remote', remoteSize: R!.size, expectedServerVersion: B!.serverVersion });
       continue;
     }
-    // deleted × modified → remote wins, restore locally
+    // deleted × modified → remote wins, restore locally — but only if the remote
+    // actually advanced past the baseline. A stale (older/equal) remote read must
+    // not resurrect a file the user intentionally deleted.
     if (lSide === 'deleted' && rSide === 'modified') {
+      if (B && R!.serverVersion <= B.serverVersion) continue;
       actions.push({
         path, kind: 'download', remoteSize: R!.size,
         reason: 'local deleted but remote modified - remote preserved',

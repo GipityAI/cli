@@ -44,9 +44,12 @@ export const pageInspectCommand = new Command('inspect')
   .description('Inspect a web page (console, failed resources, timing, layout overflow)')
   .argument('<url>', 'URL to inspect')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before capturing (lets late async/LCP work settle)', '500')
+  .option('--wait-for <selector>', 'Wait until this CSS selector appears before capturing (deterministic; replaces --wait)')
+  .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
+  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps run headlessly (audio is a built-in tone, not real speech)')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
   // an image here (`page screenshot` is the single path for that) — just point there.
   .addOption(new Option('--screenshot [path]', 'Capture a screenshot').hideHelp())
@@ -59,12 +62,19 @@ export const pageInspectCommand = new Command('inspect')
     return run('Page inspect', async () => {
     const parsedWait = parseInt(opts.wait, 10);
     const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
+    const parsedTimeout = parseInt(opts.waitTimeout, 10);
+    const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
     const truncate = opts.truncate !== false;
     const showAll = opts.all === true;
 
     const res = await post<{ data: DebugBundle }>(
       `/tools/browser/inspect`,
-      { url, waitMs },
+      {
+        url, waitMs,
+        waitForSelector: opts.waitFor || undefined,
+        waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
+        fakeMedia: opts.fakeMedia || undefined,
+      },
     );
 
     const b = res.data;
@@ -102,11 +112,28 @@ export const pageInspectCommand = new Command('inspect')
     }
 
     // ── Failed Resources ──
-    if (b.failedResources?.length > 0) {
-      console.log(`\n  ${clrError(`Failed resources (${b.failedResources.length}):`)}`);
-      for (const r of b.failedResources) {
+    // Browsers auto-request /favicon.ico at the site root for every page, so a
+    // 404 there isn't a resource the page actually links — it's noise on any
+    // app served under a subpath. Split that implicit request out of the failure
+    // list into a harmless note rather than flagging it as an error.
+    const isImplicitFavicon = (entry: string): boolean => {
+      const urlPart = entry.replace(/\s*\([^)]*\)\s*$/, '');
+      try {
+        return new URL(urlPart).pathname === '/favicon.ico';
+      } catch {
+        return false;
+      }
+    };
+    const failed = (b.failedResources || []).filter((r) => !isImplicitFavicon(r));
+    const rootFaviconMissing = (b.failedResources || []).some(isImplicitFavicon);
+    if (failed.length > 0) {
+      console.log(`\n  ${clrError(`Failed resources (${failed.length}):`)}`);
+      for (const r of failed) {
         console.log(`    ${clrError(r)}`);
       }
+    }
+    if (rootFaviconMissing) {
+      console.log(`\n  ${muted('No root /favicon.ico (browsers request this automatically; harmless for app pages served under a subpath)')}`);
     }
 
     // ── Layout (horizontal overflow) ──

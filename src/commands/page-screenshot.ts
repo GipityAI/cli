@@ -132,6 +132,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
+  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
@@ -161,6 +162,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       full: !!opts.full,
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
+      ...(opts.fakeMedia ? { fakeMedia: true } : {}),
     };
 
     const entries = await postForTarEntries('/tools/browser/screenshot', body);

@@ -60,10 +60,35 @@ describe('transcriptLineToEntries', () => {
     assert.equal(out.length, 2);
     assert.equal(out[0].kind, 'assistant');
     assert.equal((out[0] as any).text, 'running:\ndone');
+    // The primary entry keeps the bare line uuid; the sibling tool_use gets a
+    // deterministic #N suffix so the server's (conversation_id, source_uuid)
+    // dedup index does NOT drop it. Without this, the tool row lost its name.
     assert.equal((out[0] as any).source_uuid, 'a1');
     assert.equal(out[1].kind, 'tool_use');
     assert.equal((out[1] as any).tool_name, 'Bash');
-    assert.equal((out[1] as any).source_uuid, 'a1');
+    assert.equal((out[1] as any).source_uuid, 'a1#1');
+  });
+
+  it('gives every entry from one line a UNIQUE source_uuid (dedup-collision regression)', () => {
+    // An assistant turn with text + two parallel tool calls. All three entries
+    // derive from the same transcript line. Before the fix they shared the bare
+    // line uuid and the server dropped both tool_use rows on ON CONFLICT.
+    const out = transcriptLineToEntries({
+      type: 'assistant',
+      uuid: 'a9',
+      message: {
+        content: [
+          { type: 'text', text: 'doing two things' },
+          { type: 'tool_use', id: 'tool_x', name: 'Read', input: { file: 'a' } },
+          { type: 'tool_use', id: 'tool_y', name: 'Bash', input: { command: 'ls' } },
+        ],
+      },
+    });
+    assert.equal(out.length, 3);
+    const uuids = out.map(e => (e as any).source_uuid);
+    assert.deepEqual(uuids, ['a9', 'a9#1', 'a9#2']);
+    // The invariant that matters: no two entries collide.
+    assert.equal(new Set(uuids).size, out.length);
   });
 });
 

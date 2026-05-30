@@ -974,13 +974,22 @@ export async function spawnGipityClaude(
     // as they arrive. That's the live-streaming path - every assistant
     // message and tool call appears in the web CLI within a second of
     // Claude emitting it.
+    // Per-dispatch tool_use_id → tool_name map so a `tool_result` event can
+    // be denormalized with its tool's name (the result block omits it).
+    const toolNames = new Map<string, string>();
     const splitter = createLineSplitter((line) => {
       const evt = parseEvent(line, (reason, snippet) => {
         log('warn', 'stream-json parse skipped line', { id: d.short_guid, reason, snippet });
       });
       if (!evt) return;
-      const entries = mapEventToEntries(evt);
+      const entries = mapEventToEntries(evt, toolNames);
       if (entries.length === 0) return;
+      // Stamp the read time as the event-time hint (event_at). Stream-json
+      // carries no per-event timestamp; the daemon reads events as Claude
+      // emits them, so receipt time is a close, per-event proxy - far
+      // better than the single flush-time created_at on the whole batch.
+      const ts = new Date().toISOString();
+      for (const e of entries) e.ts = ts;
       // Fire-and-forget POST but tracked so the drain on exit can
       // `allSettled` the set before we claim the spawn is done.
       const p: Promise<void> = postIngest(d.conversation_guid, entries)

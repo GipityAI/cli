@@ -38,6 +38,47 @@ describe('plan() - 9-cell decision table', () => {
     assert.equal(p.actions[0].kind, 'download');
   });
 
+  // Read-after-write race guard: a just-pushed local file advances the baseline,
+  // but the remote tree can still serve an OLDER version (stale read). That looks
+  // like unchanged×modified; a blind download would clobber the new local bytes.
+  // A real remote change always carries a strictly newer serverVersion.
+  it('unchanged × modified but remote serverVersion ≤ baseline (stale read) → no download', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-new')]]),
+      new Map([['foo', remote('foo', 'h-stale', 4)]]),
+      { foo: baselineOf('h-new', 5) },
+    );
+    assert.equal(p.actions.length, 0);
+  });
+
+  it('unchanged × modified with equal serverVersion (differing sha) → no download', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h-new')]]),
+      new Map([['foo', remote('foo', 'h-stale', 5)]]),
+      { foo: baselineOf('h-new', 5) },
+    );
+    assert.equal(p.actions.length, 0);
+  });
+
+  it('deleted × modified but stale remote (serverVersion ≤ baseline) → no resurrect', () => {
+    const p = plan(
+      new Map(),
+      new Map([['foo', remote('foo', 'h-stale', 4)]]),
+      { foo: baselineOf('h-cur', 5) },
+    );
+    assert.equal(p.actions.length, 0);
+  });
+
+  it('deleted × modified with a genuinely newer remote → restore (download)', () => {
+    const p = plan(
+      new Map(),
+      new Map([['foo', remote('foo', 'h-newer', 9)]]),
+      { foo: baselineOf('h-cur', 5) },
+    );
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
+  });
+
   it('unchanged × deleted → delete-local', () => {
     const p = plan(
       new Map([['foo', local(100, 'h1')]]),

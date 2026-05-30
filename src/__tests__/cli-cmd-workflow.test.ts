@@ -31,7 +31,7 @@ test('gipity workflow lists workflows with active counters', async () => {
 
 test('gipity workflow info <name> resolves by name and shows details', async () => {
   mock.reset();
-  mock.on('GET /workflows', { body: { data: [WF_A, WF_B], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('GET /workflows', { body: { data: [WF_A, WF_B] } });
   mock.on('GET /workflows/wf_WflowAa0', { body: { data: { ...WF_A, steps: [{ step_order: 1, name: 'step1', model: 'claude-sonnet-4-6' }] } } });
   const r = await fresh(['workflow', 'info', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
@@ -44,7 +44,7 @@ test('gipity workflow info <name> resolves by name and shows details', async () 
 
 test('gipity workflow run <name> POSTs and prints triggered', async () => {
   mock.reset();
-  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('GET /workflows', { body: { data: [WF_A] } });
   mock.on('POST /workflows/wf_WflowAa0/run', { body: { data: { message: 'queued', workflow_guid: 'wf_WflowAa0' } } });
   const r = await fresh(['workflow', 'run', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
@@ -53,7 +53,7 @@ test('gipity workflow run <name> POSTs and prints triggered', async () => {
 
 test('gipity workflow runs <name> lists recent runs', async () => {
   mock.reset();
-  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('GET /workflows', { body: { data: [WF_A] } });
   mock.on('GET /workflows/wf_WflowAa0/runs', { body: { data: [
     { short_guid: 'wr_Run00001', status: 'completed', started_at: '2026-05-01T10:00:00Z', completed_at: '2026-05-01T10:00:05Z', total_tokens: 100 },
     { short_guid: 'wr_Run00002', status: 'failed',    started_at: '2026-05-02T10:00:00Z', completed_at: null, total_tokens: 50 },
@@ -68,8 +68,9 @@ test('gipity workflow runs <name> lists recent runs', async () => {
 
 test('gipity workflow enable <name> PUTs is_active=true', async () => {
   mock.reset();
-  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
-  mock.on('PUT /workflows/wf_WflowAa0', { body: { data: {} } });
+  mock.on('GET /workflows', { body: { data: [WF_A] } });
+  // enable verifies the PUT took effect, so the response must reflect is_active.
+  mock.on('PUT /workflows/wf_WflowAa0', { body: { data: { ...WF_A, is_active: 1 } } });
   const r = await fresh(['workflow', 'enable', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Enabled "Daily"/);
@@ -77,8 +78,9 @@ test('gipity workflow enable <name> PUTs is_active=true', async () => {
 
 test('gipity workflow disable <name> PUTs is_active=false', async () => {
   mock.reset();
-  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
-  mock.on('PUT /workflows/wf_WflowAa0', { body: { data: {} } });
+  mock.on('GET /workflows', { body: { data: [WF_A] } });
+  // disable verifies is_active went falsy, so the response must reflect that.
+  mock.on('PUT /workflows/wf_WflowAa0', { body: { data: { ...WF_A, is_active: 0 } } });
   const r = await fresh(['workflow', 'disable', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Disabled "Daily"/);
@@ -86,8 +88,10 @@ test('gipity workflow disable <name> PUTs is_active=false', async () => {
 
 test('gipity workflow delete <name> calls DELETE', async () => {
   mock.reset();
-  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('GET /workflows', { body: { data: [WF_A] } });
   mock.on('DELETE /workflows/wf_WflowAa0', { body: { data: {} } });
+  // delete is a soft-delete; the command re-GETs to confirm is_active went 0.
+  mock.on('GET /workflows/wf_WflowAa0', { body: { data: { ...WF_A, is_active: 0 } } });
   const r = await fresh(['workflow', 'delete', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Deleted "Daily"/);
