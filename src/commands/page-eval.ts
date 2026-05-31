@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted } from '../colors.js';
@@ -51,19 +52,36 @@ async function pollEvalResult(evalJobId: string, waitMs: number): Promise<EvalRe
 export const pageEvalCommand = new Command('eval')
   .description('Evaluate a JS expression in a real browser on a page (DOM, computed styles, element rects)')
   .argument('<url>', 'URL to load')
-  .argument('<expr>', 'JavaScript expression to evaluate in page context (result is JSON-serialized)')
+  .argument('[expr]', 'JavaScript expression to evaluate in page context (result is JSON-serialized). Pass "-" to read it from stdin, or use --expr-file')
+  .option('--expr-file <path>', 'Read the expression from a file instead of the argument (avoids shell quoting)')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
-  .action((url: string, expr: string, opts) => run('Page eval', async () => {
+  .addHelpText('after', `
+Multi-property or quote-heavy expressions are awkward to pass through the shell.
+Read them from a file or stdin instead:
+  gipity page eval https://example.com "document.title"
+  gipity page eval https://example.com --expr-file ./snippet.js
+  echo "document.title" | gipity page eval https://example.com -`)
+  .action((url: string, expr: string | undefined, opts) => run('Page eval', async () => {
+    let source = expr;
+    if (opts.exprFile) {
+      source = readFileSync(opts.exprFile, 'utf-8');
+    } else if (expr === '-') {
+      source = readFileSync(0, 'utf-8');
+    }
+    if (source === undefined || source.trim() === '') {
+      throw new Error('No expression provided. Pass an expression argument, "-" to read from stdin, or --expr-file <path>.');
+    }
+
     const parsedWait = parseInt(opts.wait, 10);
     const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
 
     const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
-      url, expr, waitMs,
+      url, expr: source, waitMs,
       waitForSelector: opts.waitFor || undefined,
       waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
     });
@@ -75,7 +93,7 @@ export const pageEvalCommand = new Command('eval')
     }
 
     console.log(`\n${brand('Eval')} ${bold(d.url || url)}`);
-    console.log(`  ${muted('Expression:')} ${expr}`);
+    console.log(`  ${muted('Expression:')} ${source}`);
     console.log(`\n${d.result || muted('(empty result)')}`);
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
     console.log('');

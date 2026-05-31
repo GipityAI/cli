@@ -1,5 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome } from './helpers/test-home.js';
@@ -144,6 +147,28 @@ test('gipity page eval --json emits url, result, and truncated', async () => {
   const parsed = JSON.parse(r.stdout.trim());
   assert.equal(parsed.result, '42');
   assert.equal(parsed.truncated, true);
+});
+
+test('gipity page eval reads the expression from a file with --expr-file', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-f', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-f', { body: { data: {
+    status: 'done', url: 'https://example.com', result: 'Example Domain', truncated: false,
+  } } });
+  const file = join(mkdtempSync(join(tmpdir(), 'gipity-eval-')), 'snippet.js');
+  writeFileSync(file, 'document.title');
+  const r = await run(['page', 'eval', 'https://example.com', '--expr-file', file]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/eval');
+  assert.ok(req, 'eval request was received');
+  assert.equal((req!.body as { expr?: string }).expr, 'document.title');
+});
+
+test('gipity page eval errors clearly when no expression is provided', async () => {
+  mock.reset();
+  const r = await run(['page', 'eval', 'https://example.com']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /No expression provided/);
 });
 
 test('gipity page eval surfaces a failed eval job', async () => {
