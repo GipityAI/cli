@@ -76,7 +76,19 @@ export const pageEvalCommand = new Command('eval')
 
     console.log(`\n${brand('Eval')} ${bold(d.url || url)}`);
     console.log(`  ${muted('Expression:')} ${expr}`);
-    console.log(`\n${d.result || muted('(empty result)')}`);
+    // Disambiguate a real empty value from eval failure or truncated output:
+    // mark the exact value the expression resolved to, so the caller doesn't keep
+    // probing a variable that simply isn't there. A genuine `undefined` arrives as
+    // a missing field (JSON drops `undefined`), so the typed `string` can be
+    // undefined/null/'' at runtime — distinguish each instead of collapsing all
+    // three into '(empty result)'.
+    const r = d.result as string | null | undefined;
+    let body: string;
+    if (r === undefined) body = muted('→ undefined');
+    else if (r === null) body = muted('→ null');
+    else if (r === '') body = muted('→ "" (empty string)');
+    else body = r;
+    console.log(`\n${body}`);
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
     console.log('');
   }));
