@@ -158,6 +158,31 @@ test('gipity page eval surfaces a failed eval job', async () => {
   assert.match(r.stderr, /about:blank/);
 });
 
+// `page inspect` takes no JS expression — `page eval` is the separate verb.
+// Reaching for `--eval` or pasting an expression should error AND point there.
+test('gipity page inspect errors on --eval and suggests page eval', async () => {
+  mock.reset();
+  const r = await run(['page', 'inspect', 'https://example.com', '--eval', '(()=>1)()']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /unknown option '--eval'/);
+  assert.match(r.stderr, /gipity page eval https:\/\/example\.com "<expression>"\?/);
+});
+
+test('gipity page inspect suggests page eval when a JS expression is pasted as an extra arg', async () => {
+  mock.reset();
+  const r = await run(['page', 'inspect', 'https://example.com', 'document.title']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /too many arguments/);
+  assert.match(r.stderr, /gipity page eval https:\/\/example\.com "<expression>"\?/);
+});
+
+test('gipity page inspect does not suggest page eval for a non-expression extra arg', async () => {
+  mock.reset();
+  const r = await run(['page', 'inspect', 'https://example.com', 'extra-thing']);
+  assert.notEqual(r.status, 0);
+  assert.doesNotMatch(r.stderr, /gipity page eval/);
+});
+
 // ── screenshot default filename helpers (pure) ─────────────────────────────
 
 test('timestampSlug renders yyyy-mm-dd_hh-mm-ss, zero-padded, sortable', () => {
