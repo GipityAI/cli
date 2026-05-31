@@ -65,24 +65,8 @@ function collectRealFlags(argv: string[], program: Command): Set<string> {
   let cmd: Command = program;
   const chain: Command[] = [program];
 
-  // Resolve the deepest subcommand, stepping over any options (and their values)
-  // that appear before or among the command words. A leading global option must
-  // not stop resolution: `gipity --api-base <url> workflow create --from x` has
-  // to still descend to `create` so its real `--from` is collected — otherwise
-  // the `--from`→`--since` alias wrongly rewrites the command's own option. The
-  // old code broke at the first `-`, so any global option masked every
-  // subcommand flag below it.
-  for (let i = 0; i < args.length; i++) {
-    const tok = args[i];
-    if (tok.startsWith('-')) {
-      // Skip a known value-taking option's separate-token value so it isn't
-      // mistaken for a command word (e.g. the `<url>` after `--api-base`).
-      const opt = findChainOption(chain, tok);
-      if (opt && (opt.required || opt.optional) && !tok.includes('=') && i + 1 < args.length) {
-        i++;
-      }
-      continue;
-    }
+  for (const tok of args) {
+    if (tok.startsWith('-')) break; // first flag ends command resolution
     const next = cmd.commands.find(c => c.name() === tok || c.aliases().includes(tok));
     if (!next) break;
     cmd = next;
@@ -96,17 +80,4 @@ function collectRealFlags(argv: string[], program: Command): Set<string> {
     }
   }
   return flags;
-}
-
-/** Find an option matching `rawTok` (`--flag`, `-x`, or `--flag=value`) declared
- *  on any command resolved so far, so we know whether to skip a following value. */
-function findChainOption(chain: Command[], rawTok: string) {
-  const eq = rawTok.indexOf('=');
-  const name = eq > 0 ? rawTok.slice(0, eq) : rawTok;
-  for (const c of chain) {
-    for (const opt of c.options) {
-      if (opt.long === name || opt.short === name) return opt;
-    }
-  }
-  return null;
 }

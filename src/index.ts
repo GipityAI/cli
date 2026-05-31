@@ -94,6 +94,13 @@ function configureHelp(cmd: Command): void {
 
 const program = new Command();
 
+// Global value-options (`--api-base <url>`) are only meaningful before the
+// subcommand. Without this, commander interleaves program + subcommand option
+// parsing and mis-reads a subcommand's `.requiredOption()` as missing when a
+// global value-option precedes it (e.g. `gipity --api-base X workflow create
+// --from Y`). enablePositionalOptions draws the boundary at the first command.
+program.enablePositionalOptions();
+
 // ── Command groups (logical ordering within each) ──────────────────────
 const commonGroup      = [skillCommand, projectCommand, addCommand, deployCommand];
 const connectGroup     = [claudeCommand, relayCommand];

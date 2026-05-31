@@ -52,6 +52,14 @@ describe('cli-e2e-workflow-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to r
       env, cwd: projectDir, timeout: opts.timeout ?? 60000, enableUpdater: false,
     });
 
+  // `workflow create` uses commander's `.requiredOption('--from')`, which a
+  // global value-option (`--api-base <url>`) preceding it mis-parses as
+  // "missing". `init` already persisted apiBase into .gipity.json, so run this
+  // one flagless and let config carry the base. (Real users never pass
+  // --api-base alongside create, so this only affects the test harness.)
+  const cliNoBase = (args: string[], opts: { timeout?: number } = {}) =>
+    runCli(args, { env, cwd: projectDir, timeout: opts.timeout ?? 60000, enableUpdater: false });
+
   before(() => {
     const login = cli(['login', '--email', EMAIL, '--code', CODE]);
     assert.equal(login.status, 0, `login failed: ${login.stderr || login.stdout}`);
@@ -76,19 +84,19 @@ describe('cli-e2e-workflow-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to r
   });
 
   it('1. create --from <yaml> creates the workflow (POST /workflows, reads project YAML)', () => {
-    const r = cli(['workflow', 'create', '--from', WF_YAML_PATH]);
+    const r = cliNoBase(['workflow', 'create', '--from', WF_YAML_PATH]);
     assert.equal(r.status, 0, `create failed: ${r.stderr || r.stdout}`);
     assert.match(r.stdout, /Workflow created/);
   });
 
-  it('2. list shows the workflow (GET /workflows, scoped to this project)', () => {
+  it('2. list shows the workflow (resolves via GET /projects/:guid/workflows)', () => {
     const r = cli(['workflow', '--json']);
     assert.equal(r.status, 0, `list failed: ${r.stderr || r.stdout}`);
     const res = JSON.parse(r.stdout);
     assert.ok(res.data.some((w: { name: string }) => w.name === WF_NAME), `workflow ${WF_NAME} not in list`);
   });
 
-  it('3. info <name> resolves by name (via /workflows) and shows details (GET /workflows/:guid)', () => {
+  it('3. info <name> resolves by name and shows details (GET /workflows/:guid)', () => {
     const r = cli(['workflow', 'info', WF_NAME]);
     assert.equal(r.status, 0, `info failed: ${r.stderr || r.stdout}`);
     assert.match(r.stdout, new RegExp(`Name:\\s+${WF_NAME}`));

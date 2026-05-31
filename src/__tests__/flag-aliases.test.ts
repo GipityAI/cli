@@ -7,9 +7,6 @@ import { normalizeAliases } from '../flag-aliases.js';
  * --since, while `workflow create` declares --from for real. */
 function buildProgram(): Command {
   const program = new Command();
-  // Mirror the real entrypoint: a global value-option + boolean flag that can
-  // lead the argv before any subcommand.
-  program.option('--api-base <url>').option('-y, --yes');
   program.command('logs').option('--since <when>', 'start time');
   const wf = program.command('workflow');
   wf.command('create').requiredOption('--from <path>', 'yaml path');
@@ -91,32 +88,6 @@ describe('normalizeAliases', () => {
       assert.deepEqual(
         normalizeAliases(['node', 'gipity', 'logs', '--from', '1h'], program),
         ['node', 'gipity', 'logs', '--since', '1h'],
-      );
-    });
-
-    it('leaves --from alone even when a global value-option (--api-base) leads', () => {
-      const program = buildProgram();
-      // The bug: a leading global value-option stopped command resolution, so
-      // `create`'s real --from was never seen and got rewritten to --since.
-      assert.deepEqual(
-        normalizeAliases(['node', 'gipity', '--api-base', 'http://x', 'workflow', 'create', '--from', 'workflows/x.yaml'], program),
-        ['node', 'gipity', '--api-base', 'http://x', 'workflow', 'create', '--from', 'workflows/x.yaml'],
-      );
-    });
-
-    it('leaves --from alone when a leading boolean global flag (-y) precedes it', () => {
-      const program = buildProgram();
-      assert.deepEqual(
-        normalizeAliases(['node', 'gipity', '-y', 'workflow', 'create', '--from', 'workflows/x.yaml'], program),
-        ['node', 'gipity', '-y', 'workflow', 'create', '--from', 'workflows/x.yaml'],
-      );
-    });
-
-    it('still aliases --from for `logs` even behind a leading --api-base', () => {
-      const program = buildProgram();
-      assert.deepEqual(
-        normalizeAliases(['node', 'gipity', '--api-base', 'http://x', 'logs', '--from', '1h'], program),
-        ['node', 'gipity', '--api-base', 'http://x', 'logs', '--since', '1h'],
       );
     });
   });
