@@ -113,6 +113,7 @@ GCC/Rust).
       if (res.data.outputFiles && res.data.outputFiles.length > 0) {
         console.log(`\nOutput files saved to project:`);
         for (const f of res.data.outputFiles) console.log(`  ${f}`);
+        console.log(dim(`\nThese live in the project, not your working directory yet - run \`gipity sync\` to pull them down.`));
       }
       if (res.data.exitCode !== 0) process.exit(res.data.exitCode);
     }
