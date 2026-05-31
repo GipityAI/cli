@@ -14,30 +14,42 @@ import { run } from '../helpers/index.js';
 //
 // Templates install a whole app (blank wiring or a working starter demo).
 // Kits are reusable building blocks added into an existing app's src/packages/.
-const TEMPLATES = ['web-simple', '3d-engine'];
-const STARTERS = ['web-fullstack', 'web-vision-cam', '2d-game', '3d-world', 'api'];
-const HIDDEN = [{ key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' }];
-const KITS = [
+interface CatalogEntry { key: string; hint: string; }
+
+const STARTERS: CatalogEntry[] = [
+  { key: 'web-fullstack', hint: 'backend API + database (weather-by-zip demo)' },
+  { key: 'web-vision-cam', hint: 'fullscreen camera app with on-device vision (MediaPipe)' },
+  { key: '2d-game', hint: '2D games with Phaser 3 - platformer, arcade, puzzle' },
+  { key: '3d-world', hint: 'playable 3D multiplayer rocket-launcher demo' },
+  { key: 'api', hint: 'pure API backend, no frontend' },
+];
+const BLANK: CatalogEntry[] = [
+  { key: 'web-simple', hint: 'static frontend-only site - pages, dashboards, simple games' },
+  { key: '3d-engine', hint: '3D multiplayer wiring - Three.js + Rapier + Gipity Realtime' },
+];
+const HIDDEN: CatalogEntry[] = [{ key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' }];
+const KITS: CatalogEntry[] = [
   { key: 'realtime', hint: 'multiplayer / presence / shared state' },
   { key: 'web-vision-mediapipe', hint: 'browser camera vision - gesture, pose, object detection' },
   { key: 'i18n', hint: 'multi-language web apps - language picker, RTL, translations' },
 ];
 
-function printCatalog(): void {
-  console.log('');
-  console.log(`${bold('Templates')}  ${muted('- install a whole app into an empty project')}`);
-  console.log(`  ${TEMPLATES.join(', ')}  ${muted('(blank wiring)')}`);
-  console.log(`  ${STARTERS.join(', ')}  ${muted('(working demos)')}`);
-  console.log('');
-  console.log(`${bold('Kits')}  ${muted('- add a reusable building block into an existing app')}`);
-  for (const k of KITS) console.log(`  ${k.key}  ${muted('- ' + k.hint)}`);
-  console.log('');
-  console.log(`${bold('Local path')}  ${muted('- install from a directory on disk (template or kit)')}`);
-  console.log(`  ${muted('gipity add ./path/to/template  (or ~/path, /abs/path)')}`);
-  console.log(`  ${muted('gipity add ./path/to/kit       (auto-detected via package.json gipity.install)')}`);
-  console.log('');
-  console.log(muted('Usage: gipity add <name|path> [--title <t>] [--description <d>] [--force]'));
-  console.log('');
+// The catalog block, rendered once and reused by the full help output
+// (`gipity add` / `gipity add --help`) and the bare listing (`gipity add
+// --list`) so they can never drift. Three sections, one entry per line, keys
+// column-aligned. No leading/trailing blank lines - callers add surrounding
+// whitespace.
+function catalogText(): string {
+  const width = Math.max(...[...STARTERS, ...BLANK, ...KITS].map(e => e.key.length));
+  const row = (e: CatalogEntry) => `  ${e.key.padEnd(width)}  ${muted(e.hint)}`;
+  const section = (title: string, blurb: string, entries: CatalogEntry[]) =>
+    [`${bold(title)}  ${muted('- ' + blurb)}`, ...entries.map(row)].join('\n');
+  return [
+    'Names to pass to `gipity add <name>`:',
+    section('Templates (working demos)', 'complete apps to run, then extend or replace', STARTERS),
+    section('Templates (blank wiring)', 'minimal framework setup - build your app on top', BLANK),
+    section('Kits', 'building blocks to add into an app you already scaffolded', KITS),
+  ].join('\n\n');
 }
 
 interface AddResponse {
@@ -152,14 +164,27 @@ function buildLocalPayload(rootDir: string): { name: string; files: PayloadFile[
 
 export const addCommand = new Command('add')
   .description('Add a template (scaffold an app) or a kit (reusable building block) to the project. Pass ./path/to/dir to install a local template directly.')
-  .argument('[name]', 'Template/kit key, OR a local directory path (./, ~/, or /abs). Omit to list the catalog.')
+  .argument('[name]', 'Template/kit key, OR a local directory path (./, ~/, or /abs). Omit for help; use --list for just the catalog.')
   .option('--title <title>', 'App title - templates only (defaults to project name)')
   .option('--description <desc>', 'App description for meta tags - templates only')
   .option('--force', 'Templates only: overwrite any colliding files')
+  .option('--list', 'List the template/kit catalog and exit')
   .option('--json', 'Output as JSON')
-  .action((name: string | undefined, opts) => run('Add', async () => {
+  .addHelpText('after', () => catalogText() + '\n\n'
+    + muted('Local path  gipity add ./dir  (or ~/path, /abs) - template or kit, auto-detected'))
+  .action((name: string | undefined, opts, command: Command) => run('Add', async () => {
+    // `--list` is a bare catalog dump; no project/config needed.
+    if (opts.list) {
+      if (opts.json) {
+        console.log(JSON.stringify({ templates: { starters: STARTERS, blank: BLANK }, kits: KITS }));
+      } else {
+        console.log('\n' + catalogText() + '\n');
+      }
+      return;
+    }
+    // No name = show the full help (usage + options + catalog), same as --help.
     if (!name) {
-      printCatalog();
+      command.outputHelp();
       return;
     }
     const config = requireConfig();
