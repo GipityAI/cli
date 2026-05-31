@@ -1,6 +1,8 @@
 import { Command, Option } from 'commander';
-import { existsSync, readdirSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join, resolve as resolvePath } from 'path';
 import { postForTarEntries } from '../api.js';
+import { getProjectRoot } from '../config.js';
 import { brand, bold, muted, success } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
@@ -73,23 +75,25 @@ function dimSuffix(vp: Viewport): string {
   return dpr === 1 ? `${vp.width}x${vp.height}` : `${vp.width}x${vp.height}@${dpr}`;
 }
 
-function nextNumberedFilename(slug: string, suffix?: string): string {
-  const prefix = suffix ? `ss-${slug}-${suffix}-` : `ss-${slug}-`;
-  const escaped = prefix.replace(/[-.@]/g, '\\$&');
-  const existing = readdirSync('.')
-    .map((f) => {
-      const m = f.match(new RegExp(`^${escaped}(\\d{3,})\\.png$`));
-      return m ? parseInt(m[1], 10) : -1;
-    })
-    .filter((n) => n >= 0);
-  const next = existing.length ? Math.max(...existing) + 1 : 1;
-  let n = next;
-  let candidate = `${prefix}${String(n).padStart(3, '0')}.png`;
-  while (existsSync(candidate)) {
-    n += 1;
-    candidate = `${prefix}${String(n).padStart(3, '0')}.png`;
-  }
-  return candidate;
+/** Default screenshot directory: `<project-root>/.gipity/screenshots`, falling
+ *  back to `./.gipity/screenshots` in one-off mode (no linked project). `.gipity/`
+ *  is sync-ignored, so these verification artifacts never sync to Gipity or
+ *  deploy to the CDN - and they stay out of the project root. */
+function defaultScreenshotDir(): string {
+  const root = getProjectRoot();
+  return join(root ?? '.', '.gipity', 'screenshots');
+}
+
+/** `yyyy-mm-dd_hh-mm-ss` per the repo timestamp convention - sorts chronologically,
+ *  filesystem-safe. One stamp per invocation; viewport suffixes keep multi-shot
+ *  runs distinct so they never collide on the shared timestamp. */
+export function timestampSlug(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+export function defaultFilename(slug: string, ts: string, suffix?: string): string {
+  return suffix ? `ss-${slug}-${suffix}-${ts}.png` : `ss-${slug}-${ts}.png`;
 }
 
 function parseViewportString(s: string): Viewport {
@@ -128,7 +132,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .argument('<url>', 'URL to screenshot')
   .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms', '1000')
   .option('--full', 'Capture the full scrollable page (default: viewport only)')
-  .option('-o, --output <file>', 'Output filename (single viewport only; default ss-<host>-NNN.png)')
+  .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
@@ -154,7 +158,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
 
     // Server defaults to 1280×720 when viewports is omitted - don't send it in
-    // the no-flag case so filename stays unsuffixed (`ss-host-NNN.png`).
+    // the no-flag case so the filename stays unsuffixed (no viewport segment).
     const userSpecifiedViewports = customViewports.length > 0;
     const body = {
       url,
@@ -177,13 +181,19 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
 
     const slug = slugFromUrl(url);
+    const ts = timestampSlug();
+    const dir = defaultScreenshotDir();
+    if (!opts.output) mkdirSync(dir, { recursive: true });
     const savedFiles: string[] = [];
     for (let i = 0; i < pngs.length; i++) {
       const shot = meta.screenshots[i];
       const suffix = userSpecifiedViewports ? dimSuffix(shot.viewport) : undefined;
-      const filename = opts.output || nextNumberedFilename(slug, suffix);
-      writeFileSync(filename, pngs[i].buffer);
-      savedFiles.push(filename);
+      const target = opts.output
+        ? opts.output
+        : join(dir, defaultFilename(slug, ts, suffix));
+      writeFileSync(target, pngs[i].buffer);
+      // Absolute path so the agent knows exactly where the file landed.
+      savedFiles.push(resolvePath(target));
     }
 
     if (opts.json) {

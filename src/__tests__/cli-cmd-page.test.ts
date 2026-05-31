@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome } from './helpers/test-home.js';
+import { timestampSlug, defaultFilename } from '../commands/page-screenshot.js';
 
 let mock: MockServer;
 let home: string;
@@ -155,4 +156,25 @@ test('gipity page eval surfaces a failed eval job', async () => {
   const r = await run(['page', 'eval', 'https://example.com', 'document.title']);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /about:blank/);
+});
+
+// ── screenshot default filename helpers (pure) ─────────────────────────────
+
+test('timestampSlug renders yyyy-mm-dd_hh-mm-ss, zero-padded, sortable', () => {
+  // 2026-05-31 09:07:03 local time
+  const slug = timestampSlug(new Date(2026, 4, 31, 9, 7, 3));
+  assert.equal(slug, '2026-05-31_09-07-03');
+  // No colons (path-safe) and lexical order tracks chronological order.
+  assert.doesNotMatch(slug, /:/);
+  const earlier = timestampSlug(new Date(2026, 4, 31, 9, 7, 2));
+  assert.ok(earlier < slug);
+});
+
+test('defaultFilename composes ss-<slug>-<ts>.png, inserting viewport suffix when present', () => {
+  const ts = '2026-05-31_09-07-03';
+  assert.equal(defaultFilename('example-com', ts), 'ss-example-com-2026-05-31_09-07-03.png');
+  assert.equal(
+    defaultFilename('example-com', ts, '1280x720'),
+    'ss-example-com-1280x720-2026-05-31_09-07-03.png',
+  );
 });

@@ -31,11 +31,27 @@
 export type IngestEntry =
   | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; source_uuid?: string; ts?: string }
   | { kind: 'prompt'; prompt: string; source_uuid?: string; ts?: string }
-  | { kind: 'assistant'; text: string; blocks: any[]; source_uuid?: string; ts?: string }
+  | { kind: 'assistant'; text: string; blocks: any[]; input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string; source_uuid?: string; ts?: string }
   | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; source_uuid?: string; ts?: string }
   | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; source_uuid?: string; ts?: string }
   | { kind: 'compact'; trigger?: string; source_uuid?: string; ts?: string }
   | { kind: 'system'; content: string; source_uuid?: string; ts?: string };
+
+/** Pull token usage + model + stop_reason off an assistant `message` object.
+ *  Same shape in the transcript JSONL and the stream-json assistant event, so
+ *  both capture paths share this. Only includes keys that are actually present
+ *  (so they spread cleanly onto an assistant entry without writing nulls).
+ *  Cost is NOT here — it doesn't exist per-message; only the stream `result`
+ *  footer reports a session total. */
+export function usageFields(msg: any): { input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string } {
+  const out: { input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string } = {};
+  const u = msg?.usage;
+  if (u && typeof u.input_tokens === 'number') out.input_tokens = u.input_tokens;
+  if (u && typeof u.output_tokens === 'number') out.output_tokens = u.output_tokens;
+  if (typeof msg?.model === 'string') out.model = msg.model;
+  if (typeof msg?.stop_reason === 'string') out.stop_reason = msg.stop_reason;
+  return out;
+}
 
 /** Extract joined `{type:'text', text}` blocks into a single string.
  *  The full blocks array is emitted separately so the client can render
@@ -127,7 +143,7 @@ export function transcriptLineToEntries(line: any, toolNames?: Map<string, strin
     const text = joinText(content);
     const out: IngestEntry[] = [];
     if (text || content.length) {
-      out.push({ kind: 'assistant', text, blocks: content });
+      out.push({ kind: 'assistant', text, blocks: content, ...usageFields(msg) });
     }
     for (const block of content) {
       if (block?.type === 'tool_use' && typeof block.id === 'string') {

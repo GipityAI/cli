@@ -23,15 +23,18 @@ Templates:
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
 Only skip this on a build request if the user explicitly says not to.
 
+Before building, survey what already exists - don't hand-roll a capability a kit provides. When scoping the app, check the Kits list below against the features it needs (multiple languages, multiplayer/presence, a chatbot, camera vision, …); if a kit covers one, \`gipity add <kit>\` it and read its usage with \`gipity skill read <kit>\` instead of writing it from scratch. A hand-rolled version is almost always the wrong call - kits are wired in (import map, infra, deploy) and maintained. This survey happens up front, not after you've already built the feature by hand.
+
 Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):
     - \`app-itsm\` - IT Service Management app (helpdesk, ticketing, incident management).
     - \`monitor\` - Account-wide observability dashboard - auto-installed; rarely picked manually.
 
-Kits are reusable building blocks added to an existing app, not whole templates - their files land in \`src/packages/<name>/\`:
+Kits are reusable building blocks added to an existing app, not whole templates - their files land in \`src/packages/<name>/\`. Prefer a kit over a hand-built equivalent:
     - \`gipity add realtime\` - Multiplayer / presence / shared state - channels, host election, server-persisted sync. Engine-agnostic; works in any app.
     - \`gipity add web-vision-mediapipe\` - On-device camera vision - gesture recognition, body pose, object detection. Runs fully client-side via MediaPipe Tasks; no server, no upload. Web only.
     - \`gipity add chatbot\` - Drop-in chatbot - configurable persona, scope guardrails, static knowledge (20k budget), streaming responses. Headless engine + bubble widget; bring your own UI if you want. Works in any app.
-    - \`gipity add audio-align\` - Audio + lyrics -> word-level timing JSON. Demucs vocal isolation + MMS_FA forced alignment, runs as a Modal L4 GPU job (~$0.01 per 3-min song). For karaoke captions, subtitling, language learning, dubbing alignment.`;
+    - \`gipity add audio-align\` - Audio + lyrics -> word-level timing JSON. Demucs vocal isolation + MMS_FA forced alignment, runs as a Modal L4 GPU job (~$0.01 per 3-min song). For karaoke captions, subtitling, language learning, dubbing alignment.
+    - \`gipity add i18n\` - Multi-language for web apps - language picker, locale persistence, RTL, plural/translation lookup. Transparently upgrades the app's existing t() copy calls; no code changes. Web only.`;
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
@@ -41,7 +44,7 @@ Prefer the cheapest option that works - CLI and sandbox are instant and free, ap
 
 1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, and more. All commands support \`--json\`.
 2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
-3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`.
+3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|...>\` or \`gipity chat\`. When the generated asset is content your web app will ship (an image, sound, or clip the page references), save it straight into the source tree with \`-o\`, e.g. \`-o src/assets/sounds/click.mp3\`, so it deploys with the app; the default cwd output is fine for throwaway or inspect-only generation.
 4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
 
 You are the developer. Write files in this directory - they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
@@ -90,6 +93,7 @@ App development skills:
 
 Kit skills (reusable building blocks - \`gipity add <kit>\`):
 - \`audio-align\` - the audio-align kit: forced alignment of audio + lyrics into word-level timing JSON
+- \`i18n\` - the i18n kit: multi-language web apps (picker, persistence, RTL, translation lookup) via \`gipity add i18n\`
 
 Other key skills:
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools

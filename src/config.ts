@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
 
 export interface GipityConfig {
   projectGuid: string;
@@ -48,6 +48,14 @@ export function getConfigPath(): string | null {
   if (cachedPath !== null) return cachedPath;
   cachedPath = findConfigPath();
   return cachedPath;
+}
+
+/** Directory holding the project's `.gipity.json` (the project root), found by
+ *  walking up from cwd. Returns null when there's no linked project in the tree
+ *  (e.g. one-off mode), in which case callers should anchor to cwd. */
+export function getProjectRoot(): string | null {
+  const path = getConfigPath();
+  return path ? dirname(path) : null;
 }
 
 export function getConfig(): GipityConfig | null {

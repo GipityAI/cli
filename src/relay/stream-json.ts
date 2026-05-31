@@ -21,11 +21,15 @@
 export type IngestEntry =
   | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; ts?: string }
   | { kind: 'prompt'; prompt: string; ts?: string }
-  | { kind: 'assistant'; text: string; blocks: any[]; ts?: string }
+  | { kind: 'assistant'; text: string; blocks: any[]; input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string; ts?: string }
   | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; ts?: string }
   | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; ts?: string }
   | { kind: 'compact'; trigger?: string; ts?: string }
-  | { kind: 'system'; content: string; ts?: string };
+  | { kind: 'system'; content: string; ts?: string }
+  // The stream's final `result` footer: a session-level total. Only the daemon
+  // (stream) path sees this; the hook/transcript path never does (cost isn't in
+  // the transcript). Carries cost so the server can record it on the conversation.
+  | { kind: 'result'; total_cost_usd?: number; num_turns?: number; duration_ms?: number; ts?: string };
 
 // ─── Stream-json event shapes ──────────────────────────────────────────
 // Only the fields we actually read are typed - everything else is passed
@@ -156,7 +160,7 @@ export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, 
     const content = Array.isArray(msg.content) ? msg.content : [];
     const text = joinAssistantText(content);
     if (text || content.length) {
-      out.push({ kind: 'assistant', text, blocks: content });
+      out.push({ kind: 'assistant', text, blocks: content, ...usageFields(msg) });
     }
     for (const block of content) {
       if (block?.type === 'tool_use' && typeof block.id === 'string') {
@@ -190,10 +194,36 @@ export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, 
     return out;
   }
 
-  // `result` is the final footer. The daemon emits its own cosmetic
-  // "Claude Code finished (Xs)" system marker anyway, so this event is
-  // a no-op in the ingest stream. Kept here as a hook-point in case we
-  // want to surface cost/usage later.
+  // `result` is the final footer — a session-level total. Emit a `result`
+  // ingest entry carrying the cost so the server can record it on the
+  // conversation. (Per-turn tokens ride on the assistant entries above; cost is
+  // only ever here, and only on the stream path.)
+  if (evt.type === 'result') {
+    const r = evt as StreamJsonResult;
+    if (typeof r.total_cost_usd === 'number' || typeof r.num_turns === 'number' || typeof r.duration_ms === 'number') {
+      out.push({
+        kind: 'result',
+        total_cost_usd: typeof r.total_cost_usd === 'number' ? r.total_cost_usd : undefined,
+        num_turns: typeof r.num_turns === 'number' ? r.num_turns : undefined,
+        duration_ms: typeof r.duration_ms === 'number' ? r.duration_ms : undefined,
+      });
+    }
+    return out;
+  }
+
+  return out;
+}
+
+/** Pull token usage + model + stop_reason off an assistant stream `message`.
+ *  Same shape as the transcript path's `usageFields` (kept in sync; the two
+ *  capture modules don't share a module). Cost is NOT per-message. */
+function usageFields(msg: any): { input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string } {
+  const out: { input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string } = {};
+  const u = msg?.usage;
+  if (u && typeof u.input_tokens === 'number') out.input_tokens = u.input_tokens;
+  if (u && typeof u.output_tokens === 'number') out.output_tokens = u.output_tokens;
+  if (typeof msg?.model === 'string') out.model = msg.model;
+  if (typeof msg?.stop_reason === 'string') out.stop_reason = msg.stop_reason;
   return out;
 }
 

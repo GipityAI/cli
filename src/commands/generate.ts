@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { writeFileSync } from 'fs';
+import { resolve as resolvePath } from 'path';
 import { error as clrError, success, muted, info } from '../colors.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
@@ -13,12 +14,14 @@ interface GenerateResult {
   size_bytes: number;
 }
 
-/** Download a URL and save to a local file */
-async function downloadFile(url: string, filename: string): Promise<void> {
+/** Download a URL and save to a local file. Returns the absolute path written,
+ *  so callers can report exactly where the file landed. */
+async function downloadFile(url: string, filename: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
   writeFileSync(filename, buffer);
+  return resolvePath(filename);
 }
 
 // ── IMAGE ──────────────────────────────────────────────────────────────
@@ -44,7 +47,7 @@ Examples:
   .option('--quality <quality>', 'Quality: low|medium|high|auto (gpt-image-1), standard|hd (dall-e-3)')
   .option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only): 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 4:5, 5:4, 21:9')
   .option('--image-size <size>', 'Output resolution (Gemini only): 512, 1K, 2K, 4K')
-  .option('-o, --output <file>', 'Output filename (default: generated.png)')
+  .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
     try {
@@ -62,14 +65,14 @@ Examples:
       const ext = result.content_type.includes('png') ? 'png' : 'jpg';
       const filename = opts.output || `generated.${ext}`;
 
-      await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: filename }));
+        console.log(JSON.stringify({ ...result, saved: savedPath }));
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
-        console.log(success(`Saved to ${filename}`));
+        console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
       console.error(clrError(`Image generation failed: ${err.message}`));
@@ -101,7 +104,7 @@ Examples:
   .option('--model <model>', 'Veo model: veo-3.1-generate-preview (quality), veo-3.1-fast-generate-preview (speed), veo-3.1-lite-generate-preview (budget)')
   .option('--aspect <ratio>', 'Aspect ratio: 16:9 (landscape), 9:16 (portrait), 1:1 (square)')
   .option('--resolution <res>', 'Video resolution: 720p, 1080p, 4k')
-  .option('-o, --output <file>', 'Output filename (default: generated.mp4)')
+  .option('-o, --output <file>', 'Output path (default ./generated.mp4). For a clip your app ships, write it into the source tree so it deploys, e.g. -o src/assets/video/clip.mp4; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
     try {
@@ -116,14 +119,14 @@ Examples:
       });
 
       const filename = opts.output || 'generated.mp4';
-      await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: filename }));
+        console.log(JSON.stringify({ ...result, saved: savedPath }));
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
-        console.log(success(`Saved to ${filename}`));
+        console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
       console.error(clrError(`Video generation failed: ${err.message}`));
@@ -153,7 +156,7 @@ Examples:
   .option('--voice <voice>', 'Voice ID or name (provider-specific)')
   .option('--language <code>', 'BCP-47 language code, e.g. ja-JP, es-ES (Gemini only, 60+ languages)')
   .option('--speakers <json>', 'Multi-speaker config as JSON array (Gemini only, up to 2 speakers)')
-  .option('-o, --output <file>', 'Output filename (default: speech.mp3)')
+  .option('-o, --output <file>', 'Output path (default ./speech.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/sounds/intro.mp3; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (text: string, opts) => {
     try {
@@ -174,14 +177,14 @@ Examples:
       });
 
       const filename = opts.output || 'speech.mp3';
-      await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: filename }));
+        console.log(JSON.stringify({ ...result, saved: savedPath }));
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider} (${sizeKb}KB)`)}`);
-        console.log(success(`Saved to ${filename}`));
+        console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
       console.error(clrError(`Speech generation failed: ${err.message}`));

@@ -20,6 +20,7 @@ const HIDDEN = [{ key: 'app-itsm', hint: 'IT service management / helpdesk / tic
 const KITS = [
   { key: 'realtime', hint: 'multiplayer / presence / shared state' },
   { key: 'web-vision-mediapipe', hint: 'browser camera vision - gesture, pose, object detection' },
+  { key: 'i18n', hint: 'multi-language web apps - language picker, RTL, translations' },
 ];
 
 function printCatalog(): void {

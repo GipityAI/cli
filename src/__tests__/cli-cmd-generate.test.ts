@@ -33,7 +33,8 @@ test('gipity generate image POSTs and downloads from the returned URL', async ()
   const r = await fresh(['generate', 'image', 'a cat with a hat']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Generated with bfl\/flux-2-pro/);
-  assert.match(r.stdout, /Saved to generated\.png/);
+  // Absolute path so the agent knows exactly where the file landed.
+  assert.match(r.stdout, /Saved to \/.*\/generated\.png/);
 });
 
 test('gipity generate speech --provider POSTs and writes the audio file', async () => {
@@ -49,5 +50,5 @@ test('gipity generate speech --provider POSTs and writes the audio file', async 
   const r = await fresh(['generate', 'speech', 'Hello world', '--provider', 'elevenlabs']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Generated with elevenlabs/);
-  assert.match(r.stdout, /Saved to speech\.mp3/);
+  assert.match(r.stdout, /Saved to \/.*\/speech\.mp3/);
 });

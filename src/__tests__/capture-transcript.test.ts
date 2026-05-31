@@ -69,6 +69,34 @@ describe('transcriptLineToEntries', () => {
     assert.equal((out[1] as any).source_uuid, 'a1#1');
   });
 
+  it('captures token usage + model + stop_reason onto the assistant entry', () => {
+    const out = transcriptLineToEntries({
+      type: 'assistant',
+      uuid: 'a-usage',
+      message: {
+        model: 'claude-opus-4-8',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1200, output_tokens: 345 },
+        content: [{ type: 'text', text: 'done' }],
+      },
+    });
+    assert.equal(out[0].kind, 'assistant');
+    assert.equal((out[0] as any).input_tokens, 1200);
+    assert.equal((out[0] as any).output_tokens, 345);
+    assert.equal((out[0] as any).model, 'claude-opus-4-8');
+    assert.equal((out[0] as any).stop_reason, 'end_turn');
+  });
+
+  it('omits usage fields when the assistant message has none', () => {
+    const out = transcriptLineToEntries({
+      type: 'assistant', uuid: 'a-nousage',
+      message: { content: [{ type: 'text', text: 'hi' }] },
+    });
+    assert.equal(out[0].kind, 'assistant');
+    assert.equal((out[0] as any).input_tokens, undefined);
+    assert.equal((out[0] as any).model, undefined);
+  });
+
   it('gives every entry from one line a UNIQUE source_uuid (dedup-collision regression)', () => {
     // An assistant turn with text + two parallel tool calls. All three entries
     // derive from the same transcript line. Before the fix they shared the bare

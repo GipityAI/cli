@@ -26,9 +26,10 @@ const ALLOWED_KEYS_BY_KIND: Record<IngestEntry['kind'], readonly string[]> = {
   prompt:      ['kind', 'prompt', 'ts'],
   tool_use:    ['kind', 'tool_use_id', 'tool_name', 'tool_input', 'ts'],
   tool_result: ['kind', 'tool_use_id', 'tool_name', 'content', 'is_error', 'ts'],
-  assistant:   ['kind', 'text', 'blocks', 'ts'],
+  assistant:   ['kind', 'text', 'blocks', 'input_tokens', 'output_tokens', 'model', 'stop_reason', 'ts'],
   compact:     ['kind', 'trigger', 'ts'],
   system:      ['kind', 'content', 'ts'],
+  result:      ['kind', 'total_cost_usd', 'num_turns', 'duration_ms', 'ts'],
 };
 
 /** Sample stream-json events covering every branch of mapEventToEntries.
@@ -47,6 +48,14 @@ const SAMPLE_EVENTS: any[] = [
   { type: 'user', message: { content: [
     { type: 'tool_result', tool_use_id: 't1', content: 'output line', is_error: false },
   ] } },
+  // assistant WITH usage (input/output tokens, model, stop_reason)
+  { type: 'assistant', message: {
+    model: 'claude-opus-4-8', stop_reason: 'end_turn',
+    usage: { input_tokens: 100, output_tokens: 20 },
+    content: [{ type: 'text', text: 'with usage' }],
+  } },
+  // result footer (session-level cost)
+  { type: 'result', subtype: 'success', total_cost_usd: 0.5, num_turns: 4, duration_ms: 9999 },
 ];
 
 function unknownKeys(entry: IngestEntry): string[] {
@@ -99,7 +108,7 @@ describe('ingest contract: daemon entries match server-allowed keys', () => {
     // entry for every kind in the IngestEntry union (the Record<...> type).
     // This runtime assertion catches the inverse: extras in the manifest
     // that don't correspond to a real kind anymore.
-    const VALID_KINDS = new Set(['attach', 'prompt', 'tool_use', 'tool_result', 'assistant', 'compact', 'system']);
+    const VALID_KINDS = new Set(['attach', 'prompt', 'tool_use', 'tool_result', 'assistant', 'compact', 'system', 'result']);
     for (const k of Object.keys(ALLOWED_KEYS_BY_KIND)) {
       assert.ok(VALID_KINDS.has(k), `manifest has stale kind: ${k}`);
     }
