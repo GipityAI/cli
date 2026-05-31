@@ -205,11 +205,34 @@ function fullCommandName(cmd: Command): string {
   for (let c: Command | null = cmd; c; c = c.parent) parts.unshift(c.name());
   return parts.join(' ');
 }
+
+// Browser-automation verbs an agent guesses as top-level commands
+// (`gipity browser screenshot`, `gipity click ...`) Levenshtein-match nothing,
+// so Commander's built-in suggestion stays silent. Point the whole family at
+// the real surface, `gipity page`, before falling back to the help catalog.
+const PAGE_HINT = 'Did you mean `gipity page`? (inspect | eval | screenshot)';
+const UNKNOWN_COMMAND_HINTS: Record<string, string> = {
+  browser: PAGE_HINT, screenshot: PAGE_HINT, screenshots: PAGE_HINT,
+  snap: PAGE_HINT, click: PAGE_HINT, type: PAGE_HINT, fill: PAGE_HINT,
+  navigate: PAGE_HINT, goto: PAGE_HINT, scrape: PAGE_HINT, dom: PAGE_HINT,
+  html: PAGE_HINT, eval: PAGE_HINT, inspect: PAGE_HINT,
+};
+function unknownCommandHint(errStr: string): string {
+  const m = errStr.match(/unknown command '([^']+)'/);
+  const hint = m && UNKNOWN_COMMAND_HINTS[m[1].toLowerCase()];
+  return hint ? `\n\n${hint}` : '';
+}
+
 function enableHelpAfterError(cmd: Command): void {
   cmd.showHelpAfterError(true);
+  // Generic nearest-command suggestion (`pag` → `page`) for close typos.
+  cmd.showSuggestionAfterError(true);
   cmd.configureOutput({
-    outputError: (str, write) =>
-      write(`${str.replace(/\n+$/, '')}\n\nShowing \`${fullCommandName(cmd)} --help\`:\n`),
+    outputError: (str, write) => {
+      // Intent-alias hint only at the top level, where command guesses land.
+      const hint = cmd === program ? unknownCommandHint(str) : '';
+      write(`${str.replace(/\n+$/, '')}${hint}\n\nShowing \`${fullCommandName(cmd)} --help\`:\n`);
+    },
   });
   for (const sub of cmd.commands) enableHelpAfterError(sub);
 }

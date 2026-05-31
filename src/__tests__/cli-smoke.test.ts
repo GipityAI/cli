@@ -70,6 +70,16 @@ describe('cli-smoke: error behavior', () => {
     assert.match(out, /\bpage\b/);
   });
 
+  it('browser-automation guesses suggest `gipity page` directly', () => {
+    // `browser`/`screenshot`/`click` Levenshtein-match no real command, so an
+    // explicit alias hint collapses the guess straight onto the page surface.
+    for (const guess of ['browser', 'screenshot', 'click']) {
+      const r = runCli([guess]);
+      const out = r.stdout + r.stderr;
+      assert.match(out, /Did you mean `gipity page`\? \(inspect \| eval \| screenshot\)/, `no page hint for '${guess}'`);
+    }
+  });
+
   it('excess args print the error AND that command\'s help inline', () => {
     // Mirrors an agent guessing `gipity add <tmpl> title=...` (positional k=v).
     const r = runCli(['add', '2d-game', 'title=x']);
