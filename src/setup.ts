@@ -99,9 +99,11 @@ export function resolveCaptureRunnerPath(): string {
 //   1. File-sync hooks (PreToolUse / PostToolUse / UserPromptSubmit):
 //      installed unconditionally. Scaffold reminder + push/pull. Not
 //      related to conversation capture.
-//   2. Capture hooks (SessionStart / Stop / SubagentStop / SessionEnd):
-//      mirror a terminal Claude Code session into the Gipity DB so the
-//      web CLI can display it read-only. Toggled by the `captureHooks`
+//   2. Capture hooks (SessionStart / Stop / SubagentStop / SessionEnd, plus
+//      a throttled PostToolUse for mid-run flushing): mirror a terminal
+//      Claude Code session into the Gipity DB so the web CLI can display it
+//      read-only. The PostToolUse capture entry is merged alongside the
+//      file-sync one (see setupClaudeHooks). Toggled by the `captureHooks`
 //      field in `.gipity.json` - default on.
 export const HOOKS_SETTINGS = {
   hooks: {
@@ -160,6 +162,11 @@ function buildCaptureHookEntries(source: string): Record<string, any[]> {
     Stop:         [{ hooks: [{ type: 'command', command: cmd('stop') }] }],
     SubagentStop: [{ hooks: [{ type: 'command', command: cmd('subagent-stop') }] }],
     SessionEnd:   [{ hooks: [{ type: 'command', command: cmd('session-end') }] }],
+    // Mid-run incremental flush (matcher '' = every tool). Stop/SessionEnd only
+    // fire on a CLEAN exit, so without this a session that's killed/crashes mid-run
+    // (e.g. a long headless build that times out) loses its whole transcript. The
+    // runner throttles this so it's cheap. Merged alongside the file-sync PostToolUse.
+    PostToolUse:  [{ matcher: '', hooks: [{ type: 'command', command: cmd('post-tool-use') }] }],
   };
 }
 
@@ -184,7 +191,13 @@ export function setupClaudeHooks(): void {
   const captureEnabled = getConfig()?.captureHooks !== false;
   const captureEntries = captureEnabled ? buildCaptureHookEntries('claude-code') : {};
 
-  settings.hooks = { ...HOOKS_SETTINGS.hooks, ...captureEntries };
+  // Merge per-event arrays rather than spread-overwriting: capture and file-sync
+  // both register PostToolUse, and a plain spread would drop one of them.
+  const mergedHooks: Record<string, any[]> = { ...HOOKS_SETTINGS.hooks };
+  for (const [event, entries] of Object.entries(captureEntries)) {
+    mergedHooks[event] = [...(mergedHooks[event] ?? []), ...entries];
+  }
+  settings.hooks = mergedHooks;
 
   // Merge permissions (additive - preserve user's existing allows)
   const perms = (settings as Record<string, any>).permissions || {};

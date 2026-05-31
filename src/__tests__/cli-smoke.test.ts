@@ -60,6 +60,33 @@ describe('cli-smoke: error behavior', () => {
     assert.notEqual(r.status, 0);
   });
 
+  it('unknown command prints the error AND top-level help inline (no second --help trip)', () => {
+    const r = runCli(['browser']);
+    const out = r.stdout + r.stderr;
+    assert.match(out, /unknown command 'browser'/);
+    assert.match(out, /Showing `gipity --help`:/);
+    // The grouped catalog follows, so a guessed verb still surfaces the real one.
+    assert.match(out, /Utilities:/);
+    assert.match(out, /\bpage\b/);
+  });
+
+  it('excess args print the error AND that command\'s help inline', () => {
+    // Mirrors an agent guessing `gipity add <tmpl> title=...` (positional k=v).
+    const r = runCli(['add', '2d-game', 'title=x']);
+    const out = r.stdout + r.stderr;
+    assert.match(out, /too many arguments for 'add'/);
+    assert.match(out, /Showing `gipity add --help`:/);
+    // The help reveals the real flag the agent should have used.
+    assert.match(out, /--title/);
+  });
+
+  it('excess args on a nested subcommand label the full command path', () => {
+    const r = runCli(['page', 'screenshot', 'http://a', 'extra']);
+    const out = r.stdout + r.stderr;
+    assert.match(out, /too many arguments for 'screenshot'/);
+    assert.match(out, /Showing `gipity page screenshot --help`:/);
+  });
+
   it('status without auth prints not-logged-in message', () => {
     const r = runCli(['status']);
     // status returns 0 even when not logged in (it's a status report)

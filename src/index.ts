@@ -48,6 +48,7 @@ import { relayCommand } from './commands/relay.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { approvalCommand } from './commands/approval.js';
 import { gmailCommand } from './commands/gmail.js';
+import { textCommand } from './commands/text.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
 import { bold, dim, brand, muted, success } from './colors.js';
 import { normalizeAliases } from './flag-aliases.js';
@@ -107,7 +108,7 @@ const connectGroup     = [claudeCommand, relayCommand];
 const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];
 const appBuildingGroup = [testCommand, fnCommand, serviceCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
-const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand];
+const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand, textCommand];
 const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
 const setupGroup       = [loginCommand, logoutCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
 
@@ -192,6 +193,27 @@ for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
   configureHelp(cmd);
   program.addCommand(cmd);
 }
+
+// ── Malformed invocation → print the error AND the command's help inline ──
+// When an agent guesses the wrong shape (excess args, unknown command/option,
+// missing arg), don't make it run `--help` as a second trip: Commander fires
+// error() on the offending (sub)command, so showHelpAfterError(true) appends
+// that exact command's help, and a labeled header names the canonical help
+// invocation. addCommand doesn't inherit these settings, so apply recursively.
+function fullCommandName(cmd: Command): string {
+  const parts: string[] = [];
+  for (let c: Command | null = cmd; c; c = c.parent) parts.unshift(c.name());
+  return parts.join(' ');
+}
+function enableHelpAfterError(cmd: Command): void {
+  cmd.showHelpAfterError(true);
+  cmd.configureOutput({
+    outputError: (str, write) =>
+      write(`${str.replace(/\n+$/, '')}\n\nShowing \`${fullCommandName(cmd)} --help\`:\n`),
+  });
+  for (const sub of cmd.commands) enableHelpAfterError(sub);
+}
+enableHelpAfterError(program);
 
 // Auto-fetch related skill docs when --help is run on mapped commands
 const argv = process.argv.slice(2);

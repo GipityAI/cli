@@ -34,7 +34,7 @@ Kits are reusable building blocks added to an existing app, not whole templates 
     - \`gipity add web-vision-mediapipe\` - On-device camera vision - gesture recognition, body pose, object detection. Runs fully client-side via MediaPipe Tasks; no server, no upload. Web only.
     - \`gipity add chatbot\` - Drop-in chatbot - configurable persona, scope guardrails, static knowledge (20k budget), streaming responses. Headless engine + bubble widget; bring your own UI if you want. Works in any app.
     - \`gipity add audio-align\` - Audio + lyrics -> word-level timing JSON. Demucs vocal isolation + MMS_FA forced alignment, runs as a Modal L4 GPU job (~$0.01 per 3-min song). For karaoke captions, subtitling, language learning, dubbing alignment.
-    - \`gipity add i18n\` - Multi-language for web apps - language picker, locale persistence, RTL, plural/translation lookup. Transparently upgrades the app's existing t() copy calls; no code changes. Web only.`;
+    - \`gipity add i18n\` - Multi-language for web apps - language picker, locale persistence, RTL, plural/translation lookup. Scaffolds src/js/strings.js and wires it up; move your copy there and read it with t('key'). Web only.`;
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
@@ -78,7 +78,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-files\` - uploads, variants, file listing
 - \`app-image\` - providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
-- \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
+- \`app-location\` - user location & reverse geocoding for deployed apps (IP geo is first-party; reverse-geocode uses OpenStreetMap)
 - \`app-realtime\` - Colyseus rooms, relay vs state
 - \`app-tts\` - voices, multi-speaker, languages
 - \`app-video\` - Veo models, aspect, resolution
@@ -97,6 +97,7 @@ Kit skills (reusable building blocks - \`gipity add <kit>\`):
 
 Other key skills:
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
+- \`text-analysis\` - deterministic text analysis - never count characters or words by hand
 - \`tts\` - agent-side speech tools (different from the \`app-tts\` HTTP service)`;
 
 export const DEFINITION_OF_DONE = `## Definition of done (build tasks)

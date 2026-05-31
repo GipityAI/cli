@@ -6,6 +6,7 @@ import { muted } from './colors.js';
 export const HELP_SKILL_MAP: Record<string, string> = {
   fn: 'app-development',
   db: 'app-development',
+  text: 'text-analysis',
 };
 
 interface SkillSummary { guid: string; name: string; }

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Internal hook runner - invoked by Claude Code's lifecycle hooks
- * (SessionStart, Stop, SubagentStop, SessionEnd) to mirror a terminal
- * `gipity claude` session into the Gipity server so the web CLI can
- * display it read-only.
+ * (SessionStart, Stop, SubagentStop, SessionEnd, and a throttled
+ * PostToolUse for mid-run flushing) to mirror a terminal `gipity claude`
+ * session into the Gipity server so the web CLI can display it read-only.
  *
  * Not a user-facing `gipity` subcommand by design: users never invoke
  * this directly. `setupClaudeHooks` wires up hook entries that call
@@ -12,7 +12,7 @@
  * Usage:
  *   node capture-runner.js <source> <event>
  *   source: 'claude-code' (today) | future: 'codex', …
- *   event:  'session-start' | 'stop' | 'subagent-stop' | 'session-end'
+ *   event:  'session-start' | 'stop' | 'subagent-stop' | 'session-end' | 'post-tool-use'
  *
  * Graceful no-ops (exit 0 silently):
  *   - GIPITY_CONVERSATION_GUID env var unset (hook fired from a bare
@@ -53,7 +53,18 @@ interface HookInput {
 
 interface StateFile {
   last_uuid: string | null;
+  // Wall-clock of the last successful flush. Used to throttle the
+  // high-frequency PostToolUse trigger (see POST_TOOL_FLUSH_MS).
+  last_flush_ms?: number;
 }
+
+// PostToolUse fires after every tool call. We flush on it so a session that is
+// killed/crashes mid-run (e.g. a long headless `gipity claude -p` build that
+// hits a timeout) still has its transcript in the DB - Stop/SessionEnd only
+// fire on a CLEAN exit, so without this an interrupted run loses EVERYTHING.
+// Throttled to one flush per this interval to bound the cost of re-scanning a
+// growing transcript on every tool call; a kill then loses at most this much tail.
+const POST_TOOL_FLUSH_MS = 10_000;
 
 function statePath(convGuid: string): string {
   return join(CAPTURE_DIR, `${convGuid}.json`);
@@ -69,7 +80,10 @@ function readState(convGuid: string): StateFile | null {
   try {
     const raw = readFileSync(p, 'utf-8');
     const parsed = JSON.parse(raw);
-    return { last_uuid: typeof parsed.last_uuid === 'string' ? parsed.last_uuid : null };
+    return {
+      last_uuid: typeof parsed.last_uuid === 'string' ? parsed.last_uuid : null,
+      last_flush_ms: typeof parsed.last_flush_ms === 'number' ? parsed.last_flush_ms : undefined,
+    };
   } catch {
     return null;
   }
@@ -165,10 +179,17 @@ async function handleSessionStart(convGuid: string, hook: HookInput): Promise<vo
 }
 
 async function handleStopFamily(
-  convGuid: string, hook: HookInput, isSubagent: boolean,
+  convGuid: string, hook: HookInput, isSubagent: boolean, minIntervalMs = 0,
 ): Promise<void> {
   void isSubagent;
   if (!hook.transcript_path || !existsSync(hook.transcript_path)) return;
+
+  // Throttle high-frequency callers (PostToolUse). Stop/SessionEnd pass
+  // minIntervalMs=0 so they always flush in full on a clean exit.
+  if (minIntervalMs > 0) {
+    const prev = readState(convGuid);
+    if (prev?.last_flush_ms && Date.now() - prev.last_flush_ms < minIntervalMs) return;
+  }
 
   const release = acquireLock(convGuid);
   if (!release) return; // another hook instance is already flushing; it'll catch our lines
@@ -185,8 +206,10 @@ async function handleStopFamily(
     }
 
     const ok = await postEntries(convGuid, result.entries);
-    if (ok && result.lastUuid) {
-      writeState(convGuid, { last_uuid: result.lastUuid });
+    if (ok) {
+      // Stamp the flush time even when no new lines landed, so the throttle
+      // above measures from the last attempt. Keep the watermark if unchanged.
+      writeState(convGuid, { last_uuid: result.lastUuid ?? state.last_uuid, last_flush_ms: Date.now() });
     }
   } finally {
     release();
@@ -242,6 +265,11 @@ async function main(): Promise<void> {
         break;
       case 'subagent-stop':
         await handleStopFamily(convGuid, hook, true);
+        break;
+      case 'post-tool-use':
+        // Incremental mid-run flush so an interrupted session keeps its
+        // transcript (Stop/SessionEnd only fire on clean exit). Throttled.
+        await handleStopFamily(convGuid, hook, false, POST_TOOL_FLUSH_MS);
         break;
       case 'session-end':
         await handleSessionEnd(convGuid, hook, source);
