@@ -182,6 +182,19 @@ program.configureHelp({
       lines.push('');
     }
 
+    // Flat, alphabetized "Commands:" section: the grouped view above is for
+    // humans, but agents grep for a standard greppable command list. Emit
+    // every top-level subcommand here so `--help | sed -n '/Commands:/,$p'`
+    // (and similar) returns the full set.
+    const allCmds = HELP_SECTIONS.flatMap(s => s.cmds)
+      .slice()
+      .sort((a, b) => a.name().localeCompare(b.name()));
+    lines.push(bold('Commands:'));
+    for (const c of allCmds) {
+      lines.push(`  ${padCmd(c.name())}  ${c.description()}`);
+    }
+    lines.push('');
+
     lines.push(dim(`Run "${cmd.name()} <command> --help" for details on a specific command.`));
     lines.push('');
     return lines.join('\n');
