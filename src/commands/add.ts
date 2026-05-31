@@ -157,7 +157,32 @@ export const addCommand = new Command('add')
   .option('--description <desc>', 'App description for meta tags - templates only')
   .option('--force', 'Templates only: overwrite any colliding files')
   .option('--json', 'Output as JSON')
-  .action((name: string | undefined, opts) => run('Add', async () => {
+  // Take the excess args ourselves instead of letting Commander bail with a
+  // bare "too many arguments" dump - we want to recognize the common mistake
+  // of passing metadata as `title=...` positionals and point at the flag form.
+  .allowExcessArguments(true)
+  .action((name: string | undefined, opts, command) => run('Add', async () => {
+    // Agents often type metadata as `gipity add 2d-game title="..."` instead of
+    // `--title "..."`. Catch the `key=value` shape and emit a directive hint
+    // mapping the recognized keys to their flags, rather than the raw Commander
+    // "too many arguments" error that sends them off to read --help.
+    const extras: string[] = command.args.slice(1);
+    if (extras.length) {
+      const FLAG_FOR: Record<string, string> = { title: '--title', description: '--description' };
+      const kv = extras.filter(a => a.includes('='));
+      if (kv.length) {
+        const suggestion = kv.map(a => {
+          const eq = a.indexOf('=');
+          const key = a.slice(0, eq);
+          const val = a.slice(eq + 1);
+          return `${FLAG_FOR[key] ?? `--${key}`} "${val}"`;
+        }).join(' ');
+        console.error(`Pass metadata as flags: gipity add ${name} ${suggestion}`);
+      } else {
+        console.error(`error: too many arguments for 'add'. Expected 1 argument but got ${extras.length + 1}.`);
+      }
+      process.exit(1);
+    }
     if (!name) {
       printCatalog();
       return;
