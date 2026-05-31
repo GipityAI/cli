@@ -130,7 +130,9 @@ function appendOption(value: string, previous: string[] = []): string[] {
 export const pageScreenshotCommand = new Command('screenshot')
   .description('Screenshot a web page')
   .argument('<url>', 'URL to screenshot')
-  .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms', '1000')
+  .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms (server-capped at 30000)', '1000')
+  .option('--wait-for <selector>', 'Wait until this CSS selector appears before capturing (deterministic; for renders that exceed the --post-load-delay cap)')
+  .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '120000')
   .option('--full', 'Capture the full scrollable page (default: viewport only)')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
@@ -145,6 +147,9 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (postLoadDelayMs !== undefined && (!Number.isFinite(postLoadDelayMs) || postLoadDelayMs < 0)) {
       throw new Error('--post-load-delay must be a non-negative integer (ms)');
     }
+
+    const parsedTimeout = parseInt(String(opts.waitTimeout), 10);
+    const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 120000;
 
     const deviceNames = splitCsv(opts.device as string[]);
     const viewportStrs = splitCsv(opts.viewport as string[]);
@@ -163,6 +168,8 @@ export const pageScreenshotCommand = new Command('screenshot')
     const body = {
       url,
       postLoadDelayMs,
+      waitForSelector: opts.waitFor || undefined,
+      waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
       full: !!opts.full,
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
