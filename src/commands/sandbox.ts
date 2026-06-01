@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { dirname, relative } from 'path';
-import { post } from '../api.js';
+import { post, ApiError } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { error as clrError, dim } from '../colors.js';
 import { run } from '../helpers/index.js';
@@ -23,6 +23,29 @@ function resolveRelativeCwd(): string | undefined {
   const rel = relative(projectRoot, process.cwd());
   if (!rel || rel.startsWith('..')) return undefined;
   return rel.split(/[\\/]/).filter(Boolean).join('/');
+}
+
+/** The server returns a terse "Sandbox queue timeout - all containers busy" when
+ *  every sandbox container is in use. That tells the agent nothing about cause or
+ *  remedy — and in practice the occupant is often the caller's own still-running
+ *  `--background` sandbox job holding the only container. Rewrite the busy error to
+ *  name the cause and the fix, surfacing the in-flight run id when the server sends
+ *  one so the agent can correlate it with its own background task. */
+function enrichSandboxError(err: unknown): unknown {
+  if (!(err instanceof ApiError)) return err;
+  if (!/all containers busy|queue timeout/i.test(err.message)) return err;
+  const runId = typeof err.data?.run_id === 'string' ? err.data.run_id
+    : typeof err.data?.runId === 'string' ? err.data.runId
+    : undefined;
+  const culprit = runId
+    ? `a previous run (possibly your own background job ${runId})`
+    : 'a previous run (possibly your own background job)';
+  return new ApiError(
+    err.statusCode,
+    err.code,
+    `all sandbox containers are busy — ${culprit} is still executing; wait for it to finish or stop it before retrying`,
+    err.data,
+  );
 }
 
 export const sandboxCommand = new Command('sandbox')
@@ -99,7 +122,7 @@ GCC/Rust).
       timeout: isNaN(timeout) ? 30 : timeout,
       input_files: opts.input,
       cwd,
-    });
+    }).catch((err) => { throw enrichSandboxError(err); });
 
     if (opts.json) {
       console.log(JSON.stringify(res.data));

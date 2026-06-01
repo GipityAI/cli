@@ -38,6 +38,19 @@ test('gipity sandbox run with --language python posts language=python', async ()
   assert.match(r.stdout, /42/);
 });
 
+test('gipity sandbox run rewrites the all-containers-busy error to be actionable', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { status: 503, body: {
+    error: { code: 'SANDBOX_BUSY', message: 'Sandbox queue timeout - all containers busy' },
+    data: { run_id: 'run_abc123' },
+  } });
+  const r = await fresh(['sandbox', 'run', 'console.log(1)']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /all sandbox containers are busy/);
+  assert.match(r.stderr, /background job run_abc123/);
+  assert.match(r.stderr, /wait for it to finish or stop it before retrying/);
+});
+
 test('gipity sandbox run lists output files when present', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
