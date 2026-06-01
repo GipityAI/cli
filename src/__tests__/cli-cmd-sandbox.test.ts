@@ -38,6 +38,28 @@ test('gipity sandbox run with --language python posts language=python', async ()
   assert.match(r.stdout, /42/);
 });
 
+test('gipity sandbox run suggests --language bash when a js run is actually a shell command', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 1, stdout: '', stderr: '/work/_run.js:1\nqrencode -o out.png hello\n^^^^^^^^\nReferenceError: qrencode is not defined',
+    durationMs: 20, timedOut: false,
+  } } });
+  const r = await fresh(['sandbox', 'run', 'qrencode -o out.png hello']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--language bash/);
+});
+
+test('gipity sandbox run does not suggest --language bash on a genuine js failure', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 1, stdout: '', stderr: 'Error: boom\n    at /work/_run.js:3:9',
+    durationMs: 20, timedOut: false,
+  } } });
+  const r = await fresh(['sandbox', 'run', 'throw new Error("boom")']);
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stderr, /--language bash/);
+});
+
 test('gipity sandbox run lists output files when present', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {

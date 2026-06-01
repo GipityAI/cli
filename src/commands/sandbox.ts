@@ -14,6 +14,27 @@ const LANG_MAP: Record<string, string> = {
   sh: 'bash',
 };
 
+/** Shell binaries an agent is likely to pass without --language bash. */
+const SHELL_BINARIES = new Set([
+  'qrencode', 'ffmpeg', 'convert', 'magick', 'sox', 'pandoc', 'python3',
+  'file', 'ls', 'cat', 'grep', 'sed', 'awk', 'cwebp', 'optipng', 'jq',
+  'exiftool', 'gcc', 'cargo', 'curl', 'wget', 'tar', 'zip', 'unzip',
+]);
+
+/** When a failed js-mode run is actually a shell command (first token is a
+ *  known shell binary, or Node threw a bare-identifier error on line 1),
+ *  return a hint pointing at --language bash; otherwise undefined. */
+function shellCommandHint(language: string, code: string, stderr: string): string | undefined {
+  if (language !== 'javascript') return undefined;
+  const firstToken = code.trim().split(/\s+/)[0] ?? '';
+  const binary = firstToken.split('/').pop() || firstToken;
+  const isKnownBinary = SHELL_BINARIES.has(binary);
+  const isBareIdentifier = /ReferenceError: \w+ is not defined/.test(stderr)
+    || (/SyntaxError/.test(stderr) && /_run\.js:1\b/.test(stderr));
+  if (!isKnownBinary && !isBareIdentifier) return undefined;
+  return 'This looks like a shell command — re-run with `gipity sandbox run --language bash ...`';
+}
+
 /** Project-relative path from the process cwd, or undefined when there's
  *  no local config (one-off mode) or the cwd is at/above the project root. */
 function resolveRelativeCwd(): string | undefined {
@@ -109,6 +130,10 @@ GCC/Rust).
       }
       if (res.data.stdout) console.log(res.data.stdout);
       if (res.data.stderr) console.error(res.data.stderr);
+      if (res.data.exitCode !== 0) {
+        const hint = shellCommandHint(language, code, res.data.stderr);
+        if (hint) console.error(dim(hint));
+      }
       if (res.data.timedOut) console.error(`[Timed out after ${res.data.durationMs}ms]`);
       if (res.data.outputFiles && res.data.outputFiles.length > 0) {
         console.log(`\nOutput files saved to project:`);
