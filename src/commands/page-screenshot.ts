@@ -137,8 +137,10 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
+  .option('--eval <js>', 'Run this JS in the page and await it before capturing - builds state in the same session (e.g. draw shapes via a test hook) so the screenshot shows the result of an interaction, not a fresh load')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
+  .addOption(new Option('--setup <js>', 'Alias for --eval').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
     const delayRaw = opts.postLoadDelay ?? opts.wait;
     const postLoadDelayMs = delayRaw !== undefined ? parseInt(String(delayRaw), 10) : undefined;
@@ -157,6 +159,15 @@ export const pageScreenshotCommand = new Command('screenshot')
       throw new Error('--output can only be used with a single viewport');
     }
 
+    // --eval/--setup: JS to run in the page before capture, so the shot shows
+    // the result of an interaction (state built in the same session).
+    const setupJs: string | undefined = opts.eval ?? opts.setup;
+    // A reload between viewports throws away whatever the setup JS built, so the
+    // multi-viewport reload path can't carry that state forward.
+    if (setupJs && customViewports.length > 1 && opts.reloadBetween !== false) {
+      throw new Error('--eval is incompatible with multiple viewports unless --no-reload-between is set (reload wipes the state the JS built); use one viewport or pass --no-reload-between');
+    }
+
     // Server defaults to 1280×720 when viewports is omitted - don't send it in
     // the no-flag case so the filename stays unsuffixed (no viewport segment).
     const userSpecifiedViewports = customViewports.length > 0;
@@ -167,6 +178,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
       ...(opts.fakeMedia ? { fakeMedia: true } : {}),
+      ...(setupJs ? { setupJs } : {}),
     };
 
     const entries = await postForTarEntries('/tools/browser/screenshot', body);
