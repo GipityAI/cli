@@ -229,4 +229,31 @@ if (mappedCmd) {
   }
 }
 
+// ── Unknown top-level verb + `--help` → error, don't print the banner ─────
+// `gipity browser --help` otherwise short-circuits to the generic top-level
+// banner with exit 0 before Commander's unknown-command check runs, so the
+// verb being wrong is invisible (an agent can't tell `browser` from a real
+// command). When the leading operand isn't a known command, drop the help
+// flags so Commander's native unknown-command error fires instead — error +
+// "did you mean" suggestion + nonzero exit, identical to the no-`--help` case.
+{
+  const known = new Set(program.commands.flatMap(c => [c.name(), ...c.aliases()]));
+  const valueFlags = new Set(
+    program.options
+      .filter(o => o.required || o.optional)
+      .flatMap(o => [o.short, o.long].filter((f): f is string => !!f)),
+  );
+  const raw = process.argv.slice(2);
+  let i = 0;
+  while (i < raw.length && raw[i].startsWith('-')) {
+    if (valueFlags.has(raw[i])) i++; // skip the option's value token
+    i++;
+  }
+  const leading = raw[i];
+  const hasHelpFlag = raw.includes('--help') || raw.includes('-h');
+  if (leading && !known.has(leading) && hasHelpFlag) {
+    process.argv = process.argv.filter(a => a !== '--help' && a !== '-h');
+  }
+}
+
 program.parse(normalizeAliases(process.argv, program));
