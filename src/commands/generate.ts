@@ -73,6 +73,7 @@ Examples:
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
         console.log(success(`Saved to ${savedPath}`));
+        console.log(info(`Hosted: ${result.url}`));
       }
     } catch (err: any) {
       console.error(clrError(`Image generation failed: ${err.message}`));
@@ -127,6 +128,7 @@ Examples:
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
         console.log(success(`Saved to ${savedPath}`));
+        console.log(info(`Hosted: ${result.url}`));
       }
     } catch (err: any) {
       console.error(clrError(`Video generation failed: ${err.message}`));
@@ -185,6 +187,7 @@ Examples:
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider} (${sizeKb}KB)`)}`);
         console.log(success(`Saved to ${savedPath}`));
+        console.log(info(`Hosted: ${result.url}`));
       }
     } catch (err: any) {
       console.error(clrError(`Speech generation failed: ${err.message}`));
