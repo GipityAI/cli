@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
-import { writeFileSync } from 'fs';
-import { resolve as resolvePath } from 'path';
+import { writeFileSync, mkdirSync } from 'fs';
+import { resolve as resolvePath, dirname } from 'path';
 import { error as clrError, success, muted, info } from '../colors.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
@@ -20,6 +20,7 @@ async function downloadFile(url: string, filename: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
+  mkdirSync(dirname(resolvePath(filename)), { recursive: true });
   writeFileSync(filename, buffer);
   return resolvePath(filename);
 }
