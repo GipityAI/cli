@@ -1,6 +1,8 @@
 import { Command } from 'commander';
+import { existsSync, readdirSync, statSync } from 'fs';
+import { join, resolve } from 'path';
 import { post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { requireConfig, getProjectRoot } from '../config.js';
 import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
@@ -12,6 +14,40 @@ function statusIcon(status: string): string {
   if (status === 'failed') return clrError('✗');
   if (status === 'warning') return warning('⚠');
   return muted('→');
+}
+
+// ── Stranded web-file warning ──────────────────────────────────────────
+// Deploys ship a single source root (src/ by default). Web files written to
+// the project root instead are silently dropped by the server, which has
+// burned agents into shipping the untouched template and discovering it only
+// on page inspect. Warn (non-fatal) so the mistake surfaces at deploy time.
+function warnStrandedWebFiles(deployRoot: string): void {
+  const projectRoot = getProjectRoot();
+  if (!projectRoot) return;
+  const rel = deployRoot.replace(/^\.\//, '').replace(/\/+$/, '');
+  // When deploying from the project root itself, nothing is stranded.
+  if (rel === '' || rel === '.') return;
+
+  const deployRootAbs = resolve(projectRoot, rel);
+  const stranded: string[] = [];
+  try {
+    for (const entry of readdirSync(projectRoot)) {
+      const abs = join(projectRoot, entry);
+      if (abs === deployRootAbs) continue; // skip the deploy root itself
+      if (entry === 'index.html' || entry.endsWith('.html')) {
+        stranded.push(entry);
+      } else if ((entry === 'css' || entry === 'js') && existsSync(abs) && statSync(abs).isDirectory()) {
+        stranded.push(entry + '/');
+      }
+    }
+  } catch {
+    return; // best-effort; never block the deploy
+  }
+  if (stranded.length === 0) return;
+  console.log(`  ${warning(
+    `Note: ${stranded.join(', ')} found at project root but the deploy root is ${rel}/ — ` +
+    `these files were NOT deployed. Move them under ${rel}/.`,
+  )}`);
 }
 
 // ── Main Deploy Command ────────────────────────────────────────────────
@@ -88,6 +124,9 @@ export const deployCommand = new Command('deploy')
       if (d.warning) {
         console.log(`  ${warning(d.warning)}`);
       }
+
+      // Flag deployable web files stranded at the project root, outside src/.
+      warnStrandedWebFiles(opts.sourceDir || 'src');
 
       // Show example curl commands for public endpoints
       if (d.examples && d.examples.length > 0) {
