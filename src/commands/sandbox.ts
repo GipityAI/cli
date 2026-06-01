@@ -1,9 +1,15 @@
 import { Command } from 'commander';
 import { dirname, relative } from 'path';
-import { post } from '../api.js';
+import { post, ApiError } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { error as clrError, dim } from '../colors.js';
 import { run } from '../helpers/index.js';
+
+/** Real wall-clock ceiling enforced by the API gateway. Requests that run
+ *  longer are killed gateway-side with a 504, regardless of the requested
+ *  --timeout. Cap/validate against this so we never advertise a number the
+ *  platform won't honor. */
+const MAX_TIMEOUT_SECONDS = 10;
 
 const LANG_MAP: Record<string, string> = {
   js: 'javascript',
@@ -32,7 +38,7 @@ sandboxCommand
   .command('run <code>')
   .description('Run code')
   .option('--language <language>', 'Language: js, py, or bash', 'js')
-  .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
+  .option('--timeout <seconds>', `Execution timeout in seconds (max ${MAX_TIMEOUT_SECONDS}, the gateway wall-clock cap)`, String(MAX_TIMEOUT_SECONDS))
   .option(
     '--input <path>',
     'Narrow to specific project files instead of auto-mirroring the whole tree (repeatable). Use this only for >1 GB projects or when you want surgical control.',
@@ -80,9 +86,16 @@ GCC/Rust).
     }
 
     const timeout = parseInt(opts.timeout, 10);
+    if (!isNaN(timeout) && timeout > MAX_TIMEOUT_SECONDS) {
+      console.error(clrError(
+        `sandbox runs are capped at ${MAX_TIMEOUT_SECONDS}s of wall-clock; ` +
+        `--timeout ${timeout} cannot be honored — chunk the work`,
+      ));
+      process.exit(1);
+    }
     const cwd = resolveRelativeCwd();
 
-    const res = await post<{
+    type ExecResponse = {
       data: {
         exitCode: number;
         stdout: string;
@@ -93,13 +106,25 @@ GCC/Rust).
         mirroredCount?: number;
         autoMirrorSkipped?: { reason: string; totalBytes: number };
       };
-    }>(`/projects/${config.projectGuid}/sandbox/execute`, {
-      code,
-      language,
-      timeout: isNaN(timeout) ? 30 : timeout,
-      input_files: opts.input,
-      cwd,
-    });
+    };
+
+    let res: ExecResponse;
+    try {
+      res = await post<ExecResponse>(`/projects/${config.projectGuid}/sandbox/execute`, {
+        code,
+        language,
+        timeout: isNaN(timeout) ? MAX_TIMEOUT_SECONDS : timeout,
+        input_files: opts.input,
+        cwd,
+      });
+    } catch (err) {
+      // The gateway kills over-long runs with a 504; surface the real limit
+      // instead of the generic "Gateway Time-out".
+      if (err instanceof ApiError && err.statusCode === 504) {
+        throw new Error(`exceeded sandbox wall-clock limit of ${MAX_TIMEOUT_SECONDS}s`);
+      }
+      throw err;
+    }
 
     if (opts.json) {
       console.log(JSON.stringify(res.data));
