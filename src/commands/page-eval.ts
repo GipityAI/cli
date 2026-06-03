@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { runBrowser } from '../helpers/index.js';
 
 interface EvalResult {
   url: string;
@@ -56,7 +56,7 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
-  .action((url: string, expr: string, opts) => run('Page eval', async () => {
+  .action((url: string, expr: string, opts) => runBrowser('Page eval', url, async () => {
     const parsedWait = parseInt(opts.wait, 10);
     const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
     const parsedTimeout = parseInt(opts.waitTimeout, 10);

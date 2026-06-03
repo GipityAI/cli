@@ -5,7 +5,7 @@ import { postForTarEntries } from '../api.js';
 import { getProjectRoot } from '../config.js';
 import { brand, bold, muted, success } from '../colors.js';
 import { formatSize } from '../utils.js';
-import { run } from '../helpers/index.js';
+import { runBrowser } from '../helpers/index.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number };
 
@@ -139,7 +139,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
-  .action((url: string, opts) => run('Page screenshot', async () => {
+  .action((url: string, opts) => runBrowser('Page screenshot', url, async () => {
     const delayRaw = opts.postLoadDelay ?? opts.wait;
     const postLoadDelayMs = delayRaw !== undefined ? parseInt(String(delayRaw), 10) : undefined;
     if (postLoadDelayMs !== undefined && (!Number.isFinite(postLoadDelayMs) || postLoadDelayMs < 0)) {

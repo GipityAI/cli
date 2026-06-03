@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { post } from '../api.js';
 import { formatSize } from '../utils.js';
 import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { runBrowser } from '../helpers/index.js';
 
 interface DebugBundle {
   url: string;
@@ -59,7 +59,7 @@ export const pageInspectCommand = new Command('inspect')
       console.error(`  gipity page screenshot ${url}${typeof opts.screenshot === 'string' ? ` -o ${opts.screenshot}` : ''}`);
       process.exit(1);
     }
-    return run('Page inspect', async () => {
+    return runBrowser('Page inspect', url, async () => {
     const parsedWait = parseInt(opts.wait, 10);
     const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
