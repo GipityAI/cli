@@ -55,7 +55,7 @@ test('gipity credits usage shows recent operations with credits and timestamps',
   mock.reset();
   mock.on('GET /credits/usage', { body: { data: [
     { operation: 'llm_chat', creditsDeducted: 12, costUsd: 0.012, modelId: 'claude-sonnet-4-6', createdAt: '2026-05-01T10:00:00Z' },
-    { operation: 'image_gen', creditsDeducted: 50, costUsd: 0.05, modelId: 'gpt-image-1', createdAt: '2026-05-01T11:00:00Z' },
+    { operation: 'image_gen', creditsDeducted: 50, costUsd: 0.05, modelId: 'gpt-image-2', createdAt: '2026-05-01T11:00:00Z' },
   ] } });
 
   const r = await runCliAsync(['--api-base', mock.apiBase, 'credits', 'usage'], { env: { HOME: home } });

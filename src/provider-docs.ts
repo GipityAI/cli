@@ -6,7 +6,7 @@
  * Run `just sync-docs` to refresh from platform.
  */
 
-export const GEMINI_LLM_MODELS_DOC = `gemini-2.5-flash (Gemini 2.5 Flash, $0.15/$0.6 per 1M tok, 1049K ctx), gemini-2.5-pro (Gemini 2.5 Pro, $1.25/$10 per 1M tok, 1049K ctx), gemini-3-pro-preview (Gemini 3 Pro, $2/$12 per 1M tok, 200K ctx)`;
+export const GEMINI_LLM_MODELS_DOC = `gemini-3.5-flash (Gemini 3.5 Flash, $1.5/$9 per 1M tok, 1049K ctx), gemini-3.1-pro-preview (Gemini 3.1 Pro, $2/$12 per 1M tok, 1049K ctx), gemini-3.1-flash-lite (Gemini 3.1 Flash-Lite, $0.25/$1.5 per 1M tok, 1049K ctx), gemini-3-flash-preview (Gemini 3 Flash, $0.5/$3 per 1M tok, 1049K ctx), gemini-2.5-pro (Gemini 2.5 Pro, $1.25/$10 per 1M tok, 1049K ctx), gemini-2.5-flash (Gemini 2.5 Flash, $0.3/$2.5 per 1M tok, 1049K ctx), gemini-2.5-flash-lite (Gemini 2.5 Flash-Lite, $0.1/$0.4 per 1M tok, 1049K ctx)`;
 
 export const GEMINI_TTS_VOICES = [
   'Zephyr',
@@ -49,21 +49,21 @@ export const IMAGE_GEMINI_ASPECT_RATIOS = `1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 
 
 export const IMAGE_GEMINI_SIZES = `512, 1K, 2K, 4K`;
 
-export const IMAGE_MODELS_DOC = `openai: gpt-image-1. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-dev. gemini: gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview`;
+export const IMAGE_MODELS_DOC = `openai: gpt-image-2, gpt-image-1.5. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-dev. gemini: gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
 
-export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-1\`
+export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2, gpt-image-1.5\`
 - **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-dev\`
-- **Gemini/Nano Banana**: \`gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview\``;
+- **Gemini/Nano Banana**: \`gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image\``;
 
 export const IMAGE_PROVIDERS_LIST = `openai, bfl, gemini`;
 
 export const IMAGE_PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  'openai': `OpenAI (gpt-image-1)`,
+  'openai': `OpenAI (gpt-image-2, gpt-image-1.5)`,
   'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-dev)`,
-  'gemini': `Gemini/Nano Banana (gemini-2.5-flash-image, gemini-3.1-flash-image-preview, gemini-3-pro-image-preview)`,
+  'gemini': `Gemini/Nano Banana (gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image)`,
 };
 
-export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-5-mini (cheapest). Anthropic: claude-haiku-4-5 (cheapest). Gemini: gemini-2.5-flash (cheapest, 1M context)`;
+export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-4.1-nano (cheapest), gpt-5.4-mini (cheap reasoning). Anthropic: claude-haiku-4-5 (cheapest). Gemini: gemini-2.5-flash-lite (cheapest, 1M context)`;
 
 export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini`;
 

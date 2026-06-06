@@ -13,7 +13,7 @@
 //   GIPITY_E2E_CODE=914914
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCli, makeTmpHome } from './helpers/spawn-cli.js';
@@ -95,6 +95,42 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.equal(r.status, 0, `tts/voices failed: ${r.stderr || r.stdout}`);
     const body = JSON.parse(r.stdout);
     assert.ok(Array.isArray(body.data?.voices), 'expected a voices array');
+  });
+
+  it('service call music/models --get lists models without leaking infra', () => {
+    const r = cli(['service', 'call', 'music/models', '--get']);
+    assert.equal(r.status, 0, `music/models failed: ${r.stderr || r.stdout}`);
+    const body = JSON.parse(r.stdout);
+    const models = body.data?.models;
+    assert.ok(Array.isArray(models) && models.length > 0, 'expected a non-empty models array');
+    const ids = models.map((m: { id: string }) => m.id);
+    assert.ok(ids.includes('music-v1'), `expected music-v1 in ${JSON.stringify(ids)}`);
+    assert.equal(body.data.default_model, 'music-v1', 'music-v1 should be the default');
+    // ace-step is seeded but enabled=false — it must not be advertised yet.
+    assert.ok(!ids.includes('ace-step'), 'disabled ace-step must not be listed');
+    // `infra` is the hidden routing target and must never be returned to apps.
+    for (const m of models) assert.ok(!('infra' in m), `infra leaked: ${JSON.stringify(m)}`);
+  });
+
+  it('service call music <body> generates a real clip (costs credits)', () => {
+    const r = cli(
+      ['service', 'call', 'music', '{"prompt":"short upbeat ukulele jingle","duration_seconds":5,"instrumental":true}'],
+      { timeout: 120000 },
+    );
+    assert.equal(r.status, 0, `service call music failed: ${r.stderr || r.stdout}`);
+    const body = JSON.parse(r.stdout);
+    assert.match(body.url ?? '', /^https?:\/\//, `expected a CDN url, got: ${r.stdout}`);
+    assert.equal(body.model, 'music-v1', 'response should echo the resolved model');
+    assert.ok(typeof body.credits_used === 'number' && body.credits_used > 0, 'expected credits_used > 0');
+  });
+
+  it('generate music writes a real clip to disk (costs credits)', () => {
+    const out = join(projectDir, 'gen-music.mp3');
+    const r = cli(['generate', 'music', 'short upbeat ukulele jingle', '--duration', '5', '-o', out, '--json'], { timeout: 120000 });
+    assert.equal(r.status, 0, `generate music failed: ${r.stderr || r.stdout}`);
+    const meta = JSON.parse(r.stdout);
+    assert.equal(meta.model, 'music-v1', 'expected the default model id in the result');
+    assert.ok(existsSync(out) && statSync(out).size > 1000, `expected a non-empty mp3 at ${out}`);
   });
 
   it('service call rejects invalid JSON before hitting the network', () => {

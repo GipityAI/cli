@@ -30,8 +30,10 @@ skillCommand
     }
     const res = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
 
+    const width = res.data.reduce((m, s) => Math.max(m, s.name.length), 0);
     printList(res.data, opts, 'No skills available.', s =>
-      `${bold(s.name)}  ${muted(s.description)}`
+      `  ${bold(s.name.padEnd(width))}  ${muted(s.description)}`,
+      'Read one with `gipity skill read <name>`:'
     );
   }));
 

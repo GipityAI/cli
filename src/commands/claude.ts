@@ -32,6 +32,7 @@ import * as relayState from '../relay/state.js';
 import { maybeOfferRelayOn, ensureDaemonRunning } from '../relay/onboarding.js';
 import { prompt, promptBoxed, pickOne, decodeJwtExp, confirm } from '../utils.js';
 import { brand, bold, faint, info, success, error as clrError, muted } from '../colors.js';
+import { createProgressReporter } from '../progress.js';
 import { printBanner } from '../banner.js';
 import {
   scanForAdoption,
@@ -349,11 +350,10 @@ export const claudeCommand = new Command('claude')
       let initialPrompt = '';
       let headlessNewProject = false;
 
-      // Single status line for the (otherwise silent) sync phases, so a long
-      // sync of a large tree no longer reads as a hang.
-      const syncProgress = (msg: string): void => {
-        if (!nonInteractive) console.log(`  ${muted(msg)}`);
-      };
+      // One reporter for the (otherwise silent) sync phases + upload bar, so a
+      // long sync of a large tree no longer reads as a hang. Stays silent in
+      // headless (-p) runs to keep machine-readable output clean.
+      const syncProgress = nonInteractive ? undefined : createProgressReporter();
 
       let existing = getConfig();
       let forceAdoptCwd = false;
@@ -450,7 +450,7 @@ export const claudeCommand = new Command('claude')
 
         console.log(`\n  Using ${projectDir}`);
         try {
-          const result = await sync({ interactive: !nonInteractive, onProgress: syncProgress });
+          const result = await sync({ interactive: !nonInteractive, progress: syncProgress });
           if (result.applied > 0) {
             console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
           }
@@ -519,7 +519,7 @@ export const claudeCommand = new Command('claude')
 
         if (doSync) {
           try {
-            const result = await sync({ interactive: !nonInteractive, onProgress: syncProgress });
+            const result = await sync({ interactive: !nonInteractive, progress: syncProgress });
             if (result.applied > 0) {
               console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
             }
@@ -650,7 +650,7 @@ export const claudeCommand = new Command('claude')
 
           // Unified sync - push and pull resolved via three-way merge (non-fatal)
           try {
-            const result = await sync({ interactive: !nonInteractive, onProgress: syncProgress });
+            const result = await sync({ interactive: !nonInteractive, progress: syncProgress });
             if (result.applied > 0) {
               console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
             }

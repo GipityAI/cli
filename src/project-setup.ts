@@ -6,6 +6,7 @@
  */
 import { clearConfigCache, saveConfigAt, getApiBaseOverride, GipityConfig } from './config.js';
 import { sync } from './sync.js';
+import { createProgressReporter } from './progress.js';
 import { setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
 import { substituteDir } from './template-vars.js';
 import { muted } from './colors.js';
@@ -78,7 +79,10 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
 
   let applied = 0;
   try {
-    const result = await sync({ interactive: opts.interactive ?? false });
+    const result = await sync({
+      interactive: opts.interactive ?? false,
+      progress: createProgressReporter(),
+    });
     applied = result.applied;
   } catch (err) {
     if (opts.sync === 'strict') throw err;

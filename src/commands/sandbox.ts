@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { dirname, relative } from 'path';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
+import { sync } from '../sync.js';
 import { error as clrError, dim } from '../colors.js';
 import { run } from '../helpers/index.js';
 
@@ -101,8 +102,18 @@ GCC/Rust).
       cwd,
     });
 
+    // Pull sandbox-written outputs down to the local cwd automatically. The
+    // server has already mirrored them into the project (VFS) and handed back
+    // the exact list, so honoring it here means files land locally without a
+    // manual `gipity sync` - same auto-pull contract `gipity chat` uses on its
+    // `filesChanged` flag. Skip in one-off mode (no local project to sync into).
+    const pulledLocal = !!(res.data.outputFiles?.length && getConfigPath());
+    if (pulledLocal) {
+      await sync({ interactive: false });
+    }
+
     if (opts.json) {
-      console.log(JSON.stringify(res.data));
+      console.log(JSON.stringify({ ...res.data, filesSynced: pulledLocal }));
     } else {
       if (res.data.autoMirrorSkipped) {
         console.error(dim(`Note: ${res.data.autoMirrorSkipped.reason}`));
@@ -111,7 +122,7 @@ GCC/Rust).
       if (res.data.stderr) console.error(res.data.stderr);
       if (res.data.timedOut) console.error(`[Timed out after ${res.data.durationMs}ms]`);
       if (res.data.outputFiles && res.data.outputFiles.length > 0) {
-        console.log(`\nOutput files saved to project:`);
+        console.log(`\nOutput files ${pulledLocal ? 'synced to this directory' : 'saved to project'}:`);
         for (const f of res.data.outputFiles) console.log(`  ${f}`);
       }
       if (res.data.exitCode !== 0) process.exit(res.data.exitCode);

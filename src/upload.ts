@@ -120,6 +120,11 @@ export interface UploadOpts {
    *  CAS check entirely (e.g. tool-driven writes, scaffolding). On mismatch the
    *  server returns 409 and this function throws {@link UploadConflictError}. */
   expectedServerVersion?: number | null;
+  /** Called as bytes land on the wire, with the byte delta for each chunk
+   *  (one multipart part, or the whole body for a single PUT). Lets callers
+   *  drive a transfer progress bar. Already-uploaded parts on resume are
+   *  reported up front so the total still reaches 100%. */
+  onBytes?: (deltaBytes: number) => void;
 }
 
 export interface UploadResult {
@@ -193,6 +198,7 @@ export async function uploadOneFile(
         data.headers?.['Content-Type'] ?? mime,
       );
     });
+    opts.onBytes?.(size);
     completeBody.etag = etag;
     let comp: { data: { size: number; guid: string; version: number; server_version: number } };
     try {
@@ -224,6 +230,10 @@ export async function uploadOneFile(
   const completed: Array<{ part_number: number; etag: string }> = [];
   for (const p of alreadyDone) completed.push(p);
 
+  // On resume, count the parts the server already has so the progress total
+  // still reaches 100% (capped at size for the short final part).
+  if (alreadyDone.length) opts.onBytes?.(Math.min(alreadyDone.length * partSize, size));
+
   const partConcurrency = opts.partConcurrency ?? MULTIPART_PART_CONCURRENCY;
   let cursor = 0;
   const workers: Array<Promise<void>> = [];
@@ -239,6 +249,7 @@ export async function uploadOneFile(
         const etag = await withRetry(`part ${part.partNumber}`, () =>
           putToPresignedUrl(part.url, body, body.length),
         );
+        opts.onBytes?.(body.length);
         completed.push({ part_number: part.partNumber, etag });
       }
     })());

@@ -35,6 +35,7 @@ export function printList<T>(
   opts: { json?: boolean },
   emptyMsg: string,
   formatter: (item: T) => string,
+  header?: string,
 ): void {
   if (opts.json) {
     console.log(JSON.stringify(data));
@@ -44,6 +45,12 @@ export function printList<T>(
   if (data.length === 0) {
     console.log(emptyMsg);
   } else {
+    // A `header` is a one-line lead-in (e.g. "Read one with `gipity skill
+    // read <name>`:") that tells the reader what the listed names are for.
+    if (header) {
+      console.log(header);
+      console.log('');
+    }
     for (const item of data) {
       console.log(formatter(item));
     }

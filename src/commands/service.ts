@@ -29,10 +29,15 @@ serviceCommand
   .description('List callable app services')
   .action(() => run('Services', async () => {
     requireConfig();
+    const width = SERVICES.reduce((m, s) => Math.max(m, s.name.length), 0);
+    console.log('');
+    console.log('Call one with `gipity service call <name> \'{"json":"body"}\'`');
+    console.log(muted('(GET endpoints like llm/models, tts/voices take --get and no body)'));
+    console.log('');
     for (const s of SERVICES) {
-      console.log(`${bold(s.name)} ${muted(`[${s.method}]`)}\n  ${muted(s.desc)}`);
+      console.log(`  ${bold(s.name.padEnd(width))}  ${muted(`[${s.method}] ${s.desc}`)}`);
     }
-    console.log(muted('\nCall with: gipity service call <name> \'{"json":"body"}\''));
+    console.log('');
   }));
 
 serviceCommand

@@ -1,12 +1,14 @@
 import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
-import { brand, bold, muted } from '../colors.js';
+import { brand, bold, muted, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 
 interface EvalResult {
   url: string;
   result: string;
   truncated: boolean;
+  navigationIncomplete?: boolean;
+  note?: string;
 }
 
 type EvalJobRecord =
@@ -75,6 +77,9 @@ export const pageEvalCommand = new Command('eval')
     }
 
     console.log(`\n${brand('Eval')} ${bold(d.url || url)}`);
+    if (d.navigationIncomplete) {
+      console.log(`  ${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
+    }
     console.log(`  ${muted('Expression:')} ${expr}`);
     console.log(`\n${d.result || muted('(empty result)')}`);
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));

@@ -38,13 +38,13 @@ Gemini-specific options:
 Examples:
   gipity generate image "a cat wearing a top hat"
   gipity generate image "landscape sunset" --provider gemini --aspect-ratio 16:9 --image-size 2K
-  gipity generate image "product photo" --provider openai --model gpt-image-1 --size 1536x1024 --quality high
+  gipity generate image "product photo" --provider openai --model gpt-image-2 --size 1536x1024 --quality high
   gipity generate image "abstract art" --provider bfl --model flux-2-pro -o art.png`)
   .argument('<prompt>', 'Text description of the image to generate')
   .option('--provider <provider>', 'Image provider: openai, bfl, or gemini (default: bfl)')
   .option('--model <model>', 'Model ID (see provider list above)')
   .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (OpenAI/BFL)')
-  .option('--quality <quality>', 'Quality: low|medium|high|auto (gpt-image-1), standard|hd (dall-e-3)')
+  .option('--quality <quality>', 'Quality: low|medium|high|auto (gpt-image-2)')
   .option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only): 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 4:5, 5:4, 21:9')
   .option('--image-size <size>', 'Output resolution (Gemini only): 512, 1K, 2K, 4K')
   .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation.')
@@ -192,10 +192,63 @@ Examples:
     }
   });
 
+// ── MUSIC ──────────────────────────────────────────────────────────────
+
+const musicCommand = new Command('music')
+  .description(`Generate music from a text prompt using AI.
+
+The model is chosen from the platform's music catalog. Omit --model to use the
+default; pass --model <id> only if you want a specific one (see the catalog with
+\`gipity service call music/models --get\`).
+
+Tips:
+  - Describe genre, mood, instruments, and tempo (e.g. "upbeat lo-fi hip hop with mellow piano")
+  - Music is instrumental by default; pass --vocals to allow singing
+  - Longer clips cost more; the max length depends on the model
+
+Examples:
+  gipity generate music "chill lo-fi beat for studying"
+  gipity generate music "epic orchestral battle theme" --duration 60 -o src/assets/audio/theme.mp3
+  gipity generate music "indie pop chorus" --vocals --duration 20`)
+  .argument('<prompt>', 'Text description of the music to generate')
+  .option('--duration <seconds>', 'Clip length in seconds (default 30; max depends on the model)', (v) => parseInt(v, 10))
+  .option('--model <model>', 'Music model id (default: platform default)')
+  .option('--vocals', 'Allow vocals (default: instrumental only)')
+  .option('-o, --output <file>', 'Output path (default ./music.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/audio/theme.mp3; the cwd default is fine for one-off generation.')
+  .option('--json', 'Output as JSON')
+  .action(async (prompt: string, opts) => {
+    try {
+      const { config } = await resolveProjectContext();
+      console.log(info('Generating music...'));
+
+      const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/music`, {
+        prompt,
+        duration_seconds: opts.duration,
+        model: opts.model,
+        instrumental: !opts.vocals,
+      });
+
+      const filename = opts.output || 'music.mp3';
+      const savedPath = await downloadFile(result.url, filename);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ ...result, saved: savedPath }));
+      } else {
+        const sizeKb = Math.round(result.size_bytes / 1024);
+        console.log(`${muted(`Generated with ${result.model} (${sizeKb}KB)`)}`);
+        console.log(success(`Saved to ${savedPath}`));
+      }
+    } catch (err: any) {
+      console.error(clrError(`Music generation failed: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
 // ── PARENT COMMAND ─────────────────────────────────────────────────────
 
 export const generateCommand = new Command('generate')
-  .description('Generate images, video, or speech')
+  .description('Generate images, video, speech, or music')
   .addCommand(imageCommand)
   .addCommand(videoCommand)
-  .addCommand(speechCommand);
+  .addCommand(speechCommand)
+  .addCommand(musicCommand);

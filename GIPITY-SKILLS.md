@@ -188,7 +188,7 @@ const r = await fetch(`https://a.gipity.ai/api/${APP}/services/llm`, {
       { role: 'system', content: 'Answer concisely.' },
       { role: 'user', content: 'Capital of France?' }
     ],
-    model: 'gpt-5-mini'        // optional; default is gpt-5-mini
+    model: 'gpt-5.4-mini'      // optional; default is gpt-5.4-mini
   })
 });
 const data = await r.json();
@@ -225,7 +225,7 @@ new Audio(url).play();
 
 ### Image generation - `POST /services/image`
 
-OpenAI (`gpt-image-1`, `dall-e-3`), BFL/Flux (default), Gemini.
+OpenAI (`gpt-image-2`, `gpt-image-1.5`), BFL/Flux (default), Gemini.
 
 ```js
 const r = await fetch(`https://a.gipity.ai/api/${APP}/services/image`, {
@@ -235,7 +235,7 @@ const r = await fetch(`https://a.gipity.ai/api/${APP}/services/image`, {
     prompt: 'A cat wearing a top hat, studio lighting',
     provider: 'openai',           // optional; default 'bfl'
     size: '1024x1024',            // OpenAI: 1024x1024, 1024x1536, 1536x1024
-    quality: 'auto'               // gpt-image-1: low/medium/high/auto
+    quality: 'auto'               // gpt-image-2: low/medium/high/auto
   })
 });
 const { url } = await r.json();   // permanent CDN PNG/JPEG

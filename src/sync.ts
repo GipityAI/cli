@@ -29,6 +29,7 @@ import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
 import { formatSize, prompt, getAutoConfirm } from './utils.js';
 import { uploadOneFile, hashFile, UploadConflictError } from './upload.js';
 import { DEFAULT_SYNC_IGNORE } from './setup.js';
+import type { ProgressReporter } from './progress.js';
 
 const CONFIG_FILE = '.gipity.json';
 import * as tar from 'tar-stream';
@@ -110,10 +111,10 @@ export interface SyncOptions {
   force?: boolean;
   /** Allow interactive prompts (guard confirmation). Defaults to TTY-detected. */
   interactive?: boolean;
-  /** Optional phase-progress callback. Called with a short human-readable
-   *  message at each major step (scan, remote check, hashing, transfer) so
-   *  callers can show the user that a long sync is still working. */
-  onProgress?: (message: string) => void;
+  /** Optional progress reporter. Drives phase lines at each major step (scan,
+   *  remote check, hashing, download) and a determinate byte bar during upload,
+   *  so a long sync of a large tree doesn't read as a hang. Omit for silence. */
+  progress?: ProgressReporter;
 }
 
 export interface SyncResult {
@@ -591,12 +592,12 @@ async function syncInner(
   // shape. The two fields we actually use are the ones we took as args.
   const config = { projectGuid, ignore };
 
-  const report = opts.onProgress ?? (() => { /* no-op */ });
+  const p = opts.progress;
 
   const baseline = readBaseline(projectGuid);
-  report('Scanning local files…');
+  p?.phase('Scanning local files…');
   const local = walkLocal(root, ignore, baseline.files);
-  report('Checking Gipity for changes…');
+  p?.phase('Checking Gipity for changes…');
   const remote = await fetchRemote(projectGuid);
 
   // Hash everything we might classify ambiguously. Any local path also on
@@ -609,7 +610,7 @@ async function syncInner(
     const r = remote.get(path);
     if (r?.sha256 || baseline.files[path]) needHash.push(path);
   }
-  if (needHash.length) report(`Hashing ${needHash.length} file${needHash.length === 1 ? '' : 's'}…`);
+  if (needHash.length) p?.phase(`Hashing ${needHash.length} file${needHash.length === 1 ? '' : 's'}…`);
   await ensureLocalHashes(root, local, needHash);
 
   const planned = plan(local, remote, baseline.files);
@@ -639,7 +640,7 @@ async function syncInner(
   const downloadedBytes = new Map<string, Buffer>();
   const needsBulkDownload = plannedToApply.some(a => a.kind === 'download' || a.kind === 'conflict');
   if (needsBulkDownload) {
-    report('Downloading updates from Gipity…');
+    p?.phase('Downloading updates from Gipity…');
     try {
       const all = await downloadAll(config.projectGuid);
       for (const a of plannedToApply) {
@@ -725,7 +726,15 @@ async function syncInner(
   }
 
   // Uploads: bounded concurrency. On 409, rewrite as a conflict inline.
-  if (uploadQueue.length) report(`Uploading ${uploadQueue.length} file${uploadQueue.length === 1 ? '' : 's'} to Gipity…`);
+  // A single byte bar tracks the whole batch (workers share the counter; JS is
+  // single-threaded so the += is race-free).
+  const uploadLabel = `Uploading ${uploadQueue.length} file${uploadQueue.length === 1 ? '' : 's'}`;
+  const totalUploadBytes = uploadQueue.reduce((sum, a) => sum + (a.localSize ?? 0), 0);
+  let sentBytes = 0;
+  if (uploadQueue.length) p?.transfer(uploadLabel, 0, totalUploadBytes);
+  const onBytes = p
+    ? (delta: number) => { sentBytes += delta; p.transfer(uploadLabel, sentBytes, totalUploadBytes); }
+    : undefined;
   let cursor = 0;
   const workers: Array<Promise<void>> = [];
   for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, uploadQueue.length); w++) {
@@ -738,6 +747,7 @@ async function syncInner(
         try {
           const result = await uploadOneFile(config.projectGuid, full, a.path, {
             expectedServerVersion: a.expectedServerVersion,
+            onBytes,
           });
           const stat = statSync(full);
           const { sha256 } = await hashFile(full);
@@ -828,6 +838,8 @@ async function syncInner(
 
   baseline.lastFullSync = new Date().toISOString();
   writeBaseline(baseline);
+
+  p?.finish();
 
   return {
     plan: planned,

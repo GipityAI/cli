@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { sync } from '../sync.js';
+import { createProgressReporter } from '../progress.js';
 import { error as clrError } from '../colors.js';
 
 export const syncCommand = new Command('sync')
@@ -9,7 +10,9 @@ export const syncCommand = new Command('sync')
   .option('--json', 'Output as JSON')
   .action(async (opts) => {
     try {
-      const result = await sync({ plan: opts.plan, force: opts.force });
+      // JSON mode stays machine-clean; otherwise show live progress on a TTY.
+      const progress = opts.json ? undefined : createProgressReporter();
+      const result = await sync({ plan: opts.plan, force: opts.force, progress });
       if (opts.json) {
         console.log(JSON.stringify(result));
       } else {

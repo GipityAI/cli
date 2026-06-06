@@ -7,6 +7,8 @@ import { run } from '../helpers/index.js';
 interface DebugBundle {
   url: string;
   title: string;
+  navigationIncomplete?: boolean;
+  note?: string;
   console: string[];
   failedResources: string[];
   timing: { ttfb: number; domReady: number; load: number };
@@ -88,6 +90,9 @@ export const pageInspectCommand = new Command('inspect')
 
     // ── Page Info ──
     console.log(`\n${brand('Inspecting')} ${bold(b.url || url)}`);
+    if (b.navigationIncomplete) {
+      console.log(`  ${warning('⚠ Navigation incomplete:')} ${b.note || 'page did not reach full load'}`);
+    }
     console.log(`  ${muted('Title:')} ${b.title || '(none)'}`);
     console.log(`  ${muted('Elements:')} ${b.elementCount || 0}`);
     console.log(`  ${muted('Page weight:')} ${info(formatSize(b.totalBytes || 0))}`);
