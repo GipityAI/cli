@@ -1,0 +1,7 @@
+# Generated files — collapse in GitHub PR diffs ("file was hidden") and exclude
+# from language stats. Generated from the platform's docs by build scripts there;
+# never hand-edit:
+#   src/knowledge.ts      ← docs/knowledge/*.md via scripts/build-knowledge.ts
+#   src/provider-docs.ts  ← generated provider docs
+src/knowledge.ts linguist-generated=true
+src/provider-docs.ts linguist-generated=true
