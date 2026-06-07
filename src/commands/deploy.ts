@@ -34,8 +34,6 @@ export const deployCommand = new Command('deploy')
       const config = requireConfig();
       await syncBeforeAction(opts);
 
-      if (!opts.json) console.log('');
-
       // Call server - pipeline runs entirely server-side
       const res = await post<{
         data: {
@@ -73,20 +71,20 @@ export const deployCommand = new Command('deploy')
 
       if (d.phases && d.phases.length > 0) {
         for (const phase of d.phases) {
-          console.log(`  ${statusIcon(phase.status)} ${bold(phase.name)}: ${phase.summary}`);
+          console.log(`${statusIcon(phase.status)} ${bold(phase.name)}: ${phase.summary}`);
         }
       } else {
         // Fallback for simple deploys without phases
         const size = formatSize(d.totalBytes);
-        console.log(`  ${success('✓')} ${d.fileCount} files (${size}) → ${success(d.url)}`);
+        console.log(`${success('✓')} ${d.fileCount} files (${size}) → ${success(d.url)}`);
       }
 
       if (d.customDomains?.length) {
-        console.log(`  ${muted('Also:')} ${d.customDomains.join(', ')}`);
+        console.log(`${muted('Also:')} ${d.customDomains.join(', ')}`);
       }
 
       if (d.warning) {
-        console.log(`  ${warning(d.warning)}`);
+        console.log(`${warning(d.warning)}`);
       }
 
       // Show example curl commands for public endpoints
@@ -94,7 +92,7 @@ export const deployCommand = new Command('deploy')
         console.log('');
         console.log(bold('Test your endpoints:'));
         for (const ex of d.examples) {
-          console.log(`  ${muted(ex)}`);
+          console.log(`${muted(ex)}`);
         }
       }
 
@@ -107,6 +105,4 @@ export const deployCommand = new Command('deploy')
       } else {
         console.log(success(`✓ Deployed to ${target}`) + muted(` (${d.elapsedMs}ms)`));
       }
-      console.log('');
-
   }));

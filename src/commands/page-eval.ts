@@ -76,12 +76,11 @@ export const pageEvalCommand = new Command('eval')
       return;
     }
 
-    console.log(`\n${brand('Eval')} ${bold(d.url || url)}`);
+    console.log(`${brand('Eval')} ${bold(d.url || url)}`);
     if (d.navigationIncomplete) {
-      console.log(`  ${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
+      console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
     }
-    console.log(`  ${muted('Expression:')} ${expr}`);
+    console.log(`${muted('Expression:')} ${expr}`);
     console.log(`\n${d.result || muted('(empty result)')}`);
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
-    console.log('');
   }));

@@ -26,12 +26,12 @@ function looksLikeIp(s: string): boolean {
 function formatLocation(r: LocationData): string {
   const lines: string[] = [];
   const place = [r.city, r.region, r.country].filter(Boolean).join(', ');
-  if (place) lines.push(`  ${place}`);
-  if (r.lat != null && r.lon != null) lines.push(`  Coordinates: ${r.lat}, ${r.lon}`);
-  if (r.ip) lines.push(`  IP:          ${r.ip}`);
-  if (r.timezone) lines.push(`  Timezone:    ${r.timezone}`);
-  if (r.accuracy != null) lines.push(`  Accuracy:    ${Math.round(r.accuracy)}m`);
-  lines.push(`  Source:      ${r.source}`);
+  if (place) lines.push(place);
+  if (r.lat != null && r.lon != null) lines.push(`Coordinates: ${r.lat}, ${r.lon}`);
+  if (r.ip) lines.push(`IP:          ${r.ip}`);
+  if (r.timezone) lines.push(`Timezone:    ${r.timezone}`);
+  if (r.accuracy != null) lines.push(`Accuracy:    ${Math.round(r.accuracy)}m`);
+  lines.push(`Source:      ${r.source}`);
   return lines.join('\n');
 }
 
@@ -81,7 +81,7 @@ export const locationCommand = new Command('location')
     }
 
     if (!res.data) {
-      console.log('  No location data.');
+      console.log('No location data.');
       return;
     }
     console.log(formatLocation(res.data as LocationData));

@@ -224,32 +224,31 @@ export const pageScreenshotCommand = new Command('screenshot')
 
     if (meta.screenshots.length === 1) {
       const s = meta.screenshots[0];
-      console.log(`\n${brand('Screenshot')} ${bold(url)}`);
-      if (meta.title) console.log(`  ${label('Web page title')} ${meta.title}`);
-      if (meta.finalUrl) console.log(`  ${label('Web page URL')} ${meta.finalUrl}`);
-      if (meta.status != null) console.log(`  ${label('Web page status')} ${meta.status}`);
-      if (meta.performance) console.log(`  ${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
+      console.log(`${brand('Screenshot')} ${bold(url)}`);
+      if (meta.title) console.log(`${label('Web page title')} ${meta.title}`);
+      if (meta.finalUrl) console.log(`${label('Web page URL')} ${meta.finalUrl}`);
+      if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
+      if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
-      console.log(`  ${label('Screenshot size')} ${sizePart}`);
-      if (s.width && s.height) console.log(`  ${label('Screenshot dims')} ${s.width} × ${s.height}`);
-      console.log(`  ${label('Screenshot file')} ${success(savedFiles[0])}\n`);
+      console.log(`${label('Screenshot size')} ${sizePart}`);
+      if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
+      console.log(`${label('Screenshot file')} ${success(savedFiles[0])}`);
       return;
     }
 
-    console.log(`\n${brand('Loading')} ${bold(url)} ${muted(`once → ${meta.screenshots.length} viewports`)}`);
-    if (meta.title) console.log(`  ${label('Web page title')} ${meta.title}`);
-    if (meta.finalUrl) console.log(`  ${label('Web page URL')} ${meta.finalUrl}`);
-    if (meta.status != null) console.log(`  ${label('Web page status')} ${meta.status}`);
-    if (meta.performance) console.log(`  ${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
+    console.log(`${brand('Loading')} ${bold(url)} ${muted(`once → ${meta.screenshots.length} viewports`)}`);
+    if (meta.title) console.log(`${label('Web page title')} ${meta.title}`);
+    if (meta.finalUrl) console.log(`${label('Web page URL')} ${meta.finalUrl}`);
+    if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
+    if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
 
     for (let i = 0; i < meta.screenshots.length; i++) {
       const s = meta.screenshots[i];
       const dims = `${s.viewport.width}×${s.viewport.height}${s.viewport.deviceScaleFactor > 1 ? ` @${s.viewport.deviceScaleFactor}x` : ''}`;
-      console.log(`\n  ${brand('@ ' + dims)}`);
+      console.log(`\n${brand('@ ' + dims)}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
-      console.log(`    ${label('Screenshot size')} ${sizePart}`);
-      if (s.width && s.height) console.log(`    ${label('Screenshot dims')} ${s.width} × ${s.height}`);
-      console.log(`    ${label('Screenshot file')} ${success(savedFiles[i])}`);
+      console.log(`${label('Screenshot size')} ${sizePart}`);
+      if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
+      console.log(`${label('Screenshot file')} ${success(savedFiles[i])}`);
     }
-    console.log('');
   }));

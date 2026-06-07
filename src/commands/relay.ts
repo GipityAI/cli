@@ -11,7 +11,7 @@ import { spawn } from 'child_process';
 import { post } from '../api.js';
 import { confirm } from '../utils.js';
 import {
-  bold, brand, dim, success, error as clrError, muted,
+  bold, brand, success, error as clrError, muted,
 } from '../colors.js';
 import * as state from '../relay/state.js';
 import * as daemon from '../relay/daemon.js';
@@ -39,16 +39,14 @@ relayCommand
       return;
     }
 
-    console.log('');
     if (!s.device) {
-      console.log(`  ${muted('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
+      console.log(`${muted('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
       return;
     }
-    console.log(`  ${bold('Device:')}      ${brand(s.device.name)} ${muted(`(${s.device.guid})`)}`);
-    console.log(`  ${bold('Platform:')}    ${s.device.platform}`);
-    console.log(`  ${bold('Paired:')}      ${s.device.paired_at}`);
-    console.log(`  ${bold('Paused:')}      ${s.paused ? 'yes' : 'no'}`);
-    console.log('');
+    console.log(`${bold('Device:')}      ${brand(s.device.name)} ${muted(`(${s.device.guid})`)}`);
+    console.log(`${bold('Platform:')}    ${s.device.platform}`);
+    console.log(`${bold('Paired:')}      ${s.device.paired_at}`);
+    console.log(`${bold('Paused:')}      ${s.paused ? 'yes' : 'no'}`);
   });
 
 // ─── gipity relay run ──────────────────────────────────────────────────
@@ -75,12 +73,12 @@ relayCommand
   .action(async (opts: { force?: boolean }) => {
     const pidPath = state.getDaemonPidPath();
     if (!existsSync(pidPath)) {
-      console.log(`  ${muted('Background service isn\'t running.')}`);
+      console.log(muted('Background service isn\'t running.'));
       return;
     }
     const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
     if (!pid || isNaN(pid)) {
-      console.error(`  ${clrError('PID file is empty or malformed.')}`);
+      console.error(clrError('PID file is empty or malformed.'));
       process.exit(1);
     }
 
@@ -88,11 +86,11 @@ relayCommand
       process.kill(pid, 'SIGTERM');
     } catch (err: any) {
       if (err?.code === 'ESRCH') {
-        console.log(`  ${muted(`PID ${pid} not running - cleaning up stale PID file.`)}`);
+        console.log(muted(`PID ${pid} not running - cleaning up stale PID file.`));
         try { unlinkSync(pidPath); } catch { /* ignore */ }
         return;
       }
-      console.error(`  ${clrError(`Could not signal PID ${pid}: ${err?.message || err}`)}`);
+      console.error(clrError(`Could not signal PID ${pid}: ${err?.message || err}`));
       process.exit(1);
     }
 
@@ -109,13 +107,13 @@ relayCommand
     if (alive) {
       if (opts.force) {
         try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
-        console.log(`  ${success('Background service force-stopped.')}`);
+        console.log(success('Background service force-stopped.'));
       } else {
-        console.error(`  ${clrError(`Didn't shut down cleanly after 5s. Retry with --force to stop it.`)}`);
+        console.error(clrError(`Didn't shut down cleanly after 5s. Retry with --force to stop it.`));
         process.exit(1);
       }
     } else {
-      console.log(`  ${success('Background service stopped.')}`);
+      console.log(success('Background service stopped.'));
     }
   });
 
@@ -127,7 +125,7 @@ relayCommand
   .action(() => {
     requirePaired();
     state.setPaused(true);
-    console.log(`  ${success('Paused.')} ${dim('Run `gipity relay resume` to accept commands again.')}`);
+    console.log(`${success('Paused.')} ${muted('Run `gipity relay resume` to accept commands again.')}`);
   });
 
 relayCommand
@@ -136,7 +134,7 @@ relayCommand
   .action(() => {
     requirePaired();
     state.setPaused(false);
-    console.log(`  ${success('Resumed.')}`);
+    console.log(success('Resumed.'));
   });
 
 // ─── gipity relay rename <name> ────────────────────────────────────────
@@ -148,21 +146,21 @@ relayCommand
     const device = requirePaired();
     const name = newName.trim();
     if (!name || name.length > 100) {
-      console.error(`  ${clrError('Device name must be 1–100 non-whitespace characters.')}`);
+      console.error(clrError('Device name must be 1–100 non-whitespace characters.'));
       process.exit(1);
     }
     try {
       // User-auth call: the user must be logged in on this PC.
       await post(`/remote-devices/${encodeURIComponent(device.guid)}/rename`, { name });
     } catch (err: any) {
-      console.error(`\n  ${clrError(`Rename failed: ${err?.message || err}`)}`);
+      console.error(clrError(`Rename failed: ${err?.message || err}`));
       if (err?.statusCode === 401) {
-        console.error(`  ${dim('Run `gipity login` first - rename requires your user auth.')}`);
+        console.error(muted('Run `gipity login` first - rename requires your user auth.'));
       }
       process.exit(1);
     }
     state.setDevice({ ...device, name });
-    console.log(`  ${success(`Renamed to ${bold(name)}.`)}`);
+    console.log(success(`Renamed to ${bold(name)}.`));
   });
 
 // ─── gipity relay revoke ───────────────────────────────────────────────
@@ -172,8 +170,8 @@ relayCommand
   .description('Revoke and forget this device')
   .action(async () => {
     const device = requirePaired();
-    if (!(await confirm(`  Revoke ${bold(device.name)} (${device.guid})?`))) {
-      console.log(`  ${muted('Cancelled.')}`);
+    if (!(await confirm(`Revoke ${bold(device.name)} (${device.guid})?`))) {
+      console.log(muted('Cancelled.'));
       return;
     }
     try {
@@ -181,12 +179,12 @@ relayCommand
     } catch (err: any) {
       // Even if the server call fails, drop local state - a stale token is
       // worse than double-revoking. Warn loudly though.
-      console.error(`  ${clrError(`Server revoke failed: ${err?.message || err}`)}`);
-      console.error(`  ${dim('Local token cleared anyway. Visit the web CLI to confirm the server-side revoke.')}`);
+      console.error(clrError(`Server revoke failed: ${err?.message || err}`));
+      console.error(muted('Local token cleared anyway. Visit the web CLI to confirm the server-side revoke.'));
     }
     state.clearDevice();
-    console.log(`  ${success('Device revoked + local state cleared.')}`);
-    console.log(`  ${dim('Any running background service will notice and exit within ~30s.')}`);
+    console.log(success('Device revoked + local state cleared.'));
+    console.log(muted('Any running background service will notice and exit within ~30s.'));
   });
 
 // ─── gipity relay log ──────────────────────────────────────────────────
@@ -199,7 +197,7 @@ relayCommand
   .action((opts: { lines: string; follow?: boolean }) => {
     const path = daemon.RELAY_LOG_PATH;
     if (!existsSync(path)) {
-      console.log(`  ${muted('No log file yet. Start the service with `gipity relay run` (or install it).')}`);
+      console.log(muted('No log file yet. Start the service with `gipity relay run` (or install it).'));
       return;
     }
     const lines = parseInt(opts.lines, 10) || 100;
@@ -208,14 +206,14 @@ relayCommand
       const tail = all.slice(-lines - 1).join('\n');
       process.stdout.write(tail);
     } catch (err: any) {
-      console.error(`  ${clrError(`Could not read log: ${err?.message || err}`)}`);
+      console.error(clrError(`Could not read log: ${err?.message || err}`));
       process.exit(1);
     }
     if (opts.follow) {
       // Defer real follow to `tail -f` - cross-platform fallback below.
       const tailCmd = process.platform === 'win32' ? null : 'tail';
       if (!tailCmd) {
-        console.error(`  ${clrError('--follow is not supported on this platform yet.')}`);
+        console.error(clrError('--follow is not supported on this platform yet.'));
         process.exit(1);
       }
       const child = spawn(tailCmd, ['-f', '-n', '0', path], { stdio: 'inherit' });
@@ -232,7 +230,7 @@ registerInstallCommands(relayCommand);
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
   if (!device) {
-    console.error(`  ${clrError('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
+    console.error(`${clrError('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
     process.exit(1);
   }
   return device;

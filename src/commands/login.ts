@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { saveAuth, getAuth } from '../auth.js';
 import { publicPost } from '../api.js';
 import { prompt, decodeJwtExp } from '../utils.js';
-import { success, error as clrError } from '../colors.js';
+import { success, error as clrError, muted } from '../colors.js';
 
 export const loginCommand = new Command('login')
   .description('Log in or sign up')
@@ -22,39 +22,29 @@ export const loginCommand = new Command('login')
       // Email only → send code and exit (non-interactive step 1)
       if (email && !code) {
         await publicPost('/auth/login', { email });
-        console.log('');
         console.log('Check your email for a 6-digit code.');
-        console.log(`Then run: gipity login --email ${email} --code <code>`);
-        console.log('');
+        console.log(muted(`Then run: gipity login --email ${email} --code <code>`));
         return;
       }
 
       // Fully interactive flow
-      console.log('');
       console.log('Enter your email to log in or create an account.');
-      console.log('');
 
       const existing = getAuth();
       email = await prompt(existing ? `Email [${existing.email}]: ` : 'Email: ');
       if (!email && existing) email = existing.email;
       if (!email) {
-        console.log('');
         console.error(clrError('Email required.'));
-        console.log('');
         process.exit(1);
       }
 
       await publicPost('/auth/login', { email });
-      console.log('');
       console.log('Check your email for a 6-digit code.');
-      console.log('');
 
       code = await prompt('Code: ');
       await verify(email, code);
     } catch (err: any) {
-      console.log('');
       console.error(clrError(`Login failed: ${err.message}`));
-      console.log('');
       process.exit(1);
     }
   });
@@ -68,9 +58,7 @@ async function verify(email: string, code: string): Promise<void> {
 
   const exp = decodeJwtExp(res.accessToken);
   if (!exp) {
-    console.log('');
     console.error(clrError('Invalid token received.'));
-    console.log('');
     process.exit(1);
   }
   const expiresAt = new Date(exp * 1000).toISOString();
@@ -82,7 +70,5 @@ async function verify(email: string, code: string): Promise<void> {
     expiresAt,
   });
 
-  console.log('');
   console.log(success(`Logged in (${email}).`));
-  console.log('');
 }

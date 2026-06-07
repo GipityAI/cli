@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { resolveProjectContext, saveConfig } from '../config.js';
 import { sync } from '../sync.js';
-import { error as clrError, muted } from '../colors.js';
+import { error as clrError, muted, success } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
 interface ChatSummary {
@@ -130,7 +130,7 @@ chatCommand
   .action((guid: string, titleParts: string[], opts) => run('Rename', async () => {
     const title = titleParts.join(' ');
     await put(`/conversations/${guid}`, { title });
-    printResult(`Renamed ${guid} → "${title}".`, opts, { guid, title });
+    printResult(success(`Renamed ${guid} → "${title}".`), opts, { guid, title });
   }));
 
 chatCommand
@@ -139,7 +139,7 @@ chatCommand
   .option('--json', 'Output as JSON')
   .action((guid: string, opts) => run('Archive', async () => {
     await put(`/conversations/${guid}`, { archive: true });
-    printResult(`Archived ${guid}.`, opts, { guid, archived: true });
+    printResult(success(`Archived ${guid}.`), opts, { guid, archived: true });
   }));
 
 chatCommand
@@ -148,5 +148,5 @@ chatCommand
   .option('--json', 'Output as JSON')
   .action((guid: string, opts) => run('Delete', async () => {
     await del(`/conversations/${guid}`);
-    printResult(`Deleted ${guid}.`, opts, { guid, deleted: true });
+    printResult(success(`Deleted ${guid}.`), opts, { guid, deleted: true });
   }));

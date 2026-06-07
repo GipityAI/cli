@@ -5,7 +5,6 @@ import { success, warning, info, dim } from '../colors.js';
 export const updateCommand = new Command('update')
   .description('Update the CLI')
   .action(async () => {
-    console.log('');
     console.log(info('Checking for updates...'));
     const result = await runCheck({ force: true, verbose: true });
     console.log('');
@@ -17,5 +16,4 @@ export const updateCommand = new Command('update')
     } else {
       console.log(warning(`No update applied: ${result.reason}`));
     }
-    console.log('');
   });

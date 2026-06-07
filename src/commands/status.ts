@@ -85,8 +85,8 @@ export const statusCommand = new Command('status')
         console.log(`${muted('Hooks:')}   ${success('repaired - re-installed capture hooks')}`);
       } else {
         console.log(`${muted('Hooks:')}   ${warning(`missing/modified: ${hookCheck.missing.join(', ')}`)}`);
-        console.log(`         ${muted('Run `gipity status --repair-hooks` to re-install.')}`);
-        console.log(`         ${muted('Without these, web CLI dispatches can\'t show Claude Code output.')}`);
+        console.log(muted('Run `gipity status --repair-hooks` to re-install.'));
+        console.log(muted('Without these, web CLI dispatches can\'t show Claude Code output.'));
       }
     }
   });

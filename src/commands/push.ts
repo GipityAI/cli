@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { resolve } from 'path';
 import { pushFile } from '../sync.js';
-import { error as clrError } from '../colors.js';
+import { error as clrError, success } from '../colors.js';
 
 export const pushCommand = new Command('push')
   .description('Push a file')
@@ -26,15 +26,11 @@ export const pushCommand = new Command('push')
       await pushFile(fullPath);
 
       if (!opts.quiet) {
-        console.log('');
-        console.log(`Pushed ${file}`);
-        console.log('');
+        console.log(success(`Pushed ${file}`));
       }
     } catch (err: any) {
       if (!opts.quiet) {
-        console.log('');
         console.error(clrError(`Push failed: ${err.message}`));
-        console.log('');
       }
       process.exit(1);
     }

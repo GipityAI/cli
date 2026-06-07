@@ -85,70 +85,68 @@ export const uninstallCommand = new Command('uninstall')
     const gipityDir = join(homedir(), '.gipity');
     const projectsDir = join(homedir(), 'GipityProjects');
 
+    console.log(`${bold('Gipity uninstall')} - this will:`);
+    console.log(`• Stop the running relay daemon (if any)`);
+    console.log(`• Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
+    console.log(`• Revoke this device on the server (best-effort)`);
+    console.log(`• Delete ${gipityDir}/`);
     console.log('');
-    console.log(`  ${bold('Gipity uninstall')} - this will:`);
-    console.log(`    • Stop the running relay daemon (if any)`);
-    console.log(`    • Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
-    console.log(`    • Revoke this device on the server (best-effort)`);
-    console.log(`    • Delete ${gipityDir}/`);
-    console.log('');
-    console.log(`  ${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
+    console.log(`${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
     console.log('');
 
     if (!autoYes) {
-      const ok = await confirm('  Proceed?');
+      const ok = await confirm('Proceed?');
       if (!ok) {
-        console.log(`  ${muted('Cancelled.')}`);
+        console.log(`${muted('Cancelled.')}`);
         return;
       }
     }
 
     // 1. Stop daemon.
     await stopDaemon();
-    console.log(`  ${success('Daemon stopped.')}`);
+    console.log(`${success('Daemon stopped.')}`);
 
     // 2. Remove OS service.
     const svc = removeServiceUnit();
-    if (svc.ran && svc.ok) console.log(`  ${success('Autostart service removed.')} ${svc.note ? dim(`(${svc.note})`) : ''}`);
-    else if (svc.ran) console.log(`  ${muted('Autostart service not installed or already gone.')}`);
-    else console.log(`  ${muted(svc.note ?? 'Autostart skipped.')}`);
+    if (svc.ran && svc.ok) console.log(`${success('Autostart service removed.')} ${svc.note ? dim(`(${svc.note})`) : ''}`);
+    else if (svc.ran) console.log(`${muted('Autostart service not installed or already gone.')}`);
+    else console.log(`${muted(svc.note ?? 'Autostart skipped.')}`);
 
     // 3. Revoke device on server.
     await revokeDeviceBestEffort();
-    console.log(`  ${success('Device revoked on server (or was already revoked).')}`);
+    console.log(`${success('Device revoked on server (or was already revoked).')}`);
 
     // 4. Wipe ~/.gipity/.
     if (existsSync(gipityDir)) {
       try {
         rmSync(gipityDir, { recursive: true, force: true });
-        console.log(`  ${success(`Removed ${gipityDir}/`)}`);
+        console.log(`${success(`Removed ${gipityDir}/`)}`);
       } catch (err: any) {
-        console.error(`  ${clrError(`Could not remove ${gipityDir}: ${err?.message || err}`)}`);
+        console.error(`${clrError(`Could not remove ${gipityDir}: ${err?.message || err}`)}`);
       }
     } else {
-      console.log(`  ${muted(`${gipityDir}/ already gone.`)}`);
+      console.log(`${muted(`${gipityDir}/ already gone.`)}`);
     }
 
     // 5. Offer to wipe ~/GipityProjects/.
     if (existsSync(projectsDir)) {
       let alsoPurge = opts.purgeProjects === true;
       if (!alsoPurge && !autoYes) {
-        alsoPurge = await confirm(`  Also delete ${projectsDir}/ (your local project trees)?`);
+        alsoPurge = await confirm(`Also delete ${projectsDir}/ (your local project trees)?`);
       }
       if (alsoPurge) {
         try {
           rmSync(projectsDir, { recursive: true, force: true });
-          console.log(`  ${success(`Removed ${projectsDir}/`)}`);
+          console.log(`${success(`Removed ${projectsDir}/`)}`);
         } catch (err: any) {
-          console.error(`  ${clrError(`Could not remove ${projectsDir}: ${err?.message || err}`)}`);
+          console.error(`${clrError(`Could not remove ${projectsDir}: ${err?.message || err}`)}`);
         }
       } else {
-        console.log(`  ${muted(`Kept ${projectsDir}/ (projects still live in the cloud).`)}`);
+        console.log(`${muted(`Kept ${projectsDir}/ (projects still live in the cloud).`)}`);
       }
     }
 
     console.log('');
-    console.log(`  ${success('Uninstall complete.')} ${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the binary too.')}`);
-    console.log(`  ${dim('Then run')} ${brand('hash -r')} ${dim('(or open a new shell) so bash forgets the old binary path.')}`);
-    console.log('');
+    console.log(`${success('Uninstall complete.')} ${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the binary too.')}`);
+    console.log(`${dim('Then run')} ${brand('hash -r')} ${dim('(or open a new shell) so bash forgets the old binary path.')}`);
   });

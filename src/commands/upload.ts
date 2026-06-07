@@ -95,7 +95,7 @@ export const uploadCommand = new Command('upload')
       const totalBytes = planned.reduce((s, f) => s + f.size, 0);
       console.log(`Plan: ${planned.length} file${planned.length > 1 ? 's' : ''}, ${formatSize(totalBytes)}`);
       for (const f of planned) {
-        console.log(`  ${f.localPath} ${dim('→')} ${f.virtualPath} (${formatSize(f.size)})`);
+        console.log(`${f.localPath} ${dim('→')} ${f.virtualPath} (${formatSize(f.size)})`);
       }
 
       if (opts.dryRun) {
@@ -119,13 +119,13 @@ export const uploadCommand = new Command('upload')
               const result = await uploadOneFile(config.projectGuid, f.localPath, f.virtualPath, uploadOpts);
               if (result.status === 'skipped') {
                 skipped++;
-                console.log(`  ${dim('skip')} ${f.virtualPath} (already current)`);
+                console.log(`${dim('skip')} ${f.virtualPath} (already current)`);
               } else if (result.status === 'resumed') {
                 resumed++;
-                console.log(`  ${dim('resumed')} ${f.virtualPath} v${result.version}`);
+                console.log(`${dim('resumed')} ${f.virtualPath} v${result.version}`);
               } else {
                 uploaded++;
-                console.log(`  ${dim('uploaded')} ${f.virtualPath} v${result.version}`);
+                console.log(`${dim('uploaded')} ${f.virtualPath} v${result.version}`);
               }
             } catch (err) {
               failed++;

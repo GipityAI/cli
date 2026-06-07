@@ -44,7 +44,7 @@ export const creditsCommand = new Command('credits')
       if (res.data.balances.length > 0) {
         for (const b of res.data.balances) {
           const exp = new Date(b.expiresAt).toLocaleDateString();
-          console.log(`  ${b.source}: ${b.creditsRemaining.toLocaleString()}  ${muted(`expires ${exp}`)}`);
+          console.log(`${b.source}: ${b.creditsRemaining.toLocaleString()}  ${muted(`expires ${exp}`)}`);
         }
       }
     }

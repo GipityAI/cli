@@ -118,7 +118,6 @@ export const testCommand = new Command('test')
       await syncBeforeAction(opts);
 
       if (!opts.json) {
-        console.log('');
         console.log(bold(`Running tests: ${filterPath || 'all'}`));
         console.log('');
       }
@@ -135,7 +134,7 @@ export const testCommand = new Command('test')
       const runGuid = kickoff.data.runGuid;
 
       if (!opts.json) {
-        console.log(`  ${muted(`Run: ${runGuid}`)}`);
+        console.log(muted(`Run: ${runGuid}`));
         console.log('');
       }
 
@@ -163,7 +162,6 @@ export const testCommand = new Command('test')
       if (data.failed > 0) parts.push(clrError(`${data.failed} failed`));
       if (data.skipped > 0) parts.push(muted(`${data.skipped} skipped`));
       console.log(`${parts.join(', ')} ${muted(`(${data.durationMs}ms)`)}`);
-      console.log('');
 
       if (data.failed > 0) process.exit(1);
   }));
@@ -196,23 +194,21 @@ testCommand
       }
 
       const icon = data.status === 'running' ? muted('⧗') : data.status === 'passed' ? success('✓') : clrError('✗');
-      console.log('');
-      console.log(`  ${icon} ${bold(data.status)} - ${data.passed}/${data.total} passed`);
+      console.log(`${icon} ${bold(data.status)} - ${data.passed}/${data.total} passed`);
       if (data.totalFiles > 0) {
-        console.log(`  ${muted(`Files: ${data.completedFiles}/${data.totalFiles}`)}`);
+        console.log(muted(`Files: ${data.completedFiles}/${data.totalFiles}`));
       }
       if (data.durationMs) {
-        console.log(`  ${muted(`Duration: ${data.durationMs}ms`)}`);
+        console.log(muted(`Duration: ${data.durationMs}ms`));
       }
       if (data.failed > 0) {
         console.log('');
         const failures = data.results.filter(r => r.status === 'failed');
         for (const f of failures) {
-          console.log(`  ${clrError('✗')} ${f.path}/${f.name}`);
-          if (f.error) console.log(`    ${clrError(f.error)}`);
+          console.log(`${clrError('✗')} ${f.path}/${f.name}`);
+          if (f.error) console.log(`  ${clrError(f.error)}`);
         }
       }
-      console.log('');
   }));
 
 // ── History subcommand ─────────────────────────────────────────────────
@@ -234,12 +230,10 @@ testCommand
       if (opts.json) { console.log(JSON.stringify(res.data)); return; }
       if (res.data.length === 0) { console.log(muted('No test runs yet.')); return; }
 
-      console.log('');
       console.log(bold('Test History'));
       for (const entry of res.data) {
         const icon = entry.status === 'passed' ? success('✓') : entry.status === 'running' ? muted('⧗') : clrError('✗');
         const date = new Date(entry.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        console.log(`  ${icon} ${muted(date)} ${entry.passed}/${entry.total} passed ${muted(entry.run_guid)}`);
+        console.log(`${icon} ${muted(date)} ${entry.passed}/${entry.total} passed ${muted(entry.run_guid)}`);
       }
-      console.log('');
   }));

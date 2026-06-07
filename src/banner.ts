@@ -233,7 +233,9 @@ function renderBox(opts: BannerOptions, outerW: number, bodyLines: string[]): vo
   for (const row of bodyLines) lines.push(row);
   lines.push(border('╰') + border('─'.repeat(innerW)) + border('╯'));
 
-  console.log('\n' + lines.join('\n') + '\n');
+  // Leading blank comes from the central output frame; keep the trailing one
+  // (it separates the banner from the picker/output that follows).
+  console.log(lines.join('\n') + '\n');
 }
 
 // ── Narrow layout (single panel, egg only) ────────────────────────────

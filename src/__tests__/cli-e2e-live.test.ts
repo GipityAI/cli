@@ -134,6 +134,19 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.match(r.stdout, /\b4\b/);
   });
 
+  it('7b. chat generates music via the music_generate tool', () => {
+    const r = cli([
+      'chat',
+      'Use your music generation tool to create a 5 second instrumental lo-fi beat. Just generate it now; do not ask any questions.',
+      '--json',
+    ], { timeout: 180000 });
+    assert.equal(r.status, 0, `chat failed: ${r.stderr || r.stdout}`);
+    const res = JSON.parse(r.stdout) as { toolsUsed?: { tool: string; success: boolean; output: string }[] };
+    const music = (res.toolsUsed || []).find((t) => t.tool === 'music_generate');
+    assert.ok(music, `expected music_generate in toolsUsed: ${JSON.stringify(res.toolsUsed)}`);
+    assert.equal(music.success, true, `music_generate failed: ${music.output}`);
+  });
+
   it('8. memory write/read/delete round-trip', () => {
     const w = cli(['memory', 'write', 'e2e-topic', 'ping']);
     assert.equal(w.status, 0, `memory write failed: ${w.stderr || w.stdout}`);

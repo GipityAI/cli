@@ -24,9 +24,23 @@ export { SKILLS_CONTENT };
  *  in knowledge.ts and is CLI-version-dependent - syncing it would churn on
  *  every CLI upgrade. `.gipity.json`, `.gipity/`, and `.claude/` are per-
  *  workstation configuration. */
+/** Relative path of each per-tool primer file we generate. Single source of
+ *  truth: both {@link DEFAULT_SYNC_IGNORE} and the `setup*Md` writers read from
+ *  here, so adding a tool can't silently leak its primer into project sync.
+ *  Every primer is a CLI-version-generated client-side artifact (regenerated
+ *  from knowledge.ts each session), not project content - syncing one churns on
+ *  every CLI upgrade, so all of them are sync-ignored. */
+export const PRIMER_FILES = {
+  claude: 'CLAUDE.md',
+  codex: 'AGENTS.md',
+  gemini: 'GEMINI.md',
+  copilot: '.github/copilot-instructions.md',
+  cursor: '.cursor/rules/gipity.mdc',
+} as const;
+
 export const DEFAULT_SYNC_IGNORE = [
-  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/',
-  '.gitignore', 'CLAUDE.md', 'AGENTS.md',
+  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore',
+  ...Object.values(PRIMER_FILES),
 ];
 
 /** True if `name` (a top-level dir entry) is a workstation artifact that
@@ -278,28 +292,28 @@ function writeSkillsFile(relPath: string, wrap?: (block: string) => string): voi
 }
 
 export function setupClaudeMd(): void {
-  writeSkillsFile('CLAUDE.md');
+  writeSkillsFile(PRIMER_FILES.claude);
 }
 
 export function setupAgentsMd(): void {
-  writeSkillsFile('AGENTS.md');
+  writeSkillsFile(PRIMER_FILES.codex);
 }
 
 /** Gemini CLI auto-discovers GEMINI.md in the working directory. */
 export function setupGeminiMd(): void {
-  writeSkillsFile('GEMINI.md');
+  writeSkillsFile(PRIMER_FILES.gemini);
 }
 
 /** GitHub Copilot CLI (and Copilot in VS Code) auto-discovers
  *  `.github/copilot-instructions.md`. */
 export function setupCopilotMd(): void {
-  writeSkillsFile('.github/copilot-instructions.md');
+  writeSkillsFile(PRIMER_FILES.copilot);
 }
 
 /** Cursor reads rule files from `.cursor/rules/`. The `.mdc` format wants
  *  YAML frontmatter; `alwaysApply: true` makes it load on every chat. */
 export function setupCursorMd(): void {
-  writeSkillsFile('.cursor/rules/gipity.mdc', (block) =>
+  writeSkillsFile(PRIMER_FILES.cursor, (block) =>
     `---\ndescription: Gipity platform integration - CLI, sandbox, app services\nalwaysApply: true\n---\n\n${block}`,
   );
 }

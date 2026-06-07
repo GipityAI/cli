@@ -51,15 +51,15 @@ export const pageTestCommand = new Command('test')
     const wait = Math.min(30000, Math.max(2000, parseInt(opts.wait, 10) || 24000));
 
     if (!opts.json) {
-      console.log(`\n${brand('Page test')} ${bold(url)}`);
-      console.log(`  ${muted(`${clients} client(s), stagger ${stagger}s, ${wait}ms open each`)}\n`);
+      console.log(`${brand('Page test')} ${bold(url)}`);
+      console.log(`${muted(`${clients} client(s), stagger ${stagger}s, ${wait}ms open each`)}`);
     }
 
     const runs: Promise<ClientResult>[] = [];
     for (let i = 0; i < clients; i++) {
       runs.push((async () => {
         await sleep(i * stagger * 1000);
-        if (!opts.json) console.log(`  ${muted(`client ${i}${i === 0 ? ' (first)' : ''} starting`)}`);
+        if (!opts.json) console.log(`${muted(`client ${i}${i === 0 ? ' (first)' : ''} starting`)}`);
         return inspectClient(url, wait, i);
       })());
     }
@@ -79,18 +79,18 @@ export const pageTestCommand = new Command('test')
 
     for (const r of results) {
       console.log(`\n${bold(`=== client ${r.i}${r.i === 0 ? ' (first)' : ''} ===`)}`);
-      if (r.error) { console.log(`  ${clrError(`page inspect failed: ${r.error}`)}`); continue; }
-      if (r.lines.length === 0) { console.log(`  ${muted('(no console output)')}`); continue; }
+      if (r.error) { console.log(`${clrError(`page inspect failed: ${r.error}`)}`); continue; }
+      if (r.lines.length === 0) { console.log(`${muted('(no console output)')}`); continue; }
       for (const line of r.lines) {
         const bad = BAD.test(line);
-        console.log(`  ${bad ? warning('⚠ ' + line) : ' ' + line}`);
+        console.log(`${bad ? warning('⚠ ' + line) : ' ' + line}`);
       }
     }
 
     console.log(
       problems === 0
-        ? `\n${success('✓ no error/crash lines across all clients')}\n`
-        : `\n${clrError(`⚠ ${problems} error/crash line(s) flagged above`)}\n`,
+        ? `\n${success('✓ no error/crash lines across all clients')}`
+        : `\n${clrError(`⚠ ${problems} error/crash line(s) flagged above`)}`,
     );
     if (problems > 0) process.exitCode = 1;
   }));

@@ -178,7 +178,7 @@ export const addCommand = new Command('add')
       if (opts.json) {
         console.log(JSON.stringify({ templates: { starters: STARTERS, blank: BLANK }, kits: KITS }));
       } else {
-        console.log('\n' + catalogText() + '\n');
+        console.log(catalogText());
       }
       return;
     }
@@ -233,7 +233,7 @@ export const addCommand = new Command('add')
     } else {
       console.log(success(`Scaffolded "${data.title}" (${data.type}) - ${data.files.length} files:`));
     }
-    for (const f of data.files) console.log(`  ${f}`);
+    for (const f of data.files) console.log(`${f}`);
     if (data.notes?.length) {
       console.log('');
       for (const n of data.notes) console.log(n);

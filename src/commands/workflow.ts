@@ -39,7 +39,6 @@ async function listWorkflows(opts: { json?: boolean }): Promise<void> {
   }
 
   if (res.meta) {
-    console.log('');
     console.log(`Active workflows: ${res.meta.activeCount}/${res.meta.activeLimit}`);
   }
 
@@ -82,7 +81,7 @@ workflowCommand
       if (w.steps && w.steps.length > 0) {
         console.log(`Steps:`);
         for (const s of w.steps) {
-          console.log(`  ${s.step_order}. ${s.name}${s.model ? ` [${s.model}]` : ''}`);
+          console.log(`${s.step_order}. ${s.name}${s.model ? ` [${s.model}]` : ''}`);
         }
       }
     }

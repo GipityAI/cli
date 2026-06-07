@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get } from '../api.js';
 import { requireConfig } from '../config.js';
-import { muted } from '../colors.js';
+import { muted, brand } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
 export const auditCommand = new Command('audit')
@@ -52,5 +52,5 @@ auditCommand
       `/projects/${config.projectGuid}/audit/count?${params}`,
     );
 
-    console.log(opts.json ? JSON.stringify(res.data) : `${res.data.count} events`);
+    console.log(opts.json ? JSON.stringify(res.data) : `${brand(String(res.data.count))} events`);
   }));

@@ -89,31 +89,31 @@ export const pageInspectCommand = new Command('inspect')
     const timing = b.timing || { ttfb: 0, domReady: 0, load: 0 };
 
     // ── Page Info ──
-    console.log(`\n${brand('Inspecting')} ${bold(b.url || url)}`);
+    console.log(`${brand('Inspecting')} ${bold(b.url || url)}`);
     if (b.navigationIncomplete) {
-      console.log(`  ${warning('⚠ Navigation incomplete:')} ${b.note || 'page did not reach full load'}`);
+      console.log(`${warning('⚠ Navigation incomplete:')} ${b.note || 'page did not reach full load'}`);
     }
-    console.log(`  ${muted('Title:')} ${b.title || '(none)'}`);
-    console.log(`  ${muted('Elements:')} ${b.elementCount || 0}`);
-    console.log(`  ${muted('Page weight:')} ${info(formatSize(b.totalBytes || 0))}`);
+    console.log(`${muted('Title:')} ${b.title || '(none)'}`);
+    console.log(`${muted('Elements:')} ${b.elementCount || 0}`);
+    console.log(`${muted('Page weight:')} ${info(formatSize(b.totalBytes || 0))}`);
 
     // ── Timing ──
-    console.log(`\n  ${bold('Timing:')}`);
-    console.log(`    ${muted('TTFB:')} ${timing.ttfb}ms`);
-    console.log(`    ${muted('DOM ready:')} ${timing.domReady}ms`);
-    console.log(`    ${muted('Load:')} ${timing.load}ms`);
+    console.log(`\n${bold('Timing:')}`);
+    console.log(`${muted('TTFB:')} ${timing.ttfb}ms`);
+    console.log(`${muted('DOM ready:')} ${timing.domReady}ms`);
+    console.log(`${muted('Load:')} ${timing.load}ms`);
     if (showAll && b.lcp) {
-      console.log(`    LCP: ${b.lcp.time}ms (${b.lcp.element}${b.lcp.url ? ' ' + shortUrl(b.lcp.url, truncate) : ''})`);
+      console.log(`LCP: ${b.lcp.time}ms (${b.lcp.element}${b.lcp.url ? ' ' + shortUrl(b.lcp.url, truncate) : ''})`);
     }
 
     // ── Console ──
     if (b.console?.length > 0) {
-      console.log(`\n  ${bold('Console')} ${muted(`(${b.console.length})`)}:`);
+      console.log(`\n${bold('Console')} ${muted(`(${b.console.length})`)}:`);
       for (const line of b.console) {
-        console.log(`    ${warning(line)}`);
+        console.log(`${warning(line)}`);
       }
     } else {
-      console.log(`\n  ${bold('Console:')} ${muted('(clean)')}`);
+      console.log(`\n${bold('Console:')} ${muted('(clean)')}`);
     }
 
     // ── Failed Resources ──
@@ -132,59 +132,57 @@ export const pageInspectCommand = new Command('inspect')
     const failed = (b.failedResources || []).filter((r) => !isImplicitFavicon(r));
     const rootFaviconMissing = (b.failedResources || []).some(isImplicitFavicon);
     if (failed.length > 0) {
-      console.log(`\n  ${clrError(`Failed resources (${failed.length}):`)}`);
+      console.log(`\n${clrError(`Failed resources (${failed.length}):`)}`);
       for (const r of failed) {
-        console.log(`    ${clrError(r)}`);
+        console.log(`${clrError(r)}`);
       }
     }
     if (rootFaviconMissing) {
-      console.log(`\n  ${muted('No root /favicon.ico (browsers request this automatically; harmless for app pages served under a subpath)')}`);
+      console.log(`\n${muted('No root /favicon.ico (browsers request this automatically; harmless for app pages served under a subpath)')}`);
     }
 
     // ── Layout (horizontal overflow) ──
     if (b.overflow) {
       if (b.overflow.overflowX) {
-        console.log(`\n  ${clrError(`Horizontal overflow: +${b.overflow.amount}px`)} ${muted(`(content ${b.overflow.scrollWidth}px vs viewport ${b.overflow.clientWidth}px)`)}`);
+        console.log(`\n${clrError(`Horizontal overflow: +${b.overflow.amount}px`)} ${muted(`(content ${b.overflow.scrollWidth}px vs viewport ${b.overflow.clientWidth}px)`)}`);
         if (showAll && b.overflow.culprits.length > 0) {
-          console.log(`  ${muted('Overflowing elements:')}`);
+          console.log(`${muted('Overflowing elements:')}`);
           for (const c of b.overflow.culprits) {
             const sel = c.cls ? `${c.tag}.${c.cls.split(/\s+/)[0]}` : c.tag;
-            console.log(`    ${sel} ${muted(`(right ${c.right}px, width ${c.width}px)`)}`);
+            console.log(`${sel} ${muted(`(right ${c.right}px, width ${c.width}px)`)}`);
           }
         } else if (b.overflow.culprits.length > 0) {
-          console.log(`    ${muted(`${b.overflow.culprits.length} overflowing element(s) - use --all to list`)}`);
+          console.log(`${muted(`${b.overflow.culprits.length} overflowing element(s) - use --all to list`)}`);
         }
       } else {
-        console.log(`\n  ${bold('Layout:')} ${muted('no horizontal overflow')}`);
+        console.log(`\n${bold('Layout:')} ${muted('no horizontal overflow')}`);
       }
     }
 
     if (showAll) {
       // ── Render Blocking ──
       if (b.renderBlocking?.length > 0) {
-        console.log(`\n  ${warning(`Render-blocking (${b.renderBlocking.length}):`)}`);
+        console.log(`\n${warning(`Render-blocking (${b.renderBlocking.length}):`)}`);
         for (const r of b.renderBlocking) {
-          console.log(`    ${shortUrl(r, truncate)}`);
+          console.log(`${shortUrl(r, truncate)}`);
         }
       }
 
       // ── Large Resources ──
       if (b.largeResources?.length > 0) {
-        console.log(`\n  ${warning(`Large resources >100KB (${b.largeResources.length}):`)}`);
+        console.log(`\n${warning(`Large resources >100KB (${b.largeResources.length}):`)}`);
         for (const r of b.largeResources) {
-          console.log(`    ${info(formatSize(r.size).padEnd(10))} ${muted(r.type.padEnd(8))} ${shortUrl(r.url, truncate)}`);
+          console.log(`${info(formatSize(r.size).padEnd(10))} ${muted(r.type.padEnd(8))} ${shortUrl(r.url, truncate)}`);
         }
       }
 
       // ── Oversized Images ──
       if (b.oversizedImages?.length > 0) {
-        console.log(`\n  ${warning(`Oversized images (${b.oversizedImages.length}):`)}`);
+        console.log(`\n${warning(`Oversized images (${b.oversizedImages.length}):`)}`);
         for (const img of b.oversizedImages) {
-          console.log(`    ${img.natural} served, ${img.displayed} displayed - ${shortUrl(img.src, truncate)}`);
+          console.log(`${img.natural} served, ${img.displayed} displayed - ${shortUrl(img.src, truncate)}`);
         }
       }
     }
-
-    console.log('');
     });
   });

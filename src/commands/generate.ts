@@ -109,7 +109,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
-      console.log(info('Generating video (this may take 30-120 seconds)...'));
+      if (!opts.json) console.log(info('Generating video (this may take 30-120 seconds)...')); // keep --json stdout pure JSON
 
       const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/video`, {
         prompt,
@@ -219,7 +219,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
-      console.log(info('Generating music...'));
+      if (!opts.json) console.log(info('Generating music...')); // keep --json stdout pure JSON
 
       const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/music`, {
         prompt,

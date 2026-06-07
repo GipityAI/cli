@@ -8,7 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySkillsBlock, GIPITY_BLOCK_BEGIN, GIPITY_BLOCK_END, SKILLS_CONTENT } from '../setup.js';
+import { applySkillsBlock, GIPITY_BLOCK_BEGIN, GIPITY_BLOCK_END, SKILLS_CONTENT, PRIMER_FILES, DEFAULT_SYNC_IGNORE, SUPPORTED_TOOLS } from '../setup.js';
+import { shouldIgnore } from '../config.js';
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -67,5 +68,28 @@ test('idempotent: re-applying the result changes nothing', () => {
   for (const input of inputs) {
     const once = applySkillsBlock(input);
     assert.equal(applySkillsBlock(once), once, 'a second apply is a no-op');
+  }
+});
+
+// ── Primer files must never leak into project sync ──────────────────────
+// Regression guard: GEMINI.md / copilot / cursor primers were added to the
+// tool registry but not to DEFAULT_SYNC_IGNORE, so `gipity sync` uploaded them
+// as project content. PRIMER_FILES is now the single source both read from.
+
+test('every primer file is excluded by the sync filter', () => {
+  for (const file of Object.values(PRIMER_FILES)) {
+    assert.ok(
+      shouldIgnore(file, DEFAULT_SYNC_IGNORE),
+      `primer ${file} should be sync-ignored but is not`,
+    );
+  }
+});
+
+test('every supported tool maps to a known primer file', () => {
+  // A new tool added to the registry without a PRIMER_FILES entry would
+  // reintroduce the leak; this fails loudly if the two ever drift.
+  const known = new Set<string>(Object.keys(PRIMER_FILES));
+  for (const tool of SUPPORTED_TOOLS) {
+    assert.ok(known.has(tool.key), `tool "${tool.key}" has no PRIMER_FILES entry`);
   }
 });

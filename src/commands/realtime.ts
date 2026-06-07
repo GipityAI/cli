@@ -50,7 +50,7 @@ const roomCommand = new Command('room')
       case 'list': {
         const res = await get<{ data: RealtimeRoom[] }>(base);
         printList(res.data, opts, 'No realtime rooms. Create one: gipity realtime room create <name>', r =>
-          `  ${bold(r.name)}  ${muted(`${r.room_type} · ${r.auth_level} · max ${r.max_clients}`)}`
+          `${bold(r.name)}  ${muted(`${r.room_type} · ${r.auth_level} · max ${r.max_clients}`)}`
         );
         break;
       }
@@ -92,7 +92,7 @@ const roomCommand = new Command('room')
         if (opts.json) {
           console.log(JSON.stringify({ success: true }));
         } else {
-          console.log(`Deleted room '${name}'. Active instances drain as clients disconnect.`);
+          console.log(success(`Deleted room '${name}'.`) + ' Active instances drain as clients disconnect.');
         }
         break;
       }
@@ -107,13 +107,11 @@ const roomCommand = new Command('room')
           console.log(JSON.stringify(res.data));
         } else {
           const { room, live } = res.data;
-          console.log('');
-          console.log(`  ${bold(room.name)}`);
-          console.log(`  Type:        ${room.room_type}`);
-          console.log(`  Auth:        ${room.auth_level}`);
-          console.log(`  Max clients: ${room.max_clients}`);
-          console.log(`  Live:        ${live ? `${live.instances} instance(s), ${live.clients} client(s)` : muted('Colyseus server unreachable')}`);
-          console.log('');
+          console.log(`${bold(room.name)}`);
+          console.log(`Type:        ${room.room_type}`);
+          console.log(`Auth:        ${room.auth_level}`);
+          console.log(`Max clients: ${room.max_clients}`);
+          console.log(`Live:        ${live ? `${live.instances} instance(s), ${live.clients} client(s)` : muted('Colyseus server unreachable')}`);
         }
         break;
       }

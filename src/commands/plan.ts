@@ -41,7 +41,7 @@ function formatLimit(key: string, value: unknown): string {
   return value.toLocaleString();
 }
 
-function renderLimits(limits: Record<string, unknown>, indent = '  '): void {
+function renderLimits(limits: Record<string, unknown>, indent = ''): void {
   for (const key of Object.keys(LIMIT_LABELS)) {
     const value = limits[key];
     if (value !== undefined) {
@@ -68,13 +68,13 @@ export const planCommand = new Command('plan')
       const price = plan.monthlyPriceUsd > 0 ? `  $${plan.monthlyPriceUsd}/mo` : '';
       console.log(`Plan: ${brand(plan.displayName)} (${plan.tier})${price}`);
       if (plan.monthlyCredits > 0) {
-        console.log(`  ${plan.monthlyCredits.toLocaleString()} credits/mo, ${plan.creditExpiryDays}-day expiry`);
+        console.log(`${plan.monthlyCredits.toLocaleString()} credits/mo, ${plan.creditExpiryDays}-day expiry`);
       }
     } else {
       console.log(`Plan: ${tier} (no matching plan row)`);
     }
     if (planAppliedAt) {
-      console.log(`  ${dim('Applied: ' + new Date(planAppliedAt).toLocaleDateString())}`);
+      console.log(`${dim('Applied: ' + new Date(planAppliedAt).toLocaleDateString())}`);
     }
     console.log('\nLimits:');
     renderLimits(limits);
@@ -105,7 +105,7 @@ planCommand
         ? ` - ${plan.monthlyCredits.toLocaleString()} credits/mo (${plan.creditExpiryDays}-day expiry)`
         : '';
       console.log(`${marker}${plan.displayName} (${plan.tier})${price}${credits}`);
-      renderLimits(plan.limits, '      ');
+      renderLimits(plan.limits);
       console.log('');
     }
     console.log(dim('(* = your current plan)'));

@@ -41,14 +41,10 @@ export const emailCommand = new Command('email')
         const recap = res.data.to.join(', ')
           + (res.data.cc.length ? `, cc: ${res.data.cc.join(', ')}` : '')
           + (res.data.bcc.length ? `, bcc: ${res.data.bcc.length}` : '');
-        console.log('');
         console.log(success(`Email sent to ${recap}: ${res.data.subject}`));
-        console.log('');
       }
     } catch (err: any) {
-      console.log('');
       console.error(clrError(`Email failed: ${err.message}`));
-      console.log('');
       process.exit(1);
     }
   });

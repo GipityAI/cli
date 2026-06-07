@@ -66,7 +66,7 @@ logsCommand
       const status = statusColor(log.status.padEnd(8));
       const trigger = muted(log.trigger_type.padEnd(8));
       const err = log.error_message ? `  ${clrError(`"${log.error_message}"`)}` : '';
-      console.log(`  ${muted(time)}  ${status} ${dur} ${trigger}${err}`);
+      console.log(`${muted(time)}  ${status} ${dur} ${trigger}${err}`);
     }
   }));
 

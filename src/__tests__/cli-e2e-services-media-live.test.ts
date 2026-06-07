@@ -106,8 +106,8 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     const ids = models.map((m: { id: string }) => m.id);
     assert.ok(ids.includes('music-v1'), `expected music-v1 in ${JSON.stringify(ids)}`);
     assert.equal(body.data.default_model, 'music-v1', 'music-v1 should be the default');
-    // ace-step is seeded but enabled=false — it must not be advertised yet.
-    assert.ok(!ids.includes('ace-step'), 'disabled ace-step must not be listed');
+    // ace-step (GPU model on the Modal backend) is enabled, so it's advertised too.
+    assert.ok(ids.includes('ace-step'), `expected ace-step in ${JSON.stringify(ids)}`);
     // `infra` is the hidden routing target and must never be returned to apps.
     for (const m of models) assert.ok(!('infra' in m), `infra leaked: ${JSON.stringify(m)}`);
   });
@@ -122,6 +122,18 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.match(body.url ?? '', /^https?:\/\//, `expected a CDN url, got: ${r.stdout}`);
     assert.equal(body.model, 'music-v1', 'response should echo the resolved model');
     assert.ok(typeof body.credits_used === 'number' && body.credits_used > 0, 'expected credits_used > 0');
+  });
+
+  it('service call music model=ace-step renders on the GPU (Modal) backend', () => {
+    const r = cli(
+      ['service', 'call', 'music', '{"prompt":"mellow ambient synth pads","duration_seconds":6,"instrumental":true,"model":"ace-step"}'],
+      { timeout: 300000 }, // GPU cold start (container boot + weight load) can run long
+    );
+    assert.equal(r.status, 0, `ace-step music failed: ${r.stderr || r.stdout}`);
+    const body = JSON.parse(r.stdout);
+    assert.match(body.url ?? '', /^https?:\/\//, `expected a CDN url, got: ${r.stdout}`);
+    assert.equal(body.model, 'ace-step', 'response should echo the ace-step model');
+    assert.ok(typeof body.credits_used === 'number' && body.credits_used >= 10, 'ace-step bills at least its 10-credit floor');
   });
 
   it('generate music writes a real clip to disk (costs credits)', () => {

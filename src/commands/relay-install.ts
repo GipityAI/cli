@@ -19,7 +19,7 @@ import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
   if (!device) {
-    console.error(`  ${clrError('No paired device.')} Run ${bold('gipity claude')} to pair this machine.`);
+    console.error(`${clrError('No paired device.')} Run ${bold('gipity claude')} to pair this machine.`);
     process.exit(1);
   }
   return device;
@@ -59,43 +59,40 @@ export function registerInstallCommands(relayCommand: Command): void {
       try { plan = planFor({ cliPath }); }
       catch (err) {
         if (err instanceof UnsupportedPlatformError) {
-          console.error(`  ${clrError(err.message)}`);
-          console.error(`  ${dim('Supported on macOS, Linux, and Windows.')}`);
+          console.error(clrError(err.message));
+          console.error(muted('Supported on macOS, Linux, and Windows.'));
         } else throw err;
         process.exit(1);
       }
 
-      console.log('');
-      console.log(`  ${bold('Install plan:')} ${plan.summary}`);
-      console.log(`  ${bold('File:')}        ${plan.path}`);
-      console.log('');
+      console.log(`${bold('Install plan:')} ${plan.summary}`);
+      console.log(`${bold('File:')}        ${plan.path}`);
 
       if (opts.print) {
+        console.log('');
         console.log(`${dim('--- file content ---')}`);
         console.log(plan.content);
         console.log(`${dim('--- enable: ---')}`);
         console.log(plan.enableDisplay);
-        console.log('');
         return;
       }
 
-      if (!(await confirm('  Write the file and enable the service now?'))) {
-        console.log(`  ${muted('Cancelled. (Use --print to preview without installing.)')}`);
+      if (!(await confirm('Write the file and enable the service now?'))) {
+        console.log(muted('Cancelled. (Use --print to preview without installing.)'));
         return;
       }
 
       mkdirSync(dirname(plan.path), { recursive: true });
       writeFileSync(plan.path, plan.content);
-      console.log(`  ${success(`Wrote ${plan.path}`)}`);
+      console.log(success(`Wrote ${plan.path}`));
 
       if (!runArgvSequence(plan.enableCmds, { failFast: true })) {
-        console.error(`\n  ${clrError(`Couldn't enable autostart. Try manually: ${plan.enableDisplay}`)}`);
+        console.error(clrError(`Couldn't enable autostart. Try manually: ${plan.enableDisplay}`));
         process.exit(1);
       }
-      console.log('');
-      console.log(`  ${success('Background service installed and started.')}`);
-      console.log(`  ${dim(`Check status: ${plan.statusDisplay}`)}`);
-      console.log(`  ${dim(`Tail logs:    gipity relay log`)}`);
+      console.log(success('Background service installed and started.'));
+      console.log(muted(`Check status: ${plan.statusDisplay}`));
+      console.log(muted(`Tail logs:    gipity relay log`));
     });
 
   relayCommand
@@ -104,26 +101,26 @@ export function registerInstallCommands(relayCommand: Command): void {
     .action(async (mode: string) => {
       const want = mode.toLowerCase();
       if (want !== 'on' && want !== 'off') {
-        console.error(`  ${clrError('Usage: gipity relay autostart <on|off>')}`);
+        console.error(clrError('Usage: gipity relay autostart <on|off>'));
         process.exit(1);
       }
       let plan;
       try { plan = planFor({ cliPath: resolveCliPath() }); }
       catch (err) {
         if (err instanceof UnsupportedPlatformError) {
-          console.error(`  ${clrError(err.message)}`);
+          console.error(clrError(err.message));
           process.exit(1);
         } else throw err;
       }
       const cmds = want === 'on' ? plan.enableCmds : plan.disableCmds;
       const display = want === 'on' ? plan.enableDisplay : plan.disableDisplay;
-      console.log(`  ${info('Running:')} ${dim(display)}`);
+      console.log(`${info('Running:')} ${dim(display)}`);
       // Disable is best-effort (the task may already be stopped); enable is fail-fast.
       const ok = runArgvSequence(cmds, { failFast: want === 'on' });
       if (!ok && want === 'on') {
-        console.error(`\n  ${clrError('Command failed.')}`);
+        console.error(clrError('Command failed.'));
         process.exit(1);
       }
-      console.log(`  ${success(`Autostart ${want}.`)}`);
+      console.log(success(`Autostart ${want}.`));
     });
 }

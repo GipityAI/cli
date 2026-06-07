@@ -19,7 +19,7 @@ jobCommand
       const tags: string[] = [muted(`v${j.version}`), muted(j.runtime), muted(j.compute)];
       if (j.on_complete) tags.push(muted(`→ ${j.on_complete}`));
       const line = `${bold(j.name)}  ${tags.join('  ')}`;
-      return j.description ? `${line}\n  ${muted(j.description)}` : line;
+      return j.description ? `${line}\n${muted(j.description)}` : line;
     });
   }));
 
@@ -61,10 +61,10 @@ jobCommand
     const r = res.data;
     const statusColor = r.status === 'success' ? success : r.status === 'failed' ? clrError : muted;
     console.log(`${statusColor(r.status)}  ${muted(r.guid)}`);
-    if (r.progress_pct != null) console.log(`  progress: ${Math.round(r.progress_pct * 100)}%${r.progress_message ? ` (${r.progress_message})` : ''}`);
-    if (r.duration_ms != null) console.log(`  duration: ${r.duration_ms}ms`);
-    if (r.error) console.log(`  ${clrError('error:')} ${r.error}`);
-    if (r.output) console.log(`  output: ${JSON.stringify(r.output)}`);
+    if (r.progress_pct != null) console.log(`progress: ${Math.round(r.progress_pct * 100)}%${r.progress_message ? ` (${r.progress_message})` : ''}`);
+    if (r.duration_ms != null) console.log(`duration: ${r.duration_ms}ms`);
+    if (r.error) console.log(`${clrError('error:')} ${r.error}`);
+    if (r.output) console.log(`output: ${JSON.stringify(r.output)}`);
   }));
 
 jobCommand
@@ -82,7 +82,7 @@ jobCommand
       const dur = r.duration_ms != null ? `${r.duration_ms}ms` : '?';
       const ts = new Date(r.created_at).toLocaleString();
       const line = `${statusColor(r.status)}  ${dur}  ${muted(r.trigger_type)}  ${muted(r.guid)}  ${muted(ts)}`;
-      return r.error ? `${line}\n  ${clrError(`error: ${r.error}`)}` : line;
+      return r.error ? `${line}\n${clrError(`error: ${r.error}`)}` : line;
     });
   }));
 

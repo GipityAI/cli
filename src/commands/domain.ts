@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get, post, del } from '../api.js';
 import { getConfig, requireConfig } from '../config.js';
-import { error as clrError, success, muted } from '../colors.js';
+import { error as clrError, success, muted, brand } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
 interface DomainData {
@@ -62,7 +62,7 @@ export const domainCommand = new Command('domain')
             return;
           }
 
-          console.log(`Domains: ${count}/${limit}\n`);
+          console.log(`${muted('Domains:')} ${brand(`${count}/${limit}`)}\n`);
 
           if (domains.length === 0) {
             console.log('No custom domains.');
@@ -77,18 +77,20 @@ export const domainCommand = new Command('domain')
             grouped.get(key)!.push(d);
           }
 
+          let first = true;
           for (const [label, doms] of grouped) {
-            console.log(label);
+            if (!first) console.log('');
+            first = false;
+            console.log(brand(label));
             for (const d of doms) {
-              console.log(`  ${d.domain}  ${muted(d.status)}  ${muted(`[${d.shortGuid}]`)}`);
+              console.log(`${d.domain}  ${muted(d.status)}  ${muted(`[${d.shortGuid}]`)}`);
             }
-            console.log();
           }
         } else {
           const config = requireConfig();
           const res = await get<{ data: DomainData[] }>(`/projects/${config.projectGuid}/domains`);
           printList(res.data, opts, 'No custom domains configured.', d =>
-            `  ${d.domain}  ${muted(d.status)}  ${muted(`[${d.short_guid}]`)}`
+            `${d.domain}  ${muted(d.status)}  ${muted(`[${d.short_guid}]`)}`
           );
         }
         break;
@@ -108,15 +110,15 @@ export const domainCommand = new Command('domain')
           console.log(success(`Domain "${data.domain.domain}" added.`));
           console.log('');
           console.log('Add this DNS record:');
-          console.log(`  Type:   ${data.instructions.type}`);
-          console.log(`  Name:   ${data.instructions.name}`);
-          console.log(`  Target: ${data.instructions.target}`);
+          console.log(`${muted('Type:'.padEnd(8))}${data.instructions.type}`);
+          console.log(`${muted('Name:'.padEnd(8))}${data.instructions.name}`);
+          console.log(`${muted('Target:'.padEnd(8))}${data.instructions.target}`);
           if (data.instructions.note) {
             console.log('');
             console.log(data.instructions.note);
           }
           console.log('');
-          console.log(`Then run: gipity domain verify ${data.domain.short_guid}`);
+          console.log(muted(`Then run: gipity domain verify ${data.domain.short_guid}`));
         }
         break;
       }
@@ -164,10 +166,10 @@ export const domainCommand = new Command('domain')
       default:
         console.log('Usage: gipity domain [list|add|verify|remove]');
         console.log('');
-        console.log('  gipity domain list              List project domains');
-        console.log('  gipity domain list --all        List all domains across projects');
-        console.log('  gipity domain add <domain.com>  Add a custom domain (requires project)');
-        console.log('  gipity domain verify <guid>     Verify DNS and activate (requires project)');
-        console.log('  gipity domain remove <guid>     Remove a custom domain');
+        console.log(`${brand('gipity domain list')}              ${muted('List project domains')}`);
+        console.log(`${brand('gipity domain list --all')}        ${muted('List all domains across projects')}`);
+        console.log(`${brand('gipity domain add <domain.com>')}  ${muted('Add a custom domain (requires project)')}`);
+        console.log(`${brand('gipity domain verify <guid>')}     ${muted('Verify DNS and activate (requires project)')}`);
+        console.log(`${brand('gipity domain remove <guid>')}     ${muted('Remove a custom domain')}`);
     }
   }));

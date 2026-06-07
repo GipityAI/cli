@@ -17,7 +17,7 @@ fnCommand
 
     printList(res.data, opts, 'No functions defined.', f => {
       const line = `${bold(f.name)}  ${muted(`v${f.version}`)}  ${muted(f.auth_level)}  ${muted(`timeout=${f.timeout_ms}ms`)}`;
-      return f.description ? `${line}\n  ${muted(f.description)}` : line;
+      return f.description ? `${line}\n${muted(f.description)}` : line;
     });
   }));
 
@@ -37,7 +37,7 @@ fnCommand
       const ts = new Date(log.created_at).toLocaleString();
       const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : muted;
       const line = `${statusColor(log.status)}  ${dur}  ${muted(log.trigger_type || 'http')}  ${muted(ts)}`;
-      return log.error_message ? `${line}\n  ${clrError(`error: ${log.error_message}`)}` : line;
+      return log.error_message ? `${line}\n${clrError(`error: ${log.error_message}`)}` : line;
     });
   }));
 

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
-import { error as clrError } from '../colors.js';
+import { error as clrError, success } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
@@ -65,10 +65,8 @@ agentCommand
     if (opts.json) {
       console.log(JSON.stringify(res.data));
     } else {
-      console.log('');
-      console.log(`Created "${res.data.name}" (${res.data.short_guid})`);
+      console.log(success(`Created "${res.data.name}" (${res.data.short_guid})`));
       if (opts.switch) console.log('Switched.');
-      console.log('');
     }
   }));
 
@@ -128,7 +126,7 @@ agentCommand
     const res = await get<{ data: AgentData[] }>('/agents');
     const match = res.data.find(a => a.name === name || a.short_guid === name);
     if (!match) {
-      console.error(`Agent "${name}" not found.`);
+      console.error(clrError(`Agent "${name}" not found.`));
       process.exit(1);
     }
     if (!await confirm(`Delete agent "${match.name}"?`)) {

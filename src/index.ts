@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { setApiBaseOverride } from './config.js';
 import { setAutoConfirm } from './utils.js';
+import { installOutputFrame } from './helpers/output.js';
 import { GIPITY_TAGLINE } from './knowledge.js';
 import { getAuth, getTimeRemaining, isExpired } from './auth.js';
 import { loginCommand } from './commands/login.js';
@@ -135,6 +136,10 @@ program.hook('preAction', () => {
   if (globalOpts.apiBase) setApiBaseOverride(globalOpts.apiBase);
   if (globalOpts.yes) setAutoConfirm(true);
 });
+
+// Bracket non-JSON command output with leading/trailing blank lines centrally,
+// so commands never hand-roll their own boundary spacing.
+installOutputFrame(program);
 
 // ── Custom top-level help: version banner + grouped commands ────────────
 program.configureHelp({

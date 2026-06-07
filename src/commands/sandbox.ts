@@ -48,6 +48,9 @@ file you write lands back in the project. No manual copy needed.
 Use --input only for projects over the auto-mirror cap, or when you want
 to restrict what the sandbox sees.
 
+No network, and the toolset is fixed - pip/npm/apt installs won't work.
+Use only preinstalled tools, or pull external inputs into the project first.
+
 Examples:
 
   # Auto-mirror: code sees the whole project at /work/
@@ -123,7 +126,7 @@ GCC/Rust).
       if (res.data.timedOut) console.error(`[Timed out after ${res.data.durationMs}ms]`);
       if (res.data.outputFiles && res.data.outputFiles.length > 0) {
         console.log(`\nOutput files ${pulledLocal ? 'synced to this directory' : 'saved to project'}:`);
-        for (const f of res.data.outputFiles) console.log(`  ${f}`);
+        for (const f of res.data.outputFiles) console.log(`${f}`);
       }
       if (res.data.exitCode !== 0) process.exit(res.data.exitCode);
     }

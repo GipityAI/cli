@@ -26,7 +26,7 @@ function resolveInput(args: string[], opts: { file?: string }): string {
 function formatProfile(a: ReturnType<typeof analyzeText>): string {
   const L: string[] = [];
   const row = (label: string, val: string | number) =>
-    L.push(`  ${label.padEnd(22)}${val}`);
+    L.push(`${label.padEnd(22)}${val}`);
 
   L.push(bold('Counts'));
   row('Characters', a.characters);
@@ -60,14 +60,14 @@ function formatProfile(a: ReturnType<typeof analyzeText>): string {
     const freq = a.letterFrequency
       .map((f) => `${f.letter}:${f.count}`)
       .join('  ');
-    L.push(`  ${freq}`);
+    L.push(freq);
   } else {
-    L.push(dim('  (no letters)'));
+    L.push(dim('(no letters)'));
   }
   if (a.wordFrequency.length) {
     L.push('');
     L.push(bold('Top words'));
-    L.push('  ' + a.wordFrequency.map((w) => `${w.word}:${w.count}`).join('  '));
+    L.push(a.wordFrequency.map((w) => `${w.word}:${w.count}`).join('  '));
   }
   L.push('');
   L.push(bold('Other'));
@@ -109,7 +109,7 @@ const analyzeCommand = new Command('analyze')
         const counts = r.wholeWord
           ? `${r.nonOverlapping}`
           : `${r.nonOverlapping} non-overlapping, ${r.overlapping} overlapping`;
-        console.log(`  "${r.needle}" (${mode}): ${counts}`);
+        console.log(`"${r.needle}" (${mode}): ${counts}`);
         return;
       }
       if (opts.find !== undefined) {
@@ -117,27 +117,27 @@ const analyzeCommand = new Command('analyze')
         if (opts.json) return void console.log(JSON.stringify({ needle: opts.find, positions }));
         console.log(
           positions.length
-            ? `  "${opts.find}" at: ${positions.join(', ')}`
-            : dim(`  "${opts.find}" not found`),
+            ? `"${opts.find}" at: ${positions.join(', ')}`
+            : dim(`"${opts.find}" not found`),
         );
         return;
       }
       if (opts.anagram !== undefined) {
         const r = areAnagrams(text, opts.anagram);
         if (opts.json) return void console.log(JSON.stringify(r));
-        console.log(`  ${r.isAnagram ? 'yes' : 'no'} - anagram of "${opts.anagram}"`);
+        console.log(`${r.isAnagram ? 'yes' : 'no'} - anagram of "${opts.anagram}"`);
         return;
       }
       if (opts.word !== undefined) {
         const w = nthWord(text, opts.word);
         if (opts.json) return void console.log(JSON.stringify({ word: w, n: opts.word }));
-        console.log(w === null ? dim('  (out of range)') : `  ${w}`);
+        console.log(w === null ? dim('(out of range)') : `${w}`);
         return;
       }
       if (opts.char !== undefined) {
         const c = nthChar(text, opts.char);
         if (opts.json) return void console.log(JSON.stringify({ char: c, n: opts.char }));
-        console.log(c === null ? dim('  (out of range)') : `  ${c}`);
+        console.log(c === null ? dim('(out of range)') : `${c}`);
         return;
       }
 

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, post } from '../api.js';
-import { muted } from '../colors.js';
+import { muted, success } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
 interface ApprovalSummary {
@@ -61,7 +61,7 @@ approvalCommand
     if (opts.expiresIn) body.expires_in_minutes = Number(opts.expiresIn);
 
     const res = await post<{ data: { guid: string } }>('/approvals', body);
-    printResult(`Created ${res.data.guid}.`, opts, res.data);
+    printResult(success(`Created ${res.data.guid}.`), opts, res.data);
   }));
 
 approvalCommand
@@ -123,5 +123,5 @@ approvalCommand
       throw new Error('Expected approval guid like ap_xxxxxxxx');
     }
     await post(`/approvals/${guid}/cancel`, {});
-    printResult(`Cancelled ${guid}.`, opts, { guid, cancelled: true });
+    printResult(success(`Cancelled ${guid}.`), opts, { guid, cancelled: true });
   }));

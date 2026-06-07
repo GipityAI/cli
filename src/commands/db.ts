@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get, post, sendMessage } from '../api.js';
 import { requireConfig } from '../config.js';
-import { error as clrError } from '../colors.js';
+import { error as clrError, success } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
@@ -87,13 +87,11 @@ dbCommand
         return;
       }
 
-      console.log('');
       console.log(`Databases: ${count}/${limit}`);
       console.log('');
 
       if (databases.length === 0) {
         console.log('No databases.');
-        console.log('');
         return;
       }
 
@@ -105,13 +103,15 @@ dbCommand
         grouped.get(key)!.push(db);
       }
 
+      let first = true;
       for (const [projectGuid, dbs] of grouped) {
+        if (!first) console.log('');
+        first = false;
         const label = dbs[0].projectSlug || dbs[0].projectName || projectGuid;
         console.log(label);
         for (const db of dbs) {
-          console.log(`  ${db.friendlyName}`);
+          console.log(`${db.friendlyName}`);
         }
-        console.log();
       }
     } else {
       const config = requireConfig();
@@ -174,6 +174,6 @@ dbCommand
     if (opts.json) {
       console.log(JSON.stringify({ success: true }));
     } else {
-      console.log(`Dropped database '${name}'.`);
+      console.log(success(`Dropped database '${name}'.`));
     }
   }));
