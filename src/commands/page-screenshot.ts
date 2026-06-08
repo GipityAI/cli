@@ -139,6 +139,10 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
+  // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
+  // so agents reach for it by reflex. Accept it as a hidden alias for `--full`
+  // rather than reject it as an unknown option and send them on a --help detour.
+  .addOption(new Option('--full-page', 'Alias for --full').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
     const delayRaw = opts.postLoadDelay ?? opts.wait;
     const postLoadDelayMs = delayRaw !== undefined ? parseInt(String(delayRaw), 10) : undefined;
@@ -163,7 +167,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     const body = {
       url,
       postLoadDelayMs,
-      full: !!opts.full,
+      full: !!(opts.full || opts.fullPage),
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
       ...(opts.fakeMedia ? { fakeMedia: true } : {}),
