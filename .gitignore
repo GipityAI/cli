@@ -6,3 +6,6 @@ node_modules/
 # Screenshots from local browser/page-screenshot testing - keep out of commits.
 screenshot.png
 ss-*.png
+
+# gw worktrees (git tracks them via .git/worktrees metadata; the dir itself is scratch)
+.worktrees/
