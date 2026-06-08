@@ -3,7 +3,7 @@ import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 
-interface EvalResult {
+export interface EvalResult {
   url: string;
   result: string;
   truncated: boolean;
@@ -20,11 +20,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Poll the async eval job until it finishes. Eval runs server-side as a
  *  short-lived job (so a long --wait can't trip the gateway idle timeout);
- *  we submit, then poll the result out of the job store. */
-async function pollEvalResult(evalJobId: string, waitMs: number): Promise<EvalResult> {
+ *  we submit, then poll the result out of the job store. `expectedWorkMs` is
+ *  the time the server-side work is expected to take (settle + any in-page
+ *  awaits); the client budget is that plus 60s of headroom. */
+export async function pollEvalResult(evalJobId: string, expectedWorkMs: number): Promise<EvalResult> {
   // Generous client budget: the server work is bounded by --wait plus browser
   // open/settle overhead; give it that plus headroom before giving up.
-  const deadline = Date.now() + waitMs + 60_000;
+  const deadline = Date.now() + expectedWorkMs + 60_000;
   let missCount = 0;
   while (Date.now() < deadline) {
     let rec: EvalJobRecord;
@@ -84,3 +86,15 @@ export const pageEvalCommand = new Command('eval')
     console.log(`\n${d.result || muted('(empty result)')}`);
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
   }));
+
+// Each `page eval` call runs to completion before the next starts, so two evals
+// fired back-to-back never coexist in time - they CANNOT test whether two live
+// clients see each other (presence, shared state). For that, use the genuinely-
+// concurrent `page test --observe` instead, which overlaps N clients and reports
+// whether they actually ran together.
+pageEvalCommand.addHelpText('after', `
+Testing realtime/shared state across clients?
+  Separate 'page eval' calls run sequentially (one finishes before the next
+  starts), so they never overlap and will each see only themselves - a false
+  negative. Use 'gipity page test <url> --observe <expr>' for genuinely
+  concurrent clients with overlap verification.`);

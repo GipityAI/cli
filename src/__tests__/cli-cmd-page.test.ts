@@ -158,6 +158,115 @@ test('gipity page eval surfaces a failed eval job', async () => {
   assert.match(r.stderr, /about:blank/);
 });
 
+// ── page test interactive mode (concurrent clients + overlap verification) ──
+// Each client posts to /tools/browser/eval (a harness that runs --action then
+// samples --observe) and polls the job. The mock keys off the per-client label
+// spliced into the expr (Alice vs Bob) to hand back distinct sample series and
+// in-page start/end timestamps, which the command uses to verify overlap.
+
+/** A done eval record whose `result` is the JSON the in-browser harness returns. */
+function evalDone(payload: { label: string; startedAt: number; endedAt: number; samples: unknown[] }) {
+  return { body: { data: { status: 'done', url: 'https://app.example/', result: JSON.stringify(payload), truncated: false } } };
+}
+
+/** Register the eval kickoff + per-label poll routes for an interactive run. */
+function mockInteractive(byLabel: Record<string, { label: string; startedAt: number; endedAt: number; samples: unknown[] }>) {
+  mock.on('POST /tools/browser/eval', (req) => {
+    const expr = String((req.body as { expr?: string }).expr ?? '');
+    const label = Object.keys(byLabel).find((l) => expr.includes(l)) ?? 'unknown';
+    return { body: { data: { evalJobId: `job-${label}`, status: 'queued' } } };
+  });
+  for (const [label, payload] of Object.entries(byLabel)) {
+    mock.on(`GET /tools/browser/eval/job-${label}`, evalDone(payload));
+  }
+}
+
+test('page test --observe runs concurrent clients, shows series, and confirms overlap', async () => {
+  mock.reset();
+  // Alice live [1000,9000], Bob live [2000,9000] → they coexist for ~7s. Each
+  // sees the count rise from 1 to 2 the moment the other joins.
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 1, 2, 2, 2, 2] },
+    Bob: { label: 'Bob', startedAt: 2000, endedAt: 9000, samples: [1, 2, 2, 2, 2, 2] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/',
+    '--clients', '2', '--labels', 'Alice,Bob',
+    '--action', "document.querySelector('#name').value='{{label}}'; document.querySelector('form').requestSubmit();",
+    '--observe', "document.querySelectorAll('.present').length",
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /client 0 \(Alice\)/);
+  assert.match(r.stdout, /client 1 \(Bob\)/);
+  assert.match(r.stdout, /1 → 1 → 2/);
+  assert.match(r.stdout, /overlapped for/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+  // Per-client label was actually spliced into the action the browser ran.
+  const evalPosts = mock.requests().filter((q) => q.url === '/tools/browser/eval');
+  assert.equal(evalPosts.length, 2);
+  assert.ok(evalPosts.some((q) => String((q.body as { expr: string }).expr).includes("value='Alice'")));
+  assert.ok(evalPosts.some((q) => String((q.body as { expr: string }).expr).includes("value='Bob'")));
+});
+
+test('page test --observe flags a FALSE NEGATIVE and exits non-zero when clients never overlap', async () => {
+  mock.reset();
+  // Alice [1000,5000] ends before Bob [6000,10000] starts → zero overlap.
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 5000, samples: [1, 1, 1, 1, 1, 1] },
+    Bob: { label: 'Bob', startedAt: 6000, endedAt: 10000, samples: [1, 1, 1, 1, 1, 1] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/',
+    '--clients', '2', '--labels', 'Alice,Bob',
+    '--observe', "document.querySelectorAll('.present').length",
+  ]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /did NOT overlap/);
+  assert.match(r.stdout, /FALSE NEGATIVE/);
+});
+
+test('page test --observe --json emits overlapped flag and per-client results', async () => {
+  mock.reset();
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 2] },
+    Bob: { label: 'Bob', startedAt: 2000, endedAt: 9000, samples: [1, 2] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/',
+    '--clients', '2', '--labels', 'Alice,Bob', '--samples', '2',
+    '--observe', "document.querySelectorAll('.present').length", '--json',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim());
+  assert.equal(out.mode, 'interactive');
+  assert.equal(out.overlapped, true);
+  assert.ok(out.overlapMs > 0);
+  assert.equal(out.results.length, 2);
+  assert.deepEqual(out.results[0].samples, [1, 2]);
+});
+
+test('page test --observe surfaces a client action failure and exits non-zero', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', (req) => {
+    const expr = String((req.body as { expr?: string }).expr ?? '');
+    return { body: { data: { evalJobId: expr.includes('Bob') ? 'job-Bob' : 'job-Alice', status: 'queued' } } };
+  });
+  mock.on('GET /tools/browser/eval/job-Alice', evalDone({ label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 2] }));
+  // Bob's harness hit an action error - the result carries actionError instead of samples.
+  mock.on('GET /tools/browser/eval/job-Bob', { body: { data: {
+    status: 'done', url: 'https://app.example/', truncated: false,
+    result: JSON.stringify({ label: 'Bob', startedAt: 2000, endedAt: 3000, samples: [], actionError: "Cannot read properties of null (reading 'value')" }),
+  } } });
+  const r = await run([
+    'page', 'test', 'https://app.example/',
+    '--clients', '2', '--labels', 'Alice,Bob',
+    '--action', "document.querySelector('#missing').value='{{label}}';",
+    '--observe', "document.querySelectorAll('.present').length",
+  ]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /action failed/);
+});
+
 // ── screenshot default filename helpers (pure) ─────────────────────────────
 
 test('timestampSlug renders yyyy-mm-dd_hh-mm-ss, zero-padded, sortable', () => {
