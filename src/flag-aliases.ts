@@ -65,8 +65,19 @@ function collectRealFlags(argv: string[], program: Command): Set<string> {
   let cmd: Command = program;
   const chain: Command[] = [program];
 
-  for (const tok of args) {
-    if (tok.startsWith('-')) break; // first flag ends command resolution
+  // Root value-options (e.g. `--api-base <url>`) may legitimately precede the
+  // subcommand; skip them (and their value token) rather than ending resolution
+  // there, so a command's own flag is still discovered when a global flag leads.
+  const rootValueFlags = new Set(
+    program.options.filter(o => o.long && o.required).map(o => o.long as string),
+  );
+
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok.startsWith('-')) {
+      if (!tok.includes('=') && rootValueFlags.has(tok)) i++; // consume its value
+      continue;
+    }
     const next = cmd.commands.find(c => c.name() === tok || c.aliases().includes(tok));
     if (!next) break;
     cmd = next;

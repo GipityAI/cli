@@ -1,5 +1,6 @@
 import { Command } from 'commander';
-import { dirname, relative } from 'path';
+import { readFileSync } from 'fs';
+import { dirname, extname, relative } from 'path';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
@@ -30,9 +31,10 @@ export const sandboxCommand = new Command('sandbox')
   .description('Run code in a sandbox');
 
 sandboxCommand
-  .command('run <code>')
+  .command('run [code]')
   .description('Run code')
   .option('--language <language>', 'Language: js, py, or bash', 'js')
+  .option('--file <path>', 'Read the code body from a file instead of the inline <code> arg; --language is inferred from the extension when not given')
   .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
   .option(
     '--input <path>',
@@ -61,6 +63,9 @@ Examples:
   $ gipity sandbox run --language python \\
       "import pandas as pd; print(pd.read_csv('data/sales.csv').describe())"
 
+  # Run a script file directly (language inferred from .py)
+  $ gipity sandbox run --file build_report.py
+
   # Surgical: only these files are mirrored in
   $ gipity sandbox run --language bash \\
       --input src/images/hero.png \\
@@ -74,9 +79,33 @@ Pre-installed: Python (pandas, numpy, matplotlib, Pillow, scipy, bs4),
 CLI tools (ImageMagick, FFmpeg, webp/cwebp, optipng, jq, pandoc, exiftool,
 GCC/Rust).
 `)
-  .action((code: string, opts) => run('Sandbox', async () => {
+  .action((code: string | undefined, opts, command: Command) => run('Sandbox', async () => {
     const { config } = await resolveProjectContext();
-    const language = LANG_MAP[opts.language] || opts.language;
+
+    if (code !== undefined && opts.file) {
+      console.error(clrError('Pass either an inline <code> arg or --file <path>, not both'));
+      process.exit(1);
+    }
+    if (code === undefined && !opts.file) {
+      console.error(clrError('Provide an inline <code> arg or --file <path>'));
+      process.exit(1);
+    }
+
+    let source = code;
+    if (opts.file) {
+      try {
+        source = readFileSync(opts.file, 'utf8');
+      } catch {
+        console.error(clrError(`Cannot read file: ${opts.file}`));
+        process.exit(1);
+      }
+    }
+
+    // Infer language from the file extension unless --language was given explicitly.
+    const fromExt = opts.file && command.getOptionValueSource('language') === 'default'
+      ? LANG_MAP[extname(opts.file).slice(1).toLowerCase()]
+      : undefined;
+    const language = fromExt || LANG_MAP[opts.language] || opts.language;
 
     if (!['javascript', 'python', 'bash'].includes(language)) {
       console.error(clrError(`Invalid language: ${opts.language}. Use: js, py, or bash`));
@@ -98,7 +127,7 @@ GCC/Rust).
         autoMirrorSkipped?: { reason: string; totalBytes: number };
       };
     }>(`/projects/${config.projectGuid}/sandbox/execute`, {
-      code,
+      code: source,
       language,
       timeout: isNaN(timeout) ? 30 : timeout,
       input_files: opts.input,
