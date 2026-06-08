@@ -59,6 +59,13 @@ export class MockServer {
         handler = this.routes.get(`${method} ${path}`);
       }
 
+      // Finally, a per-method wildcard (`mock.on('GET *', …)`) acts as a catch-all
+      // for any unmatched path - used to simulate static-host SPA fallbacks where
+      // unknown paths return 200 with index.html instead of a 404.
+      if (!handler) {
+        handler = this.routes.get(`${method} *`);
+      }
+
       if (!handler) {
         res.statusCode = 404;
         res.setHeader('content-type', 'application/json');

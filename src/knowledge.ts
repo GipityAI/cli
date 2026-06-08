@@ -123,7 +123,8 @@ export const DEFINITION_OF_DONE = `## Definition of done (build tasks)
 1. \`gipity deploy dev\` succeeds and you have a live URL.
 2. \`gipity page inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen).
 3. For apps with functions: \`gipity test\` passes.
-4. You told the user the live URL.
+4. Non-rendered files the task called for (\`llms.txt\`, \`AGENTS.md\`, \`SKILL.md\`, \`robots.txt\`, served JSON, etc.): \`page inspect\` only sees rendered HTML, so verify them with \`gipity page fetch <url> <files...>\`. It flags any that 404 or come back as the static-host shell (a missing file is served as \`index.html\` with a 200, so a bare status check would pass) and checks each \`content-type\`.
+5. You told the user the live URL.
 
 If any step fails, fix it before claiming done - do not report success on a broken deploy.`;
 

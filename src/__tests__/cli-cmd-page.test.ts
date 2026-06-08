@@ -178,3 +178,88 @@ test('defaultFilename composes ss-<slug>-<ts>.png, inserting viewport suffix whe
     'ss-example-com-1280x720-2026-05-31_09-07-03.png',
   );
 });
+
+// ── page fetch (raw-asset verification + SPA-shell trap detection) ──────────
+// page fetch makes real HTTP requests against the <url> argument (not the API),
+// so we point it at the mock server's own paths. `mock.on('GET *', …)` simulates
+// a static host's catch-all that returns 200 + index.html for unknown paths —
+// the exact trap this command exists to catch.
+
+const SHELL = '<!doctype html><html><head><title>App</title></head><body>shell</body></html>';
+
+test('page fetch: OK when a file is deployed with the right content-type', async () => {
+  mock.reset();
+  mock.on('GET *', { status: 200, raw: SHELL, contentType: 'text/html; charset=utf-8' });
+  mock.on('GET /app/llms.txt', { status: 200, raw: 'Gipity llms marker', contentType: 'text/plain; charset=utf-8' });
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'llms.txt']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /OK\s+llms\.txt/);
+  assert.match(r.stdout, /all 1 file/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('page fetch: MISSING when a missing file is served as the SPA shell with a 200', async () => {
+  mock.reset();
+  // Only the catch-all is registered → llms.txt comes back as the shell, 200.
+  mock.on('GET *', { status: 200, raw: SHELL, contentType: 'text/html; charset=utf-8' });
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'llms.txt']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /MISSING\s+llms\.txt/);
+  assert.match(r.stdout, /SPA shell/);
+  assert.doesNotMatch(r.stdout, /\bOK\b/);
+});
+
+test('page fetch: MISSING on an honest 404 (host without a catch-all fallback)', async () => {
+  mock.reset();
+  // Nothing registered → the mock 404s every path, including the probe.
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'robots.txt']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /MISSING\s+robots\.txt/);
+  assert.match(r.stdout, /HTTP 404/);
+});
+
+test('page fetch: WRONG-TYPE when a real file is served with the wrong content-type', async () => {
+  mock.reset();
+  mock.on('GET *', { status: 200, raw: SHELL, contentType: 'text/html' });
+  // Real JSON body, but mislabeled as text/html (and distinct from the shell).
+  mock.on('GET /app/agent.json', { status: 200, raw: '{"name":"gip"}', contentType: 'text/html' });
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'agent.json']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /WRONG-TYPE\s+agent\.json/);
+  assert.match(r.stdout, /expected json/);
+});
+
+test('page fetch --json: per-file verdicts and ok=false on a mixed batch', async () => {
+  mock.reset();
+  mock.on('GET *', { status: 200, raw: SHELL, contentType: 'text/html' });
+  mock.on('GET /app/llms.txt', { status: 200, raw: 'present', contentType: 'text/plain' });
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'llms.txt', 'missing.txt', '--json']);
+  assert.notEqual(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.ok, false);
+  assert.equal(out.failed, 1);
+  assert.equal(out.shellFallback, true);
+  const byPath = Object.fromEntries(out.files.map((f: { path: string }) => [f.path, f]));
+  assert.equal(byPath['llms.txt'].verdict, 'OK');
+  assert.equal(byPath['missing.txt'].verdict, 'MISSING');
+});
+
+test('page fetch: exit 0 with --json when every file checks out', async () => {
+  mock.reset();
+  mock.on('GET *', { status: 200, raw: SHELL, contentType: 'text/html' });
+  mock.on('GET /app/llms.txt', { status: 200, raw: 'a', contentType: 'text/plain' });
+  mock.on('GET /app/agent.json', { status: 200, raw: '{"ok":true}', contentType: 'application/json' });
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'llms.txt', 'agent.json', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.ok, true);
+  assert.equal(out.failed, 0);
+});
+
+test('page fetch: MISSING (fetch failed) when the host is unreachable', async () => {
+  // Port 1 on localhost refuses connections immediately and deterministically.
+  const r = await run(['page', 'fetch', 'http://127.0.0.1:1/app/', 'llms.txt']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /MISSING\s+llms\.txt/);
+  assert.match(r.stdout, /unreachable/);
+});

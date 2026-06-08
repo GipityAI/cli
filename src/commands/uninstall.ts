@@ -1,7 +1,8 @@
 /**
  * `gipity uninstall` - true reset. Stops the relay daemon, removes the
  * platform autostart service, revokes the device on the server (best-effort),
- * and wipes ~/.gipity/. Optionally wipes ~/GipityProjects/ on request.
+ * and wipes ~/.gipity/. Never touches ~/GipityProjects/ - your local
+ * project trees are yours to keep or remove yourself.
  *
  * Does not touch the npm-installed shim - the user removes that separately
  * via `npm uninstall -g gipity`.
@@ -79,11 +80,9 @@ async function revokeDeviceBestEffort(): Promise<void> {
 export const uninstallCommand = new Command('uninstall')
   .description('Uninstall Gipity')
   .option('--yes', 'Skip confirmation prompts')
-  .option('--purge-projects', 'Also delete ~/GipityProjects/ (your local project trees)')
-  .action(async (opts: { yes?: boolean; purgeProjects?: boolean }) => {
+  .action(async (opts: { yes?: boolean }) => {
     const autoYes = opts.yes || getAutoConfirm();
     const gipityDir = join(homedir(), '.gipity');
-    const projectsDir = join(homedir(), 'GipityProjects');
 
     console.log(`${bold('Gipity uninstall')} - this will:`);
     console.log(`• Stop the running relay daemon (if any)`);
@@ -126,24 +125,6 @@ export const uninstallCommand = new Command('uninstall')
       }
     } else {
       console.log(`${muted(`${gipityDir}/ already gone.`)}`);
-    }
-
-    // 5. Offer to wipe ~/GipityProjects/.
-    if (existsSync(projectsDir)) {
-      let alsoPurge = opts.purgeProjects === true;
-      if (!alsoPurge && !autoYes) {
-        alsoPurge = await confirm(`Also delete ${projectsDir}/ (your local project trees)?`);
-      }
-      if (alsoPurge) {
-        try {
-          rmSync(projectsDir, { recursive: true, force: true });
-          console.log(`${success(`Removed ${projectsDir}/`)}`);
-        } catch (err: any) {
-          console.error(`${clrError(`Could not remove ${projectsDir}: ${err?.message || err}`)}`);
-        }
-      } else {
-        console.log(`${muted(`Kept ${projectsDir}/ (projects still live in the cloud).`)}`);
-      }
     }
 
     console.log('');
