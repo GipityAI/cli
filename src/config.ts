@@ -156,6 +156,21 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
   };
 }
 
+/** The canonical live URL for a deployed project. This is THE place the
+ *  dev/prod URL convention lives - every command that tells the user (or an
+ *  agent) where their app is (`deploy`, `status`, `project info`) derives it
+ *  here, so nothing ever has to reconstruct `dev.gipity.ai/<account>/<slug>/`
+ *  by hand or guess a subdomain like `<slug>.gipity.app` (which doesn't
+ *  resolve). Mirrors the server's deploy URL; `deploy` itself prints the
+ *  server-authoritative URL, the read-only commands derive it from config. */
+export function liveUrl(
+  config: Pick<GipityConfig, 'accountSlug' | 'projectSlug'>,
+  target: 'dev' | 'prod' = 'dev',
+): string {
+  const host = target === 'prod' ? 'app.gipity.ai' : 'dev.gipity.ai';
+  return `https://${host}/${config.accountSlug}/${config.projectSlug}/`;
+}
+
 export function clearConfigCache(): void {
   cached = null;
   cachedPath = null;

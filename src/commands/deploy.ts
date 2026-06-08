@@ -76,7 +76,7 @@ export const deployCommand = new Command('deploy')
       } else {
         // Fallback for simple deploys without phases
         const size = formatSize(d.totalBytes);
-        console.log(`${success('✓')} ${d.fileCount} files (${size}) → ${success(d.url)}`);
+        console.log(`${success('✓')} ${d.fileCount} files (${size})`);
       }
 
       if (d.customDomains?.length) {
@@ -104,5 +104,9 @@ export const deployCommand = new Command('deploy')
         process.exit(1);
       } else {
         console.log(success(`✓ Deployed to ${target}`) + muted(` (${d.elapsedMs}ms)`));
+        // The live URL is the one thing the caller (often an agent) needs next
+        // - to open it, inspect it, or report it. Always surface it so nobody
+        // has to reconstruct the URL convention or guess a subdomain.
+        if (d.url) console.log(`${muted('Live:')} ${brand(d.url)}`);
       }
   }));

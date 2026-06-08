@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { get, post, put, del, getAccountSlug } from '../api.js';
-import { requireConfig, saveConfig } from '../config.js';
+import { requireConfig, saveConfig, liveUrl } from '../config.js';
 import { slugify } from '../setup.js';
 import { error as clrError, brand, muted, info, success } from '../colors.js';
 import { confirm } from '../utils.js';
@@ -188,6 +188,7 @@ projectCommand
       console.log(`Name:    ${p.name}`);
       console.log(`Slug:    ${p.slug}`);
       console.log(`GUID:    ${p.short_guid}`);
+      console.log(`Live:    ${liveUrl(config)}`);
       console.log(`Created: ${new Date(p.created_at).toLocaleDateString()}`);
       if (p.description) console.log(`Desc:    ${p.description}`);
     }

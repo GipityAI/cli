@@ -23,7 +23,6 @@ import { sync } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
   buildProjectContextBlock as buildProjectContextBlockText,
-  buildExistingProjectPrompt as buildExistingProjectPromptText,
   buildNewProjectPrompt,
   buildResumeWrap,
   buildFreshWrap,
@@ -150,11 +149,6 @@ interface LocalCtxOpts {
 async function buildProjectContextBlock(opts: LocalCtxOpts): Promise<string> {
   const stats = await fetchProjectStats(opts.projectGuid, opts.cwd);
   return buildProjectContextBlockText({ ...opts, ...stats });
-}
-
-async function buildExistingProjectPrompt(opts: LocalCtxOpts): Promise<string> {
-  const stats = await fetchProjectStats(opts.projectGuid, opts.cwd);
-  return buildExistingProjectPromptText({ ...opts, ...stats });
 }
 
 /** Interactive email+code login flow. Used on first login and when the
@@ -467,29 +461,12 @@ export const claudeCommand = new Command('claude')
           // Headless: the -p message is wrapped later (Step 3). Just record
           // whether to use the new-project framing for that wrap.
           headlessNewProject = isNewProject;
-        } else if (isNewProject) {
-          console.log('');
-          console.log(`  ${bold("What's next? What would you like to build?")}`);
-          console.log('');
-          const buildIdea = (await promptBoxed()).trim();
-          const stats = await fetchProjectStats(project.short_guid, process.cwd());
-          initialPrompt = buildNewProjectPrompt({
-            projectName: project.name,
-            projectSlug: project.slug,
-            projectGuid: project.short_guid,
-            accountSlug,
-            cwd: process.cwd(),
-            ...stats,
-            buildIdea,
-          });
         } else {
-          initialPrompt = await buildExistingProjectPrompt({
-            projectName: project.name,
-            projectSlug: project.slug,
-            projectGuid: project.short_guid,
-            accountSlug,
-            cwd: process.cwd(),
-          });
+          // Interactive: launch with no seeded first message. The per-project
+          // CLAUDE.md (refreshed just above) carries the project identity,
+          // scaffold rule, and definition of done, so Claude has full context
+          // the moment the user types. A welcome banner prints before launch.
+          initialPrompt = '';
         }
 
         console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
@@ -528,13 +505,8 @@ export const claudeCommand = new Command('claude')
           }
         }
 
-        initialPrompt = await buildExistingProjectPrompt({
-          projectName: existing.projectSlug,
-          projectSlug: existing.projectSlug,
-          projectGuid: existing.projectGuid,
-          accountSlug: existing.accountSlug,
-          cwd: process.cwd(),
-        });
+        // Interactive: no seeded prompt - CLAUDE.md carries the context now.
+        initialPrompt = '';
       } else {
         // Fetch user's projects. If the session expired (401), re-run the
         // interactive login and retry once - no reason to kick the user out
@@ -659,39 +631,11 @@ export const claudeCommand = new Command('claude')
           }
         }
 
-        // ── Step 2b: What do you want to build? (new projects only) ────
-        if (isNewProject) {
-          console.log('');
-          console.log(`  ${bold('Claude Code enabled with Gipity!')}`);
-          console.log('');
-          console.log(`  ${bold("What's next? What would you like to build?")}`);
-          console.log(`  ${muted('Examples: a landing page, a Pac-Man game, a full web app,')}`);
-          console.log(`  ${muted('an API that returns random facts, an image, just answer questions?')}`);
-          console.log('');
-          console.log(`  ${muted('Claude Code with Gipity can do everything your old Claude Code could do but so much more now!')}`);
-          console.log('');
-
-          const buildIdea = (await promptBoxed()).trim();
-
-          const stats = await fetchProjectStats(project.short_guid, process.cwd());
-          initialPrompt = buildNewProjectPrompt({
-            projectName: project.name,
-            projectSlug: project.slug,
-            projectGuid: project.short_guid,
-            accountSlug,
-            cwd: process.cwd(),
-            ...stats,
-            buildIdea,
-          });
-        } else {
-          initialPrompt = await buildExistingProjectPrompt({
-            projectName: project.name,
-            projectSlug: project.slug,
-            projectGuid: project.short_guid,
-            accountSlug,
-            cwd: process.cwd(),
-          });
-        }
+        // Interactive launch: no seeded first message (new or existing). The
+        // per-project CLAUDE.md carries identity + scaffold rule + definition
+        // of done, and a welcome banner prints before launch - the user tells
+        // Claude directly what they want to build or do.
+        initialPrompt = '';
 
         setupClaudeHooks();
         setupClaudeMd();
@@ -797,7 +741,10 @@ export const claudeCommand = new Command('claude')
       }
 
       if (!nonInteractive) {
-        console.log(`  ${info('Launching Claude Code...')}\n`);
+        console.log(`  ${bold('Launching Claude Code, powered by Gipity.')}`);
+        console.log(`  ${muted("Just tell Claude what you'd like to build or do - everything Claude could do")}`);
+        console.log(`  ${muted('before, and now, on Gipity, so much more.')}`);
+        console.log('');
       }
 
       // In non-interactive (-p) mode, prepend a Gipity preamble to the

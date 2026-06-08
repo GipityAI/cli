@@ -65,9 +65,9 @@ When a user asks for a foreign stack ("build it in React", "use MS SQL Server", 
 
 The one exception is app-level libraries the user imports into their own \`src/\` code - Three.js, Rapier, Phaser, MediaPipe, a charting or animation library. Those are fine. The opinionation is about the *platform* layer (framework, backend, database, styling system, hosting, auth, services), not every npm package.
 
-## When to add a template
+## Build loop
 
-The full rule and definition of done are injected at the top of every session context. In short: if the user asks you to build something deployable (web app, game, API), run \`gipity add <template>\` first (default \`web-simple\`); if it's a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead. To add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
+The full "when to add a template" rule and the definition of done are spelled out in the two sections at the end of this document. In short: if the user wants something deployable (web app, game, API), \`gipity add <template>\` first (default \`web-simple\`); for a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead; to add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
 
 Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page inspect <url>\` → fix any errors → repeat until the definition of done is met.
 

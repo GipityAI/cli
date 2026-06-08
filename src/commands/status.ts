@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { getAuth, getTimeRemaining } from '../auth.js';
-import { getConfig } from '../config.js';
+import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
 import { HOOKS_SETTINGS, setupClaudeHooks } from '../setup.js';
 
@@ -51,6 +51,7 @@ export const statusCommand = new Command('status')
           slug: config.projectSlug,
           account: config.accountSlug,
           apiBase: config.apiBase,
+          url: liveUrl(config),
         } : null,
         auth: auth ? {
           email: auth.email,
@@ -67,6 +68,7 @@ export const statusCommand = new Command('status')
     } else {
       console.log(`${muted('Project:')} ${brand(config.projectSlug)} ${muted(`(${config.projectGuid})`)}`);
       console.log(`${muted('Account:')} ${config.accountSlug}`);
+      console.log(`${muted('Live:')} ${liveUrl(config)}`);
       console.log(`${muted('API:')} ${config.apiBase}`);
       if (config.agentGuid) console.log(`${muted('Agent:')} ${config.agentGuid}`);
     }

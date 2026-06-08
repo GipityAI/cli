@@ -163,15 +163,6 @@ export function buildProjectContextBlock(opts: ProjectContextOpts): string {
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
-/** Project-context block + a brief greeting instruction. */
-export function buildExistingProjectPrompt(opts: ProjectContextOpts): string {
-  const isEmpty = opts.fileCount === 0;
-  const greeting = isEmpty
-    ? `Briefly greet the user and ask what they want to build.`
-    : `Briefly greet the user, summarize what this project appears to be (based on the file listing and any README/CLAUDE.md/gipity.yaml), and ask what they want to work on next.`;
-  return [buildProjectContextBlock(opts), ``, greeting].join('\n');
-}
-
 /** First-launch prompt for a brand-new (empty) project. Reuses buildProjectContextBlock. */
 export function buildNewProjectPrompt(opts: ProjectContextOpts & { buildIdea: string }): string {
   const base = buildProjectContextBlock(opts);
