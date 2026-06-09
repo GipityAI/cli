@@ -17,14 +17,14 @@ import { run } from '../helpers/index.js';
 interface CatalogEntry { key: string; hint: string; }
 
 const STARTERS: CatalogEntry[] = [
-  { key: 'web-fullstack', hint: 'backend API + database (weather-by-zip demo)' },
   { key: 'web-vision-cam', hint: 'fullscreen camera app with on-device vision (MediaPipe)' },
   { key: '2d-game', hint: '2D games with Phaser 3 - platformer, arcade, puzzle' },
   { key: '3d-world', hint: 'playable 3D multiplayer rocket-launcher demo' },
-  { key: 'api', hint: 'pure API backend, no frontend' },
 ];
 const BLANK: CatalogEntry[] = [
   { key: 'web-simple', hint: 'static frontend-only site - pages, dashboards, simple games' },
+  { key: 'web-fullstack', hint: 'backend API + database wiring - frontend, functions, migrations; deploys green' },
+  { key: 'api', hint: 'pure API backend, no frontend - one example function + test' },
   { key: '3d-engine', hint: '3D multiplayer wiring - Three.js + Rapier + Gipity Realtime' },
 ];
 const HIDDEN: CatalogEntry[] = [{ key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' }];

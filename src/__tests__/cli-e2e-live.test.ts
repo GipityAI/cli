@@ -103,18 +103,18 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.equal(r.status, 0);
   });
 
-  it('5a. fn list shows the scaffolded get-weather function', () => {
+  it('5a. fn list shows the scaffolded example function', () => {
     const r = cli(['fn', 'list', '--json']);
     assert.equal(r.status, 0);
     const fns = JSON.parse(r.stdout);
     assert.ok(Array.isArray(fns));
-    assert.ok(fns.some((f: any) => f.name === 'get-weather'), 'get-weather not in fn list');
+    assert.ok(fns.some((f: any) => f.name === 'example'), 'example not in fn list');
   });
 
-  it('5b. fn call get-weather returns weather data', () => {
-    const r = cli(['fn', 'call', 'get-weather', '{"zip":"94103"}'], { timeout: 30000 });
+  it('5b. fn call example returns ok', () => {
+    const r = cli(['fn', 'call', 'example', '{}'], { timeout: 30000 });
     assert.equal(r.status, 0, `fn call failed: ${r.stderr || r.stdout}`);
-    assert.match(r.stdout, /temperature|weather|°|condition/i);
+    assert.match(r.stdout, /"ok"\s*:\s*true|\bok\b/i);
   });
 
   it('6a. db list succeeds', () => {

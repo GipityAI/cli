@@ -95,7 +95,7 @@ Functions auto-deploy as public endpoints. Declare in `function_definitions` onl
     - name: get-items
       auth: public
       tables: [items]
-    - name: get-weather
+    - name: get-quote
       auth: public
       fetch_domains: [api.example.com]
     - name: my-todos
