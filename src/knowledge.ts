@@ -3,7 +3,7 @@
  *
  * AUTO-GENERATED - do not edit directly.
  * Source: platform/docs/knowledge/*.md + docs/skills/*.md frontmatter + gipity-overview.ts
- * Run `just sync-knowledge` to refresh.
+ * Run `just build-knowledge` to refresh.
  */
 
 export const BUILD_VS_NON_BUILD_RULE = `## When to add a template
@@ -77,7 +77,7 @@ Before telling the user the app is online, verify the source tree is consistent:
 
 ## CLI quick reference
 
-Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
+Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
 ## Tool output is complete and synchronous
