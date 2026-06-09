@@ -295,14 +295,17 @@ async function fetchRemote(projectGuid: string): Promise<Map<string, RemoteFileI
   return out;
 }
 
-async function downloadAll(projectGuid: string): Promise<Map<string, Buffer>> {
+async function downloadAll(
+  projectGuid: string,
+  onBytes?: (delta: number) => void,
+): Promise<Map<string, Buffer>> {
   const stream = await downloadStream(`/projects/${projectGuid}/files/tree?content=tar`);
   const extract = tar.extract();
   const files = new Map<string, Buffer>();
   return new Promise((resolve, reject) => {
     extract.on('entry', (header, entryStream, next) => {
       const chunks: Buffer[] = [];
-      entryStream.on('data', (c: Buffer) => chunks.push(c));
+      entryStream.on('data', (c: Buffer) => { chunks.push(c); onBytes?.(c.length); });
       entryStream.on('end', () => { files.set(header.name, Buffer.concat(chunks)); next(); });
       entryStream.resume();
     });
@@ -640,9 +643,23 @@ async function syncInner(
   const downloadedBytes = new Map<string, Buffer>();
   const needsBulkDownload = plannedToApply.some(a => a.kind === 'download' || a.kind === 'conflict');
   if (needsBulkDownload) {
-    p?.phase('Downloading updates from Gipity…');
+    // The tree endpoint streams the *whole* remote tree as one tar (the caller
+    // then picks out only the paths it planned to apply), so the bytes that
+    // actually move = the sum of every remote file's size. That's the honest
+    // denominator for the bar - it tracks real wire progress, not just the
+    // handful of changed files.
+    const downloadLabel = 'Downloading updates from Gipity';
+    const totalDownloadBytes = [...remote.values()].reduce((sum, r) => sum + r.size, 0);
+    let recvBytes = 0;
+    p?.transfer(downloadLabel, 0, totalDownloadBytes);
+    const onBytes = p
+      ? (delta: number) => {
+          recvBytes = Math.min(recvBytes + delta, totalDownloadBytes);
+          p.transfer(downloadLabel, recvBytes, totalDownloadBytes);
+        }
+      : undefined;
     try {
-      const all = await downloadAll(config.projectGuid);
+      const all = await downloadAll(config.projectGuid, onBytes);
       for (const a of plannedToApply) {
         if (a.kind === 'download' || a.kind === 'conflict') {
           const buf = all.get(a.path);
@@ -651,6 +668,10 @@ async function syncInner(
       }
     } catch (err) {
       errors.push(`Download batch failed: ${(err as Error).message}`);
+    } finally {
+      // Settle the bar even if the extracted-byte tally fell short of the
+      // estimate (the live line stays open until something hits 100% or finish()).
+      p?.finish();
     }
   }
 

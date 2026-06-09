@@ -31,6 +31,10 @@ class TerminalProgress implements ProgressReporter {
   /** True while an in-place transfer line is on screen and not yet committed. */
   private liveOpen = false;
   private lastRenderAt = 0;
+  /** The label of the current transfer session; a change starts a fresh one. */
+  private barLabel: string | null = null;
+  /** True once the current session hit 100% - late/overshoot ticks are dropped. */
+  private barSettled = false;
 
   phase(message: string): void {
     this.commitLive();
@@ -38,6 +42,17 @@ class TerminalProgress implements ProgressReporter {
   }
 
   transfer(label: string, doneBytes: number, totalBytes: number): void {
+    // A new label begins a fresh transfer session (e.g. downloads → uploads on
+    // the same reporter). Within a session, once we've drawn the 100% frame we
+    // drop any further ticks - download byte totals are estimated, so the wire
+    // can deliver a hair more or fewer bytes than expected and we don't want a
+    // late chunk reopening a second "100%" line.
+    if (label !== this.barLabel) {
+      this.barLabel = label;
+      this.barSettled = false;
+    }
+    if (this.barSettled) return;
+
     const finished = totalBytes > 0 && doneBytes >= totalBytes;
     // Throttle mid-flight redraws; always paint the first and final frames.
     const now = Date.now();
@@ -45,7 +60,10 @@ class TerminalProgress implements ProgressReporter {
     this.lastRenderAt = now;
     this.liveOpen = true;
     process.stdout.write('\r' + this.frame(label, doneBytes, totalBytes) + CLEAR_TO_EOL);
-    if (finished) this.commitLive();
+    if (finished) {
+      this.commitLive();
+      this.barSettled = true;
+    }
   }
 
   finish(): void {

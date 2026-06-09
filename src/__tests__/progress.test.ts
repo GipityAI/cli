@@ -70,4 +70,28 @@ describe('createProgressReporter', () => {
     const out = capture(true, (r) => r.transfer('Uploading', 0, 0));
     assert.match(out, /100%/);
   });
+
+  it('drops late/overshoot ticks after a session hits 100%', () => {
+    // Download byte totals are estimated, so the wire can deliver a hair more
+    // than expected; an extra tick past completion must not paint a 2nd line.
+    const out = capture(true, (r) => {
+      r.transfer('Downloading', 0, 10);
+      r.transfer('Downloading', 10, 10); // done → committed
+      r.transfer('Downloading', 11, 10); // overshoot → dropped
+      r.transfer('Downloading', 12, 10); // late tick → dropped
+    });
+    assert.equal(out.match(/100%/g)?.length, 1); // committed exactly once
+    assert.doesNotMatch(out, /11 B|12 B/);       // no >100% frame leaked
+  });
+
+  it('starts a fresh session when the label changes', () => {
+    // A settled download must not suppress the upload bar that follows.
+    const out = capture(true, (r) => {
+      r.transfer('Downloading', 10, 10); // settles the download session
+      r.transfer('Uploading', 3, 10);    // new label → fresh, must draw
+    });
+    assert.match(out, /Downloading/);
+    assert.match(out, /Uploading/);
+    assert.match(out, /30%/);
+  });
 });
