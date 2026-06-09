@@ -83,7 +83,10 @@ export function buildTemplateVars(v: TemplateVars): Record<string, string> {
     '{{DESCRIPTION_META}}': v.description ? `\n  <meta name="description" content="${safeDesc}">` : '',
     '{{OG_DESCRIPTION}}': v.description ? `\n  <meta property="og:description" content="${safeDesc}">` : '',
     '{{JSON_LD_BLOCK}}': `<script type="application/ld+json">\n${jsonLd}\n  </script>`,
-    '{{ANALYTICS_SCRIPT}}': `<script defer src="https://media.gipity.ai/client/v1/gipity.js" data-app="${v.projectGuid}"></script>`,
+    // `crossorigin="anonymous"` so SDK errors surface with a real message/stack
+    // (CORS mode) instead of a sanitized message-less "Script error". The CDN
+    // returns Access-Control-Allow-Origin:*, so it works on any app domain.
+    '{{ANALYTICS_SCRIPT}}': `<script defer crossorigin="anonymous" src="https://media.gipity.ai/client/v1/gipity.js" data-app="${v.projectGuid}"></script>`,
   };
 }
 
