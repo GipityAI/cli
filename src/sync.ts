@@ -566,18 +566,38 @@ async function applyUpload(
   }
 }
 
+/** Name of the optional per-project ignore file (gitignore-style: one pattern
+ *  per line, blank lines and `#` comments skipped). Patterns use the same
+ *  matcher as the config `ignore` list (see shouldIgnore) and let research
+ *  artifacts, scratch data, or vendored references live inside the project
+ *  directory without being synced (and therefore without being deployed). */
+export const GIPITY_IGNORE_FILE = '.gipityignore';
+
+export function readGipityIgnore(root: string): string[] {
+  const path = join(root, GIPITY_IGNORE_FILE);
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .map(line => line.replace(/^\.\//, '').replace(/^\//, ''));
+}
+
+/** The ignore list a sync/push actually runs with: the project config's
+ *  `ignore` (falling back to DEFAULT_SYNC_IGNORE when empty, so an empty list
+ *  never means "sync everything - node_modules, .git and all"), plus any
+ *  `.gipityignore` patterns. The ignore file itself never syncs. */
+export function effectiveIgnore(root: string, configIgnore: string[] | undefined): string[] {
+  const base = configIgnore && configIgnore.length ? configIgnore : DEFAULT_SYNC_IGNORE;
+  return [...base, GIPITY_IGNORE_FILE, ...readGipityIgnore(root)];
+}
+
 export async function sync(opts: SyncOptions = {}): Promise<SyncResult> {
   const config = requireConfig();
   const root = projectDir();
   const interactive = opts.interactive ?? process.stdout.isTTY ?? false;
 
-  // A config written with an empty `ignore` (older projects, or one produced
-  // by the one-off Home-fallback path) would make sync walk and hash the
-  // entire tree - node_modules, .git, caches and all. Fall back to the
-  // standard ignore set so an empty list never means "sync everything".
-  const ignore = config.ignore && config.ignore.length
-    ? config.ignore
-    : [...DEFAULT_SYNC_IGNORE];
+  const ignore = effectiveIgnore(root, config.ignore);
 
   const releaseLock = await acquireLock();
   try {
@@ -602,6 +622,14 @@ async function syncInner(
   const local = walkLocal(root, ignore, baseline.files);
   p?.phase('Checking Gipity for changes…');
   const remote = await fetchRemote(projectGuid);
+  // Ignored paths are invisible on BOTH sides: filtering only the local walk
+  // would classify a remote copy as "added" (pull it), then next pass as a
+  // local deletion (delete it remotely) - a churn loop. Filtering remote too
+  // means a path that synced before it was ignored just stays put remotely
+  // (delete it explicitly if it shouldn't be deployed).
+  for (const path of [...remote.keys()]) {
+    if (shouldIgnore(path, ignore)) remote.delete(path);
+  }
 
   // Hash everything we might classify ambiguously. Any local path also on
   // remote (and the remote has a hash) needs a local hash so size-match-but-
@@ -901,7 +929,7 @@ export async function pushFile(filePath: string): Promise<void> {
   const config = requireConfig();
   const root = projectDir();
   const rel = relative(root, filePath).replace(/\\/g, '/');
-  if (shouldIgnore(rel, config.ignore)) return;
+  if (shouldIgnore(rel, effectiveIgnore(root, config.ignore))) return;
 
   const baseline = readBaseline(config.projectGuid);
   const baseEntry = baseline.files[rel];

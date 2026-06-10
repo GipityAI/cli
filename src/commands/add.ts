@@ -167,7 +167,7 @@ export const addCommand = new Command('add')
   .argument('[name]', 'Template/kit key, OR a local directory path (./, ~/, or /abs). Omit for help; use --list for just the catalog.')
   .option('--title <title>', 'App title - templates only (defaults to project name)')
   .option('--description <desc>', 'App description for meta tags - templates only')
-  .option('--force', 'Templates only: overwrite any colliding files')
+  .option('--force', 'Templates only: install into a non-empty project (same-named files get a new version; other files are kept)')
   .option('--list', 'List the template/kit catalog and exit')
   .option('--json', 'Output as JSON')
   .addHelpText('after', () => catalogText() + '\n\n'

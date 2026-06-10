@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { plan, formatPlan, walkLocal, type BaselineEntry } from '../sync.js';
+import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, type BaselineEntry } from '../sync.js';
 
 type L = { size: number; mtime: string; sha256?: string };
 type R = { path: string; size: number; sha256: string | null; serverVersion: number; modified: string };
@@ -281,6 +281,77 @@ describe('walkLocal - nested-project boundary', () => {
       const result = walkLocal(root, ['.gipity.json'], {});
 
       assert.ok(result.has('a.txt'), 'the boundary check applies to subdirs, never the root itself');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('.gipityignore', () => {
+  it('readGipityIgnore parses patterns, skipping blanks and comments', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-ignore-'));
+    try {
+      writeFileSync(join(root, '.gipityignore'), [
+        '# research material',
+        '',
+        'twenty-repo',
+        './scratch/',
+        '/notes.local.md',
+        '*.bak',
+      ].join('\n'));
+      assert.deepEqual(readGipityIgnore(root), ['twenty-repo', 'scratch/', 'notes.local.md', '*.bak']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('readGipityIgnore returns [] when the file is absent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-ignore-'));
+    try {
+      assert.deepEqual(readGipityIgnore(root), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('effectiveIgnore merges config patterns with the ignore file and never syncs the file itself', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-ignore-'));
+    try {
+      writeFileSync(join(root, '.gipityignore'), 'vendored\n');
+      const merged = effectiveIgnore(root, ['node_modules']);
+      assert.ok(merged.includes('node_modules'));
+      assert.ok(merged.includes('vendored'));
+      assert.ok(merged.includes('.gipityignore'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('effectiveIgnore falls back to DEFAULT_SYNC_IGNORE when the config list is empty', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-ignore-'));
+    try {
+      const merged = effectiveIgnore(root, []);
+      assert.ok(merged.includes('node_modules'), 'empty config ignore must not mean "sync everything"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('walkLocal skips paths matched by .gipityignore patterns', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-ignore-'));
+    try {
+      writeFileSync(join(root, '.gipityignore'), 'reference\n*.scratch\n');
+      writeFileSync(join(root, 'index.html'), 'x');
+      mkdirSync(join(root, 'reference'));
+      writeFileSync(join(root, 'reference', 'big.txt'), 'y');
+      writeFileSync(join(root, 'data.scratch'), 'z');
+
+      const result = walkLocal(root, effectiveIgnore(root, []), {});
+
+      assert.ok(result.has('index.html'));
+      assert.equal(result.has('reference/big.txt'), false);
+      assert.equal(result.has('data.scratch'), false);
+      assert.equal(result.has('.gipityignore'), false, 'the ignore file itself never syncs');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

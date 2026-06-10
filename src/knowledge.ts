@@ -92,6 +92,8 @@ Every tool call returns its full output with that call. There is no output buffe
 
 Write files locally - hooks auto-push to Gipity on every save. Remote-generated files (images, audio from \`gipity chat\`) auto-pull. Use \`gipity sync\` if things get out of sync. Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
 
+To keep local-only material (research clones, scratch data, vendored references) in the project directory without syncing or deploying it, list it in a \`.gipityignore\` at the project root - gitignore-style, one pattern per line, \`#\` comments. Ignored paths are invisible to sync in both directions; anything that already synced before being ignored stays on the server until you delete it.
+
 ## Skills (detailed documentation)
 
 Run \`gipity skill list\` to see every skill. Run \`gipity skill read <name>\` to read one. Load the relevant skill before starting a task - they have the correct API patterns, code examples, and common mistakes.
