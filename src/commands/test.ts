@@ -109,13 +109,15 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
 export const testCommand = new Command('test')
   .description('Run tests')
   .argument('[path]', 'Test path filter (e.g. "api", "e2e/portal")')
+  .option('--filter <path>', 'Alias for the positional test path filter')
   .option('--timeout <ms>', 'Per-test timeout in ms', '30000')
   .option('--retry <n>', 'Retry failed tests N times', '0')
   .option('--no-sync', 'Skip sync-up before tests')
   .option('--json', 'Output as JSON')
-  .action((filterPath: string | undefined, opts) => run('Test', async () => {
+  .action((pathFilter: string | undefined, opts) => run('Test', async () => {
       const config = requireConfig();
       await syncBeforeAction(opts);
+      const filterPath = opts.filter || pathFilter;
 
       if (!opts.json) {
         console.log(bold(`Running tests: ${filterPath || 'all'}`));
@@ -155,6 +157,11 @@ export const testCommand = new Command('test')
       // (pollTestStatus already printed results incrementally)
 
       console.log('');
+
+      if (filterPath && data.total === 0 && data.results.length === 0) {
+        console.log(clrError(`No tests matched filter: ${filterPath}`));
+        process.exit(1);
+      }
 
       // Summary
       const parts: string[] = [];
