@@ -45,7 +45,7 @@ Prefer the cheapest option that works - CLI and sandbox are instant and free, ap
 3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|music>\` or \`gipity chat\`. \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) — pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it.
 4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
 
-You are the developer. Write files in this directory - they auto-sync to Gipity via hooks. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
+You are the developer. Write files in this directory - the Gipity Claude Code plugin's hooks auto-sync them to Gipity. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
 
 ## Use first-party services before reaching outside
 
@@ -90,7 +90,7 @@ Every tool call returns its full output with that call. There is no output buffe
 
 ## Files and sync
 
-Write files locally - hooks auto-push to Gipity on every save. Remote-generated files (images, audio from \`gipity chat\`) auto-pull. Use \`gipity sync\` if things get out of sync. Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
+Write files locally - the Gipity Claude Code plugin's hooks auto-push every save to Gipity and auto-pull remote changes (images, audio from \`gipity chat\`) before each turn. Use \`gipity sync\` if things get out of sync (or if the plugin isn't installed - \`gipity status --repair-hooks\` re-enables it). Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
 
 To keep local-only material (research clones, scratch data, vendored references) in the project directory without syncing or deploying it, list it in a \`.gipityignore\` at the project root - gitignore-style, one pattern per line, \`#\` comments. Ignored paths are invisible to sync in both directions; anything that already synced before being ignored stays on the server until you delete it.
 

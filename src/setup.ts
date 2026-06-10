@@ -2,11 +2,9 @@
  * Shared project setup helpers used by both `init` and `claude`.
  */
 import { resolve, join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { SCAFFOLD_HOOK_WARNING } from './prompts.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
-import { getConfig } from './config.js';
 
 export { SKILLS_CONTENT };
 
@@ -96,148 +94,136 @@ export const PERMISSIONS_SETTINGS = {
   },
 };
 
-/** Absolute path to the bundled capture-runner script. Resolved once at
- *  install time so hook commands embed a stable `node <path>` command
- *  rather than `gipity …` (which would require re-running `gipity` every
- *  hook fire). Works whether the CLI is installed globally, linked, or
- *  run from a build output - `import.meta.url` always points at this
- *  file under `dist/`, and the runner sits at `dist/hooks/`. */
-export function resolveCaptureRunnerPath(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, 'hooks', 'capture-runner.js');
+// Hooks now ship in the Gipity Claude Code plugin (GipityAI/claude-plugin,
+// which doubles as its own marketplace): file sync (push on edit, pull on
+// prompt) and `gipity claude` session capture, every script guarded to no-op
+// outside Gipity projects. Past CLI versions wrote these hook blocks directly
+// into each project's .claude/settings.json with absolute paths baked in -
+// that left orphaned entries behind on uninstall (the CLI keeps no inventory
+// of projects it touched) and could even land in the user-global settings
+// when a gipity command ran from $HOME. The plugin replaces all of it with
+// one declarative enablement entry: Claude Code resolves script paths via
+// ${CLAUDE_PLUGIN_ROOT}, fetches the marketplace non-interactively at launch
+// (headless included), and uninstall/disable removes every hook at once.
+export const GIPITY_PLUGIN_ID = 'gipity@gipity';
+export const GIPITY_MARKETPLACE_NAME = 'gipity';
+export const GIPITY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
+
+/** True for hook commands the CLI itself wrote into settings.json in past
+ *  versions. Matched by signature so migration strips exactly our own
+ *  entries and never touches user-authored hooks. */
+export function isGipityManagedHookCommand(command: string): boolean {
+  return (
+    // Capture hooks: bare absolute runner path or the fire-time launcher.
+    command.includes('capture-runner.js') ||
+    // File-sync push one-liner (spawn('gipity',['push',p,'--quiet'],...)).
+    command.includes("'gipity',['push'") ||
+    // Pull-on-prompt one-liner, current and older variants.
+    command.includes('gipity sync --json') ||
+    command.includes('gipity sync down --json') ||
+    // Scaffold nudge (retired entirely - CLAUDE.md carries the rule).
+    command.includes("['gipity.yaml','src','functions','package.json']")
+  );
 }
 
-// Cross-platform hooks using node -e (no bash/jq dependency).
-//
-// Two categories:
-//   1. File-sync hooks (PreToolUse / PostToolUse / UserPromptSubmit):
-//      installed unconditionally. Scaffold reminder + push/pull. Not
-//      related to conversation capture.
-//   2. Capture hooks (SessionStart / Stop / SubagentStop / SessionEnd, plus
-//      a throttled PostToolUse for mid-run flushing): mirror a terminal
-//      Claude Code session into the Gipity DB so the web CLI can display it
-//      read-only. The PostToolUse capture entry is merged alongside the
-//      file-sync one (see setupClaudeHooks). Toggled by the `captureHooks`
-//      field in `.gipity.json` - default on.
-export const HOOKS_SETTINGS = {
-  hooks: {
-    PreToolUse: [
-      {
-        // Soft scaffold reminder. If this is a Gipity project (has
-        // .gipity.json) AND has no scaffold markers (gipity.yaml, src/,
-        // functions/, package.json), nudge the agent to scaffold first
-        // when building an app. Non-blocking - exit 0 always; stderr is
-        // visible to Claude as an advisory. Auto-quiet once any scaffold
-        // marker appears, so it doesn't spam during normal editing.
-        matcher: 'Write|Edit',
-        hooks: [{
-          type: 'command',
-          // Embed warning as a single-quoted JS string (safe: shell double
-          // quotes survive, and SCAFFOLD_HOOK_WARNING is plain ASCII without
-          // single quotes or backslashes).
-          command: `node -e "const fs=require('fs');if(!fs.existsSync('.gipity.json'))process.exit(0);const m=['gipity.yaml','src','functions','package.json'].some(p=>fs.existsSync(p));if(m)process.exit(0);process.stderr.write('${SCAFFOLD_HOOK_WARNING.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}\\n');process.exit(0)"`,
-        }],
-      },
-    ],
-    PostToolUse: [
-      {
-        // File sync for Write/Edit - push any edited file back to the
-        // cloud workspace so web previews see the change.
-        matcher: 'Write|Edit',
-        hooks: [{
-          type: 'command',
-          command: `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d).tool_input?.file_path;if(!p||!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').spawn('gipity',['push',p,'--quiet'],{stdio:'ignore',detached:true,shell:true}).unref()}catch{}})"`,
-        }],
-      },
-    ],
-    UserPromptSubmit: [
-      {
-        // Pull down any cloud-side file changes before the next turn so
-        // the agent sees current state.
-        matcher: '',
-        hooks: [{
-          type: 'command',
-          command: `node -e "if(!require('fs').existsSync('.gipity.json'))process.exit(0);require('child_process').exec('gipity sync --json',(e,o)=>{if(e)process.exit(0);try{const r=JSON.parse(o);if(r.applied>0)console.log(JSON.stringify({systemMessage:'Gipity sync: '+(r.summary||'Files changed.')}))}catch{}})"`,
-        }],
-      },
-    ],
-  },
-};
+/** Remove Gipity-managed hook entries from a parsed settings object,
+ *  preserving user-authored hooks untouched. Returns true if anything
+ *  was removed. Exported for tests and uninstall. */
+export function stripGipityHooks(settings: Record<string, any>): boolean {
+  const hooks = settings.hooks;
+  if (!hooks || typeof hooks !== 'object') return false;
+  let changed = false;
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    const kept = groups
+      .map((group: any) => {
+        if (!Array.isArray(group?.hooks)) return group;
+        const remaining = group.hooks.filter(
+          (h: any) => !(typeof h?.command === 'string' && isGipityManagedHookCommand(h.command)),
+        );
+        if (remaining.length !== group.hooks.length) changed = true;
+        return { ...group, hooks: remaining };
+      })
+      .filter((group: any) => !Array.isArray(group?.hooks) || group.hooks.length > 0);
+    if (kept.length === 0) delete hooks[event];
+    else hooks[event] = kept;
+  }
+  if (Object.keys(hooks).length === 0) delete settings.hooks;
+  return changed;
+}
 
-/** Tiny launcher embedded in each capture hook command. The runner path
- *  baked into settings.json goes stale whenever the CLI install moves -
- *  e.g. `gipity uninstall` wipes ~/.gipity/local/ but leaves every
- *  project's .claude/settings.json pointing at it, and a bare `node
- *  <missing-path>` then surfaces as a "Stop hook error" in the user's
- *  Claude Code session. So instead of exec'ing the baked path directly,
- *  re-resolve at fire time: try the baked path, fall back to the standard
- *  bootstrap install location, and exit 0 silently if neither exists
- *  (capture is a mirror feature - it must never break a session). Paths
- *  self-heal the next time setupClaudeHooks runs (gipity claude / init /
- *  status / relay daemon). Single-quotes only, so the whole script can sit
- *  inside shell double quotes cross-platform. */
-const CAPTURE_LAUNCHER =
-  "let a=process.argv.slice(1),f=require('fs'),fb=require('path').join(require('os').homedir(),'.gipity','local','node_modules','gipity','dist','hooks','capture-runner.js'),r=f.existsSync(a[0])?a[0]:f.existsSync(fb)?fb:null;if(!r)process.exit(0);let s=require('child_process').spawnSync(process.execPath,[r,...a.slice(1)],{stdio:'inherit'});process.exit(s.status??0)";
+function readSettingsFile(path: string): Record<string, any> {
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'));
+  } catch {
+    return {}; // corrupted - start fresh rather than crash setup
+  }
+}
 
-/** Build the four lifecycle-hook entries that invoke the bundled capture
- *  runner. Kept as a factory rather than a constant so the absolute
- *  runner path is resolved at install time, reflecting the CLI's current
- *  install location. */
-function buildCaptureHookEntries(source: string): Record<string, any[]> {
-  const runner = resolveCaptureRunnerPath();
-  const cmd = (event: string): string =>
-    `node -e "${CAPTURE_LAUNCHER}" ${JSON.stringify(runner)} ${source} ${event}`;
-  return {
-    SessionStart: [{ hooks: [{ type: 'command', command: cmd('session-start') }] }],
-    Stop:         [{ hooks: [{ type: 'command', command: cmd('stop') }] }],
-    SubagentStop: [{ hooks: [{ type: 'command', command: cmd('subagent-stop') }] }],
-    SessionEnd:   [{ hooks: [{ type: 'command', command: cmd('session-end') }] }],
-    // Mid-run incremental flush (matcher '' = every tool). Stop/SessionEnd only
-    // fire on a CLEAN exit, so without this a session that's killed/crashes mid-run
-    // (e.g. a long headless build that times out) loses its whole transcript. The
-    // runner throttles this so it's cheap. Merged alongside the file-sync PostToolUse.
-    PostToolUse:  [{ matcher: '', hooks: [{ type: 'command', command: cmd('post-tool-use') }] }],
-  };
+/** Ensure the Gipity plugin is enabled at user scope (~/.claude/settings.json)
+ *  via the documented declarative keys: register the marketplace under
+ *  `extraKnownMarketplaces` and enable the plugin under `enabledPlugins`.
+ *  Claude Code fetches both non-interactively at next launch. An explicit
+ *  user disable (`"gipity@gipity": false`) is respected unless `force` -
+ *  the user said no, and `gipity status --repair-hooks` is the deliberate
+ *  way to say yes again. Also strips legacy Gipity hook blocks that older
+ *  CLI versions left in the user-global settings. */
+export function ensureGipityPlugin(force = false): void {
+  const claudeDir = join(homedir(), '.claude');
+  const settingsPath = join(claudeDir, 'settings.json');
+  const settings = readSettingsFile(settingsPath);
+
+  let changed = stripGipityHooks(settings);
+
+  const marketplaces = settings.extraKnownMarketplaces ?? (settings.extraKnownMarketplaces = {});
+  if (!marketplaces[GIPITY_MARKETPLACE_NAME]) {
+    marketplaces[GIPITY_MARKETPLACE_NAME] = {
+      source: { source: 'github', repo: GIPITY_MARKETPLACE_REPO },
+    };
+    changed = true;
+  }
+
+  const enabled = settings.enabledPlugins ?? (settings.enabledPlugins = {});
+  if (enabled[GIPITY_PLUGIN_ID] !== true && (force || !(GIPITY_PLUGIN_ID in enabled))) {
+    enabled[GIPITY_PLUGIN_ID] = true;
+    changed = true;
+  }
+
+  if (!changed) return;
+  mkdirSync(claudeDir, { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
 export function setupClaudeHooks(): void {
-  const claudeDir = resolve(process.cwd(), '.claude');
+  // All hooks ship in the plugin - enable it at user scope (and clean up any
+  // legacy hook blocks in the user-global settings while we're there).
+  ensureGipityPlugin();
+
+  // Never treat the home directory as a project. A gipity command run from
+  // $HOME used to write "project" hooks straight into the user-global
+  // ~/.claude/settings.json; permissions are project-scoped, so at $HOME
+  // there is nothing project-level left to do.
+  const cwd = resolve(process.cwd());
+  if (cwd === resolve(homedir())) return;
+
+  const claudeDir = join(cwd, '.claude');
   mkdirSync(claudeDir, { recursive: true });
-
   const settingsPath = join(claudeDir, 'settings.json');
-  let settings: Record<string, unknown> = {};
+  const settings = readSettingsFile(settingsPath);
 
-  if (existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    } catch {
-      // corrupted - overwrite
-    }
-  }
-
-  // Merge capture hooks in only when the project opts in (default true).
-  // `captureHooks === false` in `.gipity.json` disables the mirror-to-web
-  // feature for this project without affecting the file-sync hooks.
-  const captureEnabled = getConfig()?.captureHooks !== false;
-  const captureEntries = captureEnabled ? buildCaptureHookEntries('claude-code') : {};
-
-  // Merge per-event arrays rather than spread-overwriting: capture and file-sync
-  // both register PostToolUse, and a plain spread would drop one of them.
-  const mergedHooks: Record<string, any[]> = { ...HOOKS_SETTINGS.hooks };
-  for (const [event, entries] of Object.entries(captureEntries)) {
-    mergedHooks[event] = [...(mergedHooks[event] ?? []), ...entries];
-  }
-  settings.hooks = mergedHooks;
+  // Migration: remove the hook blocks older CLI versions wrote here.
+  stripGipityHooks(settings);
 
   // Merge permissions (additive - preserve user's existing allows)
-  const perms = (settings as Record<string, any>).permissions || {};
+  const perms = settings.permissions || {};
   if (!perms.allow) perms.allow = [];
   for (const entry of PERMISSIONS_SETTINGS.permissions.allow) {
     if (!perms.allow.includes(entry)) {
       perms.allow.push(entry);
     }
   }
-  (settings as Record<string, any>).permissions = perms;
+  settings.permissions = perms;
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }

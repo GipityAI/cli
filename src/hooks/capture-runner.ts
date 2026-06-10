@@ -6,8 +6,10 @@
  * session into the Gipity server so the web CLI can display it read-only.
  *
  * Not a user-facing `gipity` subcommand by design: users never invoke
- * this directly. `setupClaudeHooks` wires up hook entries that call
- * `node <absolute-path>/capture-runner.js <source> <event>`.
+ * this directly. The Gipity Claude Code plugin's capture hook script
+ * (claude-plugin hooks/scripts/capture.cjs) resolves this file inside the
+ * installed CLI at fire time and runs it - so the capture logic versions
+ * with the CLI, not the plugin.
  *
  * Usage:
  *   node capture-runner.js <source> <event>

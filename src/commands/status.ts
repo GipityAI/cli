@@ -1,48 +1,37 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { homedir } from 'os';
 import { getAuth, getTimeRemaining } from '../auth.js';
 import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
-import { HOOKS_SETTINGS, setupClaudeHooks } from '../setup.js';
+import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin } from '../setup.js';
 
-/** Inspect `.claude/settings.json` against the current `HOOKS_SETTINGS`.
- *  Returns the set of hook-event names that are missing or mismatched. */
-function checkCaptureHooks(cwd: string): { missing: string[]; ok: boolean } {
-  const path = join(cwd, '.claude', 'settings.json');
-  if (!existsSync(path)) return { missing: Object.keys(HOOKS_SETTINGS.hooks), ok: false };
-
-  let settings: any;
-  try { settings = JSON.parse(readFileSync(path, 'utf-8')); }
-  catch { return { missing: Object.keys(HOOKS_SETTINGS.hooks), ok: false }; }
-
-  const actualHooks = settings?.hooks ?? {};
-  const missing: string[] = [];
-  for (const [event, expectedGroups] of Object.entries(HOOKS_SETTINGS.hooks)) {
-    const actualGroups: any[] = Array.isArray(actualHooks[event]) ? actualHooks[event] : [];
-    const expectedCmds = new Set(
-      (expectedGroups as any[]).flatMap(g => (g.hooks ?? []).map((h: any) => h.command)),
-    );
-    const actualCmds = new Set(
-      actualGroups.flatMap(g => (g.hooks ?? []).map((h: any) => h.command)),
-    );
-    // Every expected command must be present. Users can add their own.
-    for (const cmd of expectedCmds) {
-      if (!actualCmds.has(cmd)) { missing.push(event); break; }
-    }
+/** Hooks ship in the Gipity Claude Code plugin now - "installed" means the
+ *  user-scope settings register the marketplace and enable the plugin.
+ *  Claude Code fetches/updates the plugin itself at launch. */
+function checkGipityPlugin(): { missing: string[]; ok: boolean } {
+  const path = join(homedir(), '.claude', 'settings.json');
+  let settings: any = {};
+  if (existsSync(path)) {
+    try { settings = JSON.parse(readFileSync(path, 'utf-8')); } catch { /* treat as empty */ }
   }
+  const missing: string[] = [];
+  if (!settings?.extraKnownMarketplaces?.[GIPITY_MARKETPLACE_NAME]) missing.push('marketplace');
+  if (settings?.enabledPlugins?.[GIPITY_PLUGIN_ID] !== true) missing.push('plugin');
   return { missing, ok: missing.length === 0 };
 }
 
 export const statusCommand = new Command('status')
   .description('Show project and login status')
   .option('--json', 'Output as JSON')
-  .option('--repair-hooks', 'Reinstall the capture hooks in .claude/settings.json if missing')
+  .option('--repair-hooks', 'Re-enable the Gipity Claude Code plugin (hooks) if missing or disabled')
   .action(async (opts) => {
     const config = getConfig();
     const auth = getAuth();
     const cwd = resolve(process.cwd());
-    const hookCheck = config ? checkCaptureHooks(cwd) : null;
+    void cwd;
+    const hookCheck = config ? checkGipityPlugin() : null;
 
     if (opts.json) {
       console.log(JSON.stringify({
@@ -58,7 +47,7 @@ export const statusCommand = new Command('status')
           expiresAt: auth.expiresAt,
           valid: new Date(auth.expiresAt).getTime() > Date.now(),
         } : null,
-        capture_hooks: hookCheck,
+        plugin: hookCheck,
       }, null, 2));
       return;
     }
@@ -81,14 +70,16 @@ export const statusCommand = new Command('status')
 
     if (hookCheck) {
       if (hookCheck.ok) {
-        console.log(`${muted('Hooks:')}   ${success('capture hooks installed')}`);
+        console.log(`${muted('Hooks:')}   ${success(`Gipity plugin enabled (${GIPITY_PLUGIN_ID})`)}`);
       } else if (opts.repairHooks) {
+        // force: an explicit repair request overrides a previous disable.
+        ensureGipityPlugin(true);
         setupClaudeHooks();
-        console.log(`${muted('Hooks:')}   ${success('repaired - re-installed capture hooks')}`);
+        console.log(`${muted('Hooks:')}   ${success('repaired - Gipity plugin re-enabled')}`);
       } else {
-        console.log(`${muted('Hooks:')}   ${warning(`missing/modified: ${hookCheck.missing.join(', ')}`)}`);
-        console.log(muted('Run `gipity status --repair-hooks` to re-install.'));
-        console.log(muted('Without these, web CLI dispatches can\'t show Claude Code output.'));
+        console.log(`${muted('Hooks:')}   ${warning(`Gipity plugin not enabled (missing: ${hookCheck.missing.join(', ')})`)}`);
+        console.log(muted('Run `gipity status --repair-hooks` to re-enable.'));
+        console.log(muted('Without it, files don\'t auto-sync and web CLI dispatches can\'t show Claude Code output.'));
       }
     }
   });

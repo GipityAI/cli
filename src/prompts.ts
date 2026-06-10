@@ -229,16 +229,6 @@ export function buildFreshWrap(contextBlock: string, userMsg: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// PreToolUse soft-warning hook (advisory message printed to stderr)
-// ---------------------------------------------------------------------------
-
-/** Plain ASCII, no apostrophes or backslashes - embedded inside a node -e shell command. */
-export const SCAFFOLD_HOOK_WARNING =
-  `[gipity] Heads up: this project has no app yet. If you are building an app/game/API to deploy, ` +
-  `stop and run: gipity add <${TEMPLATE_KEY_PATTERN}>  (default: web-simple). ` +
-  `If this is a one-off task (analysis, data, PDFs, scratch work), proceed.`;
-
-// ---------------------------------------------------------------------------
 // Per-project CLAUDE.md / AGENTS.md body.
 //
 // The content (`SKILLS_CONTENT`) is sourced from

@@ -1,14 +1,15 @@
 /**
  * `gipity uninstall` - true reset. Stops the relay daemon, removes the
  * platform autostart service, revokes the device on the server (best-effort),
- * and wipes ~/.gipity/. Never touches ~/GipityProjects/ - your local
- * project trees are yours to keep or remove yourself.
+ * removes the Gipity Claude Code plugin enablement (which removes all Gipity
+ * hooks at once), and wipes ~/.gipity/. Never touches ~/GipityProjects/ -
+ * your local project trees are yours to keep or remove yourself.
  *
  * Does not touch the npm-installed shim - the user removes that separately
  * via `npm uninstall -g gipity`.
  */
 import { Command } from 'commander';
-import { existsSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, rmSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
 import { homedir, platform as osPlatform } from 'os';
 import { join, resolve } from 'path';
 import { spawnSync } from 'child_process';
@@ -18,6 +19,32 @@ import { confirm, getAutoConfirm } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
 import * as relayState from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
+import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, stripGipityHooks } from '../setup.js';
+
+/** Remove Gipity's entries from the user-scope Claude Code settings: the
+ *  plugin enablement, the marketplace registration, and any legacy hook
+ *  blocks older CLI versions wrote there. Surgical - everything else in the
+ *  file (the user's own permissions, hooks, other plugins) is untouched. */
+function removeGipityPluginConfig(): boolean {
+  const settingsPath = join(homedir(), '.claude', 'settings.json');
+  if (!existsSync(settingsPath)) return false;
+  let settings: Record<string, any>;
+  try { settings = JSON.parse(readFileSync(settingsPath, 'utf-8')); } catch { return false; }
+
+  let changed = stripGipityHooks(settings);
+  if (settings.enabledPlugins && GIPITY_PLUGIN_ID in settings.enabledPlugins) {
+    delete settings.enabledPlugins[GIPITY_PLUGIN_ID];
+    if (Object.keys(settings.enabledPlugins).length === 0) delete settings.enabledPlugins;
+    changed = true;
+  }
+  if (settings.extraKnownMarketplaces?.[GIPITY_MARKETPLACE_NAME]) {
+    delete settings.extraKnownMarketplaces[GIPITY_MARKETPLACE_NAME];
+    if (Object.keys(settings.extraKnownMarketplaces).length === 0) delete settings.extraKnownMarketplaces;
+    changed = true;
+  }
+  if (changed) writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  return changed;
+}
 
 function resolveCliPath(): string {
   return resolve(process.argv[1] ?? 'gipity');
@@ -88,6 +115,7 @@ export const uninstallCommand = new Command('uninstall')
     console.log(`• Stop the running relay daemon (if any)`);
     console.log(`• Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
     console.log(`• Revoke this device on the server (best-effort)`);
+    console.log(`• Remove the Gipity Claude Code plugin enablement (all Gipity hooks)`);
     console.log(`• Delete ${gipityDir}/`);
     console.log('');
     console.log(`${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
@@ -115,7 +143,14 @@ export const uninstallCommand = new Command('uninstall')
     await revokeDeviceBestEffort();
     console.log(`${success('Device revoked on server (or was already revoked).')}`);
 
-    // 4. Wipe ~/.gipity/.
+    // 4. Remove the Claude Code plugin enablement + any legacy hook blocks.
+    if (removeGipityPluginConfig()) {
+      console.log(`${success('Gipity Claude Code plugin disabled (hooks removed).')}`);
+    } else {
+      console.log(`${muted('No Gipity entries in Claude Code settings.')}`);
+    }
+
+    // 5. Wipe ~/.gipity/.
     if (existsSync(gipityDir)) {
       try {
         rmSync(gipityDir, { recursive: true, force: true });
