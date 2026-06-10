@@ -155,6 +155,12 @@ export function isDaemonRunning(): boolean {
     const pid = parseInt(raw, 10);
     // A corrupt/empty pid file is stale - clear it so it can't trap a restart.
     if (!pid || isNaN(pid)) { try { unlinkSync(RELAY_PID_FILE); } catch { /* ignore */ } return false; }
+    // Our OWN pid in the file = stale from a previous incarnation, NOT a live peer.
+    // In a container the daemon is always pid 1, so `--restart` brings us back as
+    // pid 1 with the dead run's relay.pid (also 1) left behind; process.kill(1,0)
+    // would say "alive" (it's us) and trap us in a permanent restart loop. We write
+    // our pid only AFTER this check, so finding it here means the file predates us.
+    if (pid === process.pid) { try { unlinkSync(RELAY_PID_FILE); } catch { /* ignore */ } return false; }
     // `kill 0` sends no signal but checks if the PID is addressable.
     process.kill(pid, 0);
     return true;

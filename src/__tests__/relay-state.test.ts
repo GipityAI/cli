@@ -131,14 +131,34 @@ describe('relay daemon pid lock: stale-file recovery', () => {
     assert.equal(existsSync(pidPath), false, 'corrupt pid file should be cleared');
   });
 
-  it('keeps the pid file and reports running for a live process', async () => {
+  it('keeps the pid file and reports running for a DIFFERENT live process', async () => {
     const { state, home } = await fresh();
     const dir = join(home, '.gipity');
     mkdirSync(dir, { recursive: true });
-    state.writeDaemonPid(process.pid); // our own (live) pid
-    const pidPath = join(dir, 'relay.pid');
+    // A genuinely-other live process (not us): a long-lived child.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
+    const livePid = child.pid!;
+    try {
+      const pidPath = join(dir, 'relay.pid');
+      writeFileSync(pidPath, String(livePid));
+      assert.equal(state.isDaemonRunning(), true, 'a different live pid → running');
+      assert.ok(existsSync(pidPath), 'live pid file must NOT be cleared');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
 
-    assert.equal(state.isDaemonRunning(), true, 'live pid → running');
-    assert.ok(existsSync(pidPath), 'live pid file must NOT be cleared');
+  it('treats OUR OWN pid in the file as stale (the container restart case)', async () => {
+    // In a container the daemon is always pid 1, so a --restart brings us back as
+    // pid 1 with the dead run's relay.pid (also 1). isDaemonRunning() must NOT read
+    // that as "a live peer" (it's us) - it would trap the daemon in a restart loop.
+    const { state, home } = await fresh();
+    const dir = join(home, '.gipity');
+    mkdirSync(dir, { recursive: true });
+    const pidPath = join(dir, 'relay.pid');
+    writeFileSync(pidPath, String(process.pid)); // our own pid = a leftover, not a peer
+
+    assert.equal(state.isDaemonRunning(), false, 'own pid → stale, not running');
+    assert.equal(existsSync(pidPath), false, 'own-pid file should be cleared so restart can proceed');
   });
 });

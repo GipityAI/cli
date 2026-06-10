@@ -21,7 +21,7 @@
  * See docs/feature-backlog/gipity-relay-phases.md (Phase A Step 7).
  */
 import { spawn, ChildProcess } from 'child_process';
-import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, closeSync, openSync } from 'fs';
+import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, closeSync, openSync, unlinkSync } from 'fs';
 import { stat, readFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { homedir, hostname, platform as osPlatform } from 'os';
@@ -29,7 +29,6 @@ import { join } from 'path';
 import { getApiBaseOverride, getConfig } from '../config.js';
 import { getProjectsRoot } from './paths.js';
 import { setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
-import { sync } from '../sync.js';
 import { getAuth, readAuthFresh } from '../auth.js';
 import { post } from '../api.js';
 import * as state from './state.js';
@@ -60,6 +59,9 @@ const BACKOFF_BASE_MS         = parseInt(process.env.GIPITY_RELAY_BACKOFF_BASE_M
 const BACKOFF_MAX_MS          = parseInt(process.env.GIPITY_RELAY_BACKOFF_MAX_MS || '30000', 10);
 const CANCEL_POLL_INTERVAL_MS = parseInt(process.env.GIPITY_RELAY_CANCEL_POLL_MS || '3000', 10);
 const MAX_CONCURRENT_DISPATCHES = Math.max(1, parseInt(process.env.GIPITY_RELAY_MAX_CONCURRENT || '6', 10));
+// Cap how long the pre-Claude project sync (and the post-dispatch push-back) may
+// run before we kill it - a stalled sync must never hang a dispatch forever.
+const PROJECT_SYNC_TIMEOUT_MS = parseInt(process.env.GIPITY_RELAY_SYNC_TIMEOUT_MS || '120000', 10);
 
 // ─── HTTP helpers ──────────────────────────────────────────────────────
 // Device-auth fetch lives in ./device-http.ts - shared with the capture
@@ -649,13 +651,33 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   await killRunningForConv(d.conversation_guid);
 
   let cwd: string;
+  let bootstrapped: boolean;
   try {
-    cwd = await resolveCwdForProject(d);
-    log('debug', 'resolved project cwd', { id: d.short_guid, project: d.project_slug, cwd });
+    ({ cwd, bootstrapped } = await resolveCwdForProject(d));
+    log('debug', 'resolved project cwd', { id: d.short_guid, project: d.project_slug, cwd, bootstrapped });
   } catch (err: any) {
     log('error', 'could not resolve project cwd', { id: d.short_guid, err: err?.message });
     await ack(d.short_guid, 'error', `Could not materialize project locally: ${err?.message || err}`);
     return;
+  }
+
+  // Explicit, user-visible, timeout-bounded project sync BEFORE starting Claude -
+  // only on a freshly bootstrapped dir (the files aren't there yet). Pull the
+  // project's files first so Claude works against the real tree; a hung/slow sync
+  // is killed at PROJECT_SYNC_TIMEOUT_MS and reported instead of silently stalling
+  // the dispatch (the old in-process bootstrap sync could hang forever).
+  if (bootstrapped) {
+    await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Syncing project files…' }]);
+    try {
+      await spawnSync(cwd, PROJECT_SYNC_TIMEOUT_MS);
+      await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Project files synced.' }]);
+    } catch (err: any) {
+      const msg = `project sync ${err?.message || 'failed'}`;
+      log('error', 'project sync failed - aborting dispatch', { id: d.short_guid, err: err?.message });
+      await postIngest(d.conversation_guid, [{ kind: 'system', content: `Claude Code not started - ${msg}` }]);
+      await ack(d.short_guid, 'error', msg);
+      return;
+    }
   }
 
   // Build argv for `gipity claude -p …` (or with --resume). No shell - argv
@@ -758,7 +780,7 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // this sync redundant for that case.
   if (!spawnErr) {
     try {
-      await spawnSync(cwd);
+      await spawnSync(cwd, PROJECT_SYNC_TIMEOUT_MS);
     } catch (err: any) {
       log('warn', 'sync after dispatch failed', { id: d.short_guid, err: err?.message });
     }
@@ -793,7 +815,7 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
  * user never has to pre-register a project. This replaces the old
  * per-project allowlist.
  */
-async function resolveCwdForProject(d: ClaimedDispatch): Promise<string> {
+async function resolveCwdForProject(d: ClaimedDispatch): Promise<{ cwd: string; bootstrapped: boolean }> {
   // Defense-in-depth: server-side slugify() already restricts slugs to
   // [a-z0-9-]{3,50}, but if that ever weakens, an unvalidated slug here
   // means `join(root, "../../etc")` writes outside the projects root on
@@ -808,11 +830,11 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<string> {
   if (existsSync(configPath)) {
     try {
       const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
-      if (cfg.projectGuid === d.project_guid) return path;
+      if (cfg.projectGuid === d.project_guid) return { cwd: path, bootstrapped: false };
       log('warn', 'project dir exists but guid mismatch - using it anyway', {
         path, expected: d.project_guid, found: cfg.projectGuid,
       });
-      return path;
+      return { cwd: path, bootstrapped: false };
     } catch { /* fall through to re-bootstrap */ }
   }
 
@@ -838,15 +860,13 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<string> {
     setupClaudeMd();
     setupAgentsMd();
     setupGitignore();
-    try {
-      await sync({ interactive: false });
-    } catch (err: any) {
-      log('warn', 'initial sync failed; project dir created but empty', { err: err?.message });
-    }
   } finally {
     process.chdir(origCwd);
   }
-  return path;
+  // Sync is NOT done here: the dispatch handler runs it as an explicit, visible,
+  // timeout-bounded step (a blocking in-process sync here used to hang the whole
+  // dispatch with no timeout and no user feedback).
+  return { cwd: path, bootstrapped: true };
 }
 
 /** Registry of live Claude children, keyed by dispatch short_guid. The
@@ -902,7 +922,7 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
  *  back to VFS. Runs as a child so we inherit sync's cwd-walk for config
  *  resolution (the daemon itself doesn't chdir into projects).
  *  Non-blocking on failure - caller catches and logs. */
-async function spawnSync(cwd: string): Promise<void> {
+async function spawnSync(cwd: string, timeoutMs?: number): Promise<void> {
   const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || 'gipity';
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, ['sync', '--json'], {
@@ -913,17 +933,30 @@ async function spawnSync(cwd: string): Promise<void> {
     // Drain pipes so the child doesn't stall on a full buffer.
     let stdoutLen = 0;
     let stderrBuf = '';
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (fn: () => void) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); fn(); };
+    // A sync that never returns must not hang the dispatch forever. Kill the child
+    // and clear its sync.lock (a SIGKILL'd `gipity sync` leaves the lock behind,
+    // which would make the next sync wait 30s on a dead holder).
+    if (timeoutMs) {
+      timer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* gone */ }
+        try { unlinkSync(join(cwd, '.gipity', 'sync.lock')); } catch { /* not there */ }
+        finish(() => reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`)));
+      }, timeoutMs);
+    }
     child.stdout?.on('data', (b: Buffer) => { stdoutLen += b.length; });
     child.stderr?.on('data', (b: Buffer) => { stderrBuf += b.toString('utf-8'); });
-    child.on('error', (err) => reject(err));
-    child.on('exit', (code) => {
+    child.on('error', (err) => finish(() => reject(err)));
+    child.on('exit', (code) => finish(() => {
       if (code === 0) {
-        log('info', 'sync after dispatch', { cwd, stdoutLen });
+        log('info', 'sync done', { cwd, stdoutLen });
         resolve();
       } else {
         reject(new Error(`gipity sync exited ${code}${stderrBuf ? `: ${stderrBuf.trim().slice(0, 300)}` : ''}`));
       }
-    });
+    }));
   });
 }
 
