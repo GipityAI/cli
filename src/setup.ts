@@ -164,13 +164,29 @@ export const HOOKS_SETTINGS = {
   },
 };
 
+/** Tiny launcher embedded in each capture hook command. The runner path
+ *  baked into settings.json goes stale whenever the CLI install moves -
+ *  e.g. `gipity uninstall` wipes ~/.gipity/local/ but leaves every
+ *  project's .claude/settings.json pointing at it, and a bare `node
+ *  <missing-path>` then surfaces as a "Stop hook error" in the user's
+ *  Claude Code session. So instead of exec'ing the baked path directly,
+ *  re-resolve at fire time: try the baked path, fall back to the standard
+ *  bootstrap install location, and exit 0 silently if neither exists
+ *  (capture is a mirror feature - it must never break a session). Paths
+ *  self-heal the next time setupClaudeHooks runs (gipity claude / init /
+ *  status / relay daemon). Single-quotes only, so the whole script can sit
+ *  inside shell double quotes cross-platform. */
+const CAPTURE_LAUNCHER =
+  "let a=process.argv.slice(1),f=require('fs'),fb=require('path').join(require('os').homedir(),'.gipity','local','node_modules','gipity','dist','hooks','capture-runner.js'),r=f.existsSync(a[0])?a[0]:f.existsSync(fb)?fb:null;if(!r)process.exit(0);let s=require('child_process').spawnSync(process.execPath,[r,...a.slice(1)],{stdio:'inherit'});process.exit(s.status??0)";
+
 /** Build the four lifecycle-hook entries that invoke the bundled capture
  *  runner. Kept as a factory rather than a constant so the absolute
  *  runner path is resolved at install time, reflecting the CLI's current
  *  install location. */
 function buildCaptureHookEntries(source: string): Record<string, any[]> {
   const runner = resolveCaptureRunnerPath();
-  const cmd = (event: string): string => `node ${JSON.stringify(runner)} ${source} ${event}`;
+  const cmd = (event: string): string =>
+    `node -e "${CAPTURE_LAUNCHER}" ${JSON.stringify(runner)} ${source} ${event}`;
   return {
     SessionStart: [{ hooks: [{ type: 'command', command: cmd('session-start') }] }],
     Stop:         [{ hooks: [{ type: 'command', command: cmd('stop') }] }],
