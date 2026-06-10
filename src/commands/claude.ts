@@ -742,8 +742,8 @@ export const claudeCommand = new Command('claude')
 
       if (!nonInteractive) {
         console.log(`  ${bold('Launching Claude Code, powered by Gipity.')}`);
-        console.log(`  ${muted("Just tell Claude what you'd like to build or do - everything Claude could do")}`);
-        console.log(`  ${muted('before, and now, on Gipity, so much more.')}`);
+        console.log(`  ${muted("Just tell Claude what you'd like to build or do - everything Claude can do,")}`);
+        console.log(`  ${muted('plus hosting, databases, and live deploys on Gipity.')}`);
         console.log('');
       }
 
