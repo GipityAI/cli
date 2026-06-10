@@ -37,9 +37,8 @@ interface TestStatusResponse {
   };
 }
 
-// Heartbeat cadence for non-TTY runs (background/piped output, e.g. a watching agent).
-const HEARTBEAT_MS = 10000;  // emit a newline progress line at least this often
-const LONG_RUN_MS = 60000;   // after this, print a one-time "not hung" + faster-path hint
+// Long-run hint for non-TTY runs: after this, print a one-time "not hung" + faster-path hint.
+const LONG_RUN_MS = 60000;
 
 async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json?: boolean }): Promise<TestStatusResponse['data']> {
   // Adaptive polling: fast at first (tests often finish quickly with warm pool),
@@ -50,6 +49,15 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
     if (elapsed < 5000) return 300;    // first 5s: poll every 300ms
     if (elapsed < 20000) return 1000;  // next 15s: poll every 1s
     return 3000;                        // after 20s: poll every 3s
+  };
+  // Heartbeat cadence for non-TTY runs (background/piped output, e.g. a watching
+  // agent): every line is re-read by the watcher, and on long LLM-backed suites
+  // nothing changes second-to-second — so back off like getPollInterval does.
+  const getHeartbeatInterval = () => {
+    const elapsed = Date.now() - startTime;
+    if (elapsed < 120000) return 10000;  // first 2 min: every 10s
+    if (elapsed < 300000) return 30000;  // to 5 min: every 30s
+    return 60000;                         // after 5 min: every 60s
   };
   let lastResultCount = 0;
   const isTTY = !!process.stdout.isTTY;
@@ -112,7 +120,7 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
         // Time-based so the file always grows — lets a watcher tell a slow run
         // from a hung one, and gives elapsed time to budget against.
         const now = Date.now();
-        if (now - lastHeartbeat >= HEARTBEAT_MS) {
+        if (now - lastHeartbeat >= getHeartbeatInterval()) {
           lastHeartbeat = now;
           const elapsed = Math.round((now - startTime) / 1000);
           const progress = data.totalFiles === 0
