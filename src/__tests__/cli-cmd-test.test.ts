@@ -92,6 +92,34 @@ test('gipity test <path> fails clearly when no tests match', async () => {
   assert.match(r.stdout, /No tests matched filter: api\/library/);
 });
 
+test('gipity test emits newline heartbeats while running (non-TTY/background)', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/test/run', { body: { data: { runGuid: RUN_GUID, status: 'running' } } });
+  let polls = 0;
+  mock.on(`GET /projects/p_TestProj/test/status/${RUN_GUID}`, () => {
+    polls++;
+    const done = polls >= 3;  // stay "running" for the first couple of polls
+    return { body: { data: {
+      runGuid: RUN_GUID, status: done ? 'passed' : 'running',
+      total: 1, passed: done ? 1 : 0, failed: 0, skipped: 0,
+      durationMs: done ? 1234 : 0, totalFiles: 1, completedFiles: done ? 1 : 0,
+      startedAt: '2026-05-01T10:00:00Z', updatedAt: '2026-05-01T10:00:01Z',
+      finishedAt: done ? '2026-05-01T10:00:01Z' : null,
+      results: done ? [
+        { path: 'api/health.test.js', name: 'health endpoint', status: 'passed', durationMs: 50, retryCount: 0, isFlaky: false },
+      ] : [],
+    } } };
+  });
+  // CLI stdout is piped here (not a TTY), so the in-place \r progress is suppressed
+  // and the heartbeat path must produce visible newline output instead.
+  const r = await fresh(['test', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /still running/);
+  assert.match(r.stdout, /elapsed/);
+  assert.match(r.stdout, /1 passed/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
 test('gipity test status <runGuid> shows current run state', async () => {
   mock.reset();
   mock.on(`GET /projects/p_TestProj/test/status/${RUN_GUID}`, { body: { data: {

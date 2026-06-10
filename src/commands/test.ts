@@ -37,6 +37,10 @@ interface TestStatusResponse {
   };
 }
 
+// Heartbeat cadence for non-TTY runs (background/piped output, e.g. a watching agent).
+const HEARTBEAT_MS = 10000;  // emit a newline progress line at least this often
+const LONG_RUN_MS = 60000;   // after this, print a one-time "not hung" + faster-path hint
+
 async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json?: boolean }): Promise<TestStatusResponse['data']> {
   // Adaptive polling: fast at first (tests often finish quickly with warm pool),
   // then back off for long-running suites.
@@ -48,6 +52,9 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
     return 3000;                        // after 20s: poll every 3s
   };
   let lastResultCount = 0;
+  const isTTY = !!process.stdout.isTTY;
+  let lastHeartbeat = 0;       // 0 => emit the first heartbeat immediately (non-TTY)
+  let longRunHintShown = false;
 
   while (true) {
     const res = await get<TestStatusResponse>(`/projects/${projectGuid}/test/status/${runGuid}`);
@@ -90,13 +97,36 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
       return data;
     }
 
-    // Show progress indicator (overwrite in-place) - only in real terminals
-    if (!opts.json && process.stdout.isTTY) {
-      if (data.totalFiles === 0) {
-        process.stdout.write(`\r  ${muted('Starting...')}          `);
+    if (!opts.json) {
+      if (isTTY) {
+        // Real terminal: overwrite a single in-place progress line.
+        if (data.totalFiles === 0) {
+          process.stdout.write(`\r  ${muted('Starting...')}          `);
+        } else {
+          const pct = Math.round((data.completedFiles / data.totalFiles) * 100);
+          process.stdout.write(`\r  ${muted(`${data.completedFiles}/${data.totalFiles} files (${pct}%)`)}`);
+        }
       } else {
-        const pct = Math.round((data.completedFiles / data.totalFiles) * 100);
-        process.stdout.write(`\r  ${muted(`${data.completedFiles}/${data.totalFiles} files (${pct}%)`)}`);
+        // Non-TTY (background/piped, e.g. a watching agent): a \r line never
+        // shows up in a captured file, so emit periodic newline heartbeats.
+        // Time-based so the file always grows — lets a watcher tell a slow run
+        // from a hung one, and gives elapsed time to budget against.
+        const now = Date.now();
+        if (now - lastHeartbeat >= HEARTBEAT_MS) {
+          lastHeartbeat = now;
+          const elapsed = Math.round((now - startTime) / 1000);
+          const progress = data.totalFiles === 0
+            ? 'starting up'
+            : `${data.completedFiles}/${data.totalFiles} files`;
+          const tally = data.passed + data.failed > 0
+            ? ` (${data.passed} passed${data.failed > 0 ? `, ${data.failed} failed` : ''})`
+            : '';
+          console.log(muted(`  … still running — ${progress}${tally}, ${elapsed}s elapsed`));
+          if (now - startTime >= LONG_RUN_MS && !longRunHintShown) {
+            longRunHintShown = true;
+            console.log(muted('  Note: progressing, not hung. LLM-backed tests can take minutes. To verify one function fast, use `gipity fn call <name>`; narrow this suite with `gipity test <path>`.'));
+          }
+        }
       }
     }
 
