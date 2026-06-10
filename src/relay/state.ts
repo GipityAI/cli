@@ -153,7 +153,8 @@ export function isDaemonRunning(): boolean {
   try {
     const raw = readFileSync(RELAY_PID_FILE, 'utf-8').trim();
     const pid = parseInt(raw, 10);
-    if (!pid || isNaN(pid)) return false;
+    // A corrupt/empty pid file is stale - clear it so it can't trap a restart.
+    if (!pid || isNaN(pid)) { try { unlinkSync(RELAY_PID_FILE); } catch { /* ignore */ } return false; }
     // `kill 0` sends no signal but checks if the PID is addressable.
     process.kill(pid, 0);
     return true;

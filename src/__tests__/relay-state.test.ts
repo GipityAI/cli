@@ -8,6 +8,7 @@ import { statSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
+import { spawn } from 'node:child_process';
 
 /** Each test gets a fresh HOME and re-imports state with a cache-busting query. */
 async function fresh(): Promise<{ state: typeof import('../relay/state.js'); home: string }> {
@@ -92,5 +93,52 @@ describe('relay state: corrupted file recovery', () => {
     // And we can still save cleanly on top of it.
     state.setPaused(true);
     assert.equal(state.loadState().paused, true);
+  });
+});
+
+describe('relay daemon pid lock: stale-file recovery', () => {
+  // Regression: a leftover pid file from an unclean exit used to trap the daemon
+  // in a permanent restart loop ("another daemon is already running") because
+  // boot bailed on EEXIST without checking the recorded PID was actually alive.
+  // isDaemonRunning() must clear a stale file so the next start can take the lock.
+
+  it('clears a stale pid file (dead process) and reports not-running', async () => {
+    const { state, home } = await fresh();
+    const dir = join(home, '.gipity');
+    mkdirSync(dir, { recursive: true });
+
+    // A real, now-dead pid: spawn a child, kill it, wait for it to exit.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
+    const deadPid = child.pid!;
+    await new Promise<void>(res => { child.once('exit', () => res()); child.kill('SIGKILL'); });
+
+    state.writeDaemonPid(deadPid);
+    const pidPath = join(dir, 'relay.pid');
+    assert.ok(existsSync(pidPath), 'precondition: pid file written');
+
+    assert.equal(state.isDaemonRunning(), false, 'dead pid → not running');
+    assert.equal(existsSync(pidPath), false, 'stale pid file should be cleared');
+  });
+
+  it('clears a corrupt pid file and reports not-running', async () => {
+    const { state, home } = await fresh();
+    const dir = join(home, '.gipity');
+    mkdirSync(dir, { recursive: true });
+    const pidPath = join(dir, 'relay.pid');
+    writeFileSync(pidPath, 'not-a-pid');
+
+    assert.equal(state.isDaemonRunning(), false);
+    assert.equal(existsSync(pidPath), false, 'corrupt pid file should be cleared');
+  });
+
+  it('keeps the pid file and reports running for a live process', async () => {
+    const { state, home } = await fresh();
+    const dir = join(home, '.gipity');
+    mkdirSync(dir, { recursive: true });
+    state.writeDaemonPid(process.pid); // our own (live) pid
+    const pidPath = join(dir, 'relay.pid');
+
+    assert.equal(state.isDaemonRunning(), true, 'live pid → running');
+    assert.ok(existsSync(pidPath), 'live pid file must NOT be cleared');
   });
 });

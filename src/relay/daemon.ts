@@ -236,12 +236,13 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
 
   if (opts.maxRunMs) setTimeout(() => shutdown('maxRunMs'), opts.maxRunMs).unref();
 
-  // Take the PID lock. If another daemon already holds it, exit clean -
-  // the caller (usually `gipity claude`'s auto-start) is racing us.
-  try {
-    state.writeDaemonPid(process.pid);
-  } catch (err: any) {
-    log('info', 'another daemon is already running - exiting', { err: err?.message });
+  // Take the PID lock. Only a *live* daemon should block us: a leftover pid file
+  // from an unclean exit (container SIGKILL'd, or `--restart` brought us back on
+  // the same filesystem) must not trap us in a permanent restart loop.
+  // isDaemonRunning() validates the recorded PID is actually alive and clears
+  // the file if it's stale, so writeDaemonPid below can then take the lock.
+  if (state.isDaemonRunning()) {
+    log('info', 'another daemon is already running - exiting');
     if (opts.verbose) {
       process.stderr.write(
         'Another relay daemon is already running (likely the autostarted one).\n' +
@@ -249,6 +250,13 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
         'or tail the existing daemon:  gipity relay log -f\n',
       );
     }
+    return 0;
+  }
+  try {
+    state.writeDaemonPid(process.pid);
+  } catch (err: any) {
+    // Lost a genuine race with another daemon starting at the same instant.
+    log('info', 'lost pid-lock race with another daemon - exiting', { err: err?.message });
     return 0;
   }
   const releasePid = () => state.clearDaemonPid();
