@@ -18,8 +18,10 @@ interface CatalogEntry { key: string; hint: string; }
 
 const STARTERS: CatalogEntry[] = [
   { key: 'web-vision-cam', hint: 'fullscreen camera app with on-device vision (MediaPipe)' },
+  { key: 'object-spotter', hint: 'camera app that boxes, labels, and counts objects (YOLOX on-device)' },
   { key: '2d-game', hint: '2D games with Phaser 3 - platformer, arcade, puzzle' },
   { key: '3d-world', hint: 'playable 3D multiplayer rocket-launcher demo' },
+  { key: 'karaoke-captions', hint: 'audio + lyrics -> word-synced karaoke captions (GPU job)' },
 ];
 const BLANK: CatalogEntry[] = [
   { key: 'web-simple', hint: 'static frontend-only site - pages, dashboards, simple games' },
@@ -31,6 +33,9 @@ const HIDDEN: CatalogEntry[] = [{ key: 'app-itsm', hint: 'IT service management 
 const KITS: CatalogEntry[] = [
   { key: 'realtime', hint: 'multiplayer / presence / shared state' },
   { key: 'web-vision-mediapipe', hint: 'browser camera vision - gesture, pose, object detection' },
+  { key: 'web-vision-detect', hint: 'browser object detection - YOLOX, WebGPU/WASM, custom models' },
+  { key: 'chatbot', hint: 'drop-in chatbot - persona, guardrails, streaming responses' },
+  { key: 'audio-align', hint: 'audio + lyrics -> word-level timing JSON (GPU job)' },
   { key: 'i18n', hint: 'multi-language web apps - language picker, RTL, translations' },
 ];
 

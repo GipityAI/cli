@@ -15,6 +15,7 @@ Templates:
     - \`web-simple\` - Landing page, dashboard, calculator, canvas demo, visualization, animation, single-page tool
     - \`web-fullstack\` - Web app with login, database, or API - CRM, invoice tracker, booking system, admin panel
     - \`web-vision-cam\` - Live camera app with gesture, pose, or object detection - hand-tracking input, fitness/pose feedback, object-aware UI; on-device, no upload
+    - \`object-spotter\` - Object-detection app - count or label things from the camera or a photo, inventory/shelf counting, custom-model detection; on-device, no upload
     - \`2d-game\` - Platformer, arcade, puzzle, endless runner, physics toy (Phaser 3)
     - \`3d-engine\` - Minimal 3D multiplayer base - Three.js + Rapier + Colyseus, no gameplay; build your own scene and mechanics on top
     - \`3d-world\` - Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)
@@ -30,6 +31,7 @@ Hidden types (do NOT suggest unsolicited - use only when the user explicitly ask
 Kits are reusable building blocks added to an existing app, not whole templates - their files land in \`src/packages/<name>/\`:
     - \`gipity add realtime\` - Multiplayer / presence / shared state - channels, host election, server-persisted sync. Engine-agnostic; works in any app.
     - \`gipity add web-vision-mediapipe\` - On-device camera vision - gesture recognition, body pose, object detection. Runs fully client-side via MediaPipe Tasks; no server, no upload. Web only.
+    - \`gipity add web-vision-detect\` - High-accuracy object detection in the browser - YOLOX (Apache-2.0) on ONNX Runtime Web, WebGPU with WASM fallback. 80 COCO classes, three speed/accuracy presets, or bring your own custom-trained YOLO/YOLOX ONNX model. Client-side; no server, no upload. Web only.
     - \`gipity add chatbot\` - Drop-in chatbot - configurable persona, scope guardrails, static knowledge (20k budget), streaming responses. Headless engine + bubble widget; bring your own UI if you want. Works in any app.
     - \`gipity add audio-align\` - Audio + lyrics -> word-level timing JSON. Demucs vocal isolation + MMS_FA forced alignment, runs as a Modal L4 GPU job (~$0.01 per 3-min song). For karaoke captions, subtitling, language learning, dubbing alignment.
     - \`gipity add i18n\` - Multi-language for web apps - language picker, locale persistence, RTL, plural/translation lookup. Scaffolds src/js/strings.js and wires it up; move your copy there and read it with t('key'). Web only.`;
