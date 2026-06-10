@@ -85,4 +85,14 @@ describe('redactEntries', () => {
     redactEntries(entries, normalizeSecrets([OAUTH]));
     assert.equal((entries[0] as any).content, OAUTH);
   });
+
+  it('pattern-redacts sk-ant- keys (api + oat) even when NOT in the secret list', () => {
+    // The BYO-key case: a user's own key isn't in the daemon's literal-secret
+    // list, but a bypass session could echo it. The sk-ant- pattern catches it.
+    const entries: IngestEntry[] = [
+      { kind: 'tool_result', tool_use_id: 't1', content: `ANTHROPIC_API_KEY=${API_KEY}\nTOKEN=${OAUTH}` },
+    ];
+    const [out] = redactEntries(entries, []); // empty list — pattern pass only
+    assert.equal((out as any).content, `ANTHROPIC_API_KEY=${REDACTION_MARKER}\nTOKEN=${REDACTION_MARKER}`);
+  });
 });

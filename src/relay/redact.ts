@@ -36,14 +36,23 @@ const MIN_SECRET_LEN = 12;
  *  over-redaction risk is negligible. */
 const JWT_RE = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 
-/** Replace every occurrence of each known secret - and any JWT-shaped
- *  substring - in `text` with the marker. */
+/** Anthropic credential tokens: API keys (`sk-ant-api…`) and Claude Code OAuth
+ *  tokens (`sk-ant-oat…`). These are NOT JWT-shaped, so the JWT backstop misses
+ *  them. On a bring-your-own-key relay the user's own API key lives in the
+ *  container env, and a `bypassPermissions` session could otherwise echo it
+ *  (`env`, `cat`) into the transcript — so pattern-redact it regardless of the
+ *  literal-secret list. An `sk-ant-` token in a relay transcript is always a
+ *  credential, so over-redaction risk is negligible. */
+const ANTHROPIC_KEY_RE = /sk-ant-[A-Za-z0-9_-]{20,}/g;
+
+/** Replace every occurrence of each known secret - and any JWT- or
+ *  Anthropic-key-shaped substring - in `text` with the marker. */
 function redactString(text: string, secrets: string[]): string {
   let out = text;
   for (const secret of secrets) {
     if (out.includes(secret)) out = out.split(secret).join(REDACTION_MARKER);
   }
-  return out.replace(JWT_RE, REDACTION_MARKER);
+  return out.replace(JWT_RE, REDACTION_MARKER).replace(ANTHROPIC_KEY_RE, REDACTION_MARKER);
 }
 
 /** Deep-walk any JSON-ish value, redacting every string. Returns a new
