@@ -882,7 +882,32 @@ async function syncInner(
         applied++;
       } catch (err) {
         if (err instanceof ApiError && err.statusCode === 409) {
-          errors.push(`Could not delete ${a.path}: server has newer version - re-sync to resolve`);
+          // Delete-vs-newer: the live file advanced past the version the plan
+          // saw (stale tree read or a concurrent write). Resolve it with the
+          // same rule the planner applies to deleted × modified — remote wins:
+          // restore the server copy locally and advance the baseline so the
+          // next round starts from agreement (delete again + re-sync to
+          // confirm the delete). Leaving the baseline stale here trapped the
+          // delete in an unresolvable loop, minting a fresh conflict copy
+          // every round.
+          try {
+            const buf = await fetchOne(config.projectGuid, a.path);
+            if (!buf) throw new Error('remote bytes unavailable');
+            const full = join(root, a.path);
+            mkdirSync(dirname(full), { recursive: true });
+            writeFileSync(full, buf);
+            const stat = statSync(full);
+            const { sha256 } = await hashFile(full);
+            const current = typeof err.data?.current_server_version === 'number'
+              ? err.data.current_server_version : null;
+            baseline.files[a.path] = {
+              size: stat.size, mtime: stat.mtime.toISOString(), sha256,
+              serverVersion: current ?? a.expectedServerVersion ?? 0,
+            };
+            errors.push(`Could not delete ${a.path}: server has a newer version - restored the server copy locally (delete it again and re-sync to confirm)`);
+          } catch {
+            errors.push(`Could not delete ${a.path}: server has newer version - re-sync to resolve`);
+          }
         } else if (err instanceof ApiError && err.statusCode === 404) {
           // Already gone - drop from baseline.
           delete baseline.files[a.path];

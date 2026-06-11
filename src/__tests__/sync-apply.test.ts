@@ -556,4 +556,108 @@ describe('sync() - fetch-intercepted', () => {
     assert.ok(copy, 'conflicted-copy file should exist on disk');
     assert.equal(readFileSync(join(projectDir, copy!), 'utf-8'), 'local-new');
   });
+
+  it('delete-remote 409 (delete-vs-newer) → restores the server copy and converges, no loop', async () => {
+    // Repro from the field: a locally deleted file the server thinks is newer
+    // got stuck forever — every re-sync re-planned the same failing delete
+    // ("server has newer version - re-sync to resolve") because the baseline
+    // never advanced. The fix resolves it like the planner's deleted ×
+    // modified: remote wins, restore the server bytes, advance the baseline.
+    const { createHash } = await import('crypto');
+    const newerSha = createHash('sha256').update('newer-bytes').digest('hex');
+
+    // Baseline knows old.js at v5; local copy was deleted; the tree listing
+    // still serves the stale v5 (so the plan goes delete-remote), but the
+    // live row is at v7 → DELETE answers 409.
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_apply',
+      files: { 'old.js': { size: 5, mtime: '2024', sha256: 'stale-sha', serverVersion: 5 } },
+      lastFullSync: null,
+    }));
+
+    let deleteCalls = 0;
+    stubFetch(async (url, init) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [
+          { path: 'old.js', size: 5, modified: '2024', type: 'file',
+            guid: 'fl_old', contentHash: 'stale-sha', serverVersion: 5 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (init?.method === 'DELETE') {
+        deleteCalls++;
+        return new Response(JSON.stringify({
+          error: { code: 'CONFLICT', message: 'CAS mismatch' },
+          data: { current_server_version: 7 },
+        }), { status: 409, headers: { 'content-type': 'application/json' } });
+      }
+      // fetchOne for the restore
+      if (url.includes('/files/tree?content=tar')) {
+        const tar = await import('tar-stream');
+        const pack = tar.pack();
+        pack.entry({ name: 'old.js' }, 'newer-bytes');
+        pack.finalize();
+        const chunks: Buffer[] = [];
+        for await (const c of pack as any) chunks.push(c);
+        return new Response(Buffer.concat(chunks), { status: 200 });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync, readBaseline } = await import('../sync.js');
+    const result = await sync({ interactive: false });
+
+    assert.equal(deleteCalls, 1);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0], /restored the server copy locally/);
+    // Remote wins: server bytes are back on disk, baseline is advanced to the
+    // live version — no stale entry left to re-plan the same failing delete.
+    assert.equal(readFileSync(join(projectDir, 'old.js'), 'utf-8'), 'newer-bytes');
+    const bl = readBaseline('proj_apply');
+    assert.equal(bl.files['old.js']?.serverVersion, 7);
+    assert.equal(bl.files['old.js']?.sha256, newerSha);
+    // No conflict copy was minted for the delete.
+    const names = readdirSync(projectDir);
+    assert.ok(!names.some(n => n.includes('conflict from')), 'no conflict copy minted');
+
+    // Round 2: everything agrees (local restored file, live listing at v7) → noop.
+    stubFetch(async (url) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [
+          { path: 'old.js', size: 11, modified: '2024', type: 'file',
+            guid: 'fl_old', contentHash: newerSha, serverVersion: 7 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+    const again = await sync({ interactive: false });
+    assert.equal(again.applied, 0);
+    assert.deepEqual(again.errors, []);
+
+    // Round 3: the user deletes again — the delete now carries the live
+    // version and lands.
+    rmSync(join(projectDir, 'old.js'));
+    let finalDelete: string | null = null;
+    stubFetch(async (url, init) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [
+          { path: 'old.js', size: 11, modified: '2024', type: 'file',
+            guid: 'fl_old', contentHash: newerSha, serverVersion: 7 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (init?.method === 'DELETE') {
+        finalDelete = url;
+        return new Response(JSON.stringify({ data: { ok: true } }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+    const third = await sync({ interactive: false });
+    assert.deepEqual(third.errors, []);
+    assert.equal(third.applied, 1);
+    assert.ok(finalDelete, 'delete reached the server');
+    assert.match(finalDelete!, /expected_server_version=7/);
+    assert.equal(readBaseline('proj_apply').files['old.js'], undefined);
+  });
 });
