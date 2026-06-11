@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
-import { brand, bold, muted, warning, error as clrError } from '../colors.js';
+import { brand, bold, muted, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 
 export interface EvalResult {
@@ -89,21 +89,21 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
+    // Arg-shape errors go through commander's error() so the enableHelpAfterError
+    // hook renders this command's help inline with the one-line error LAST
+    // (survives `| tail`), same as commander-detected errors like a missing url.
     if (exprArg !== undefined && opts.file) {
-      console.error(clrError('Pass either an inline <expr> arg or --file <path>, not both'));
-      process.exit(1);
+      pageEvalCommand.error('error: Pass either an inline <expr> arg or --file <path>, not both');
     }
     if (exprArg === undefined && !opts.file) {
-      console.error(clrError('Provide an inline <expr> arg or --file <path>'));
-      process.exit(1);
+      pageEvalCommand.error('error: Provide an inline <expr> arg or --file <path>');
     }
     let expr = exprArg as string;
     if (opts.file) {
       try {
         expr = readFileSync(opts.file, 'utf8');
       } catch {
-        console.error(clrError(`Cannot read file: ${opts.file}`));
-        process.exit(1);
+        pageEvalCommand.error(`error: Cannot read file: ${opts.file}`);
       }
     }
 
