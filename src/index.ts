@@ -7,7 +7,7 @@ import { setApiBaseOverride } from './config.js';
 import { setAutoConfirm } from './utils.js';
 import { installOutputFrame } from './helpers/output.js';
 import { GIPITY_TAGLINE } from './knowledge.js';
-import { getAuth, getTimeRemaining, isExpired } from './auth.js';
+import { getAuth, sessionExpired } from './auth.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { initCommand } from './commands/init.js';
@@ -64,17 +64,17 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-
   const args = process.argv.slice(2);
   if (args.length === 1 && (args[0] === '-v' || args[0] === '--version')) {
     // Three states, not two: a stale auth.json reads as "have an account"
-    // but its tokens may be expired. Calling that "Logged in (expired)" is
-    // self-contradictory and reads as a bug; surface expiry as its own line
-    // that points at the same fix as the not-logged-in case.
+    // but its session may be dead. "Expired" here means the refresh token
+    // is gone (sessionExpired) - access-token expiry self-heals on the next
+    // API call, so showing it would be a false alarm.
     const auth = getAuth();
     let authLine: string;
     if (!auth) {
       authLine = `${muted('Not logged in.')} Run: ${brand('gipity login')}`;
-    } else if (isExpired()) {
+    } else if (sessionExpired()) {
       authLine = `${muted('Session expired for')} ${auth.email}${muted('. Run:')} ${brand('gipity login')}`;
     } else {
-      authLine = `${success('Logged in')} as ${auth.email} ${muted(`(${getTimeRemaining()})`)}`;
+      authLine = `${success('Logged in')} as ${auth.email}`;
     }
     console.log('');
     console.log(`${brand(bold('Gipity'))} ${muted(`v${pkg.version}`)}`);

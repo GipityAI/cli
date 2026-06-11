@@ -130,7 +130,10 @@ function appendOption(value: string, previous: string[] = []): string[] {
 export const pageScreenshotCommand = new Command('screenshot')
   .description('Screenshot a web page')
   .argument('<url>', 'URL to screenshot')
-  .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms', '1000')
+  // No commander default: a default here makes opts.postLoadDelay always set,
+  // so the `?? opts.wait` merge below would never see the --wait alias. Default
+  // is applied in the merge instead.
+  .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms (default: 1000)')
   .option('--full', 'Capture the full scrollable page (default: viewport only)')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
@@ -144,7 +147,10 @@ export const pageScreenshotCommand = new Command('screenshot')
   // rather than reject it as an unknown option and send them on a --help detour.
   .addOption(new Option('--full-page', 'Alias for --full').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
-    const delayRaw = opts.postLoadDelay ?? opts.wait;
+    // --wait is a hidden alias for --post-load-delay (agents reach for it because
+    // sibling `page inspect`/`eval` name the flag --wait). Canonical name wins if
+    // both given; fall back to the 1000ms default when neither is set.
+    const delayRaw = opts.postLoadDelay ?? opts.wait ?? '1000';
     const postLoadDelayMs = delayRaw !== undefined ? parseInt(String(delayRaw), 10) : undefined;
     if (postLoadDelayMs !== undefined && (!Number.isFinite(postLoadDelayMs) || postLoadDelayMs < 0)) {
       throw new Error('--post-load-delay must be a non-negative integer (ms)');

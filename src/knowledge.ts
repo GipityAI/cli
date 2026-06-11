@@ -80,6 +80,8 @@ The full "when to add a template" rule and the definition of done are spelled ou
 
 Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page inspect <url>\` → fix any errors → repeat until the definition of done is met.
 
+\`add\` writes real files to disk — Read a scaffolded file before your first Write/Edit to it, or the call fails \`"File has not been read yet"\`. Don't rewrite from memory of the template.
+
 Make your file changes and verify they landed, then run \`gipity deploy dev\` once. \`0 uploaded, N unchanged\` means nothing changed on disk - fix the files, don't re-run deploy or probe the environment.
 
 Before telling the user the app is online, verify the source tree is consistent: no files named like \`* (conflict from *)*\`, and every package directory has its expected canonical entry file. If a conflict artifact exists, resolve it (keep one copy), re-deploy, and re-inspect before reporting done.
@@ -89,11 +91,15 @@ Before telling the user the app is online, verify the source tree is consistent:
 Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
+Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** — read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
+
 ## Tool output is complete and synchronous
 
 Every tool call returns its full output with that call. There is no output buffer to flush. Never run no-op commands (echo, date, sleep, repeated reads) to "retrieve" or "flush" lagged output - if a result looks empty or delayed, treat it as the actual result and move on, or re-run the real command once.
 
 ## Files and sync
+
+This directory is the app root - it holds \`.gipity.json\` (and \`gipity.yaml\` for backends) and is already your cwd, so run app commands here. Don't \`cd\` to a git root (\`git rev-parse --show-toplevel\`): when the app is nested in a larger repo that resolves outside the app.
 
 Write files locally - the Gipity Claude Code plugin's hooks auto-push every save to Gipity and auto-pull remote changes (images, audio from \`gipity chat\`) before each turn. Use \`gipity sync\` if things get out of sync (or if the plugin isn't installed - \`gipity status --repair-hooks\` re-enables it). Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
 

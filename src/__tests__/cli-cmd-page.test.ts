@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome } from './helpers/test-home.js';
@@ -281,6 +282,81 @@ test('gipity page eval surfaces a failed eval job', async () => {
   assert.match(r.stderr, /about:blank/);
 });
 
+// A script that runs but returns undefined (no `return`) comes back as the raw
+// agent-browser envelope. The CLI must unwrap it to a clean value and explain
+// how to shape a returnable result instead of printing an opaque blob.
+test('gipity page eval explains a no-value (undefined) result and hides the raw envelope', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-nv', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-nv', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":true,"data":{"origin":"https://example.com","result":null},"error":null}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', "document.getElementById('x').value='hi'"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /no JSON-serializable value/);
+  assert.doesNotMatch(r.stdout, /"success":true/);  // raw envelope never shown
+});
+
+test('gipity page eval --json cleans the leaked envelope and attaches a hint', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-nvj', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-nvj', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":true,"data":{"origin":"https://example.com","result":null},"error":null}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'void 0', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.result, 'null');
+  assert.match(parsed.hint, /no JSON-serializable value/);
+});
+
+test('gipity page eval hints on a bare null result', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-null', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-null', { body: { data: {
+    status: 'done', url: 'https://example.com', result: 'null', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'window.missing', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.result, 'null');
+  assert.match(parsed.hint, /no JSON-serializable value/);
+});
+
+// A genuine serialized value must pass through untouched — no spurious hint.
+test('gipity page eval does not hint on a real value', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-ok', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-ok', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '{"n":1}', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '({n:1})', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.result, '{"n":1}');
+  assert.equal(parsed.hint, undefined);
+});
+
+// An eval body whose own awaits overrun the in-page execution budget comes back
+// from agent-browser as a {success:false, error:"CDP command timed out:
+// Runtime.evaluate"} envelope, surfaced verbatim as the result. The CLI must
+// translate that into an actionable error, not print the opaque envelope.
+test('gipity page eval translates the CDP execution-budget timeout into guidance', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-cdp', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-cdp', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":false,"data":null,"error":"CDP command timed out: Runtime.evaluate"}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '(async()=>{})()']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /in-page execution budget/);
+  assert.match(r.stderr, /separate from --wait/);
+  assert.doesNotMatch(r.stderr, /CDP command timed out/);
+});
+
 // ── page test interactive mode (concurrent clients + overlap verification) ──
 // Each client posts to /tools/browser/eval (a harness that runs --action then
 // samples --observe) and polls the job. The mock keys off the per-client label
@@ -416,9 +492,121 @@ test('page test warns when the URL carries an unrecognized {{...}} placeholder',
     'page', 'test', 'https://app.example/?name=Bot{{name}}',
     '--clients', '1', '--stagger', '0',
   ]);
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /Unrecognized placeholder \{\{name\}\}/);
+  assert.match(r.stderr, /\{\{i\}\}/);
+});
+
+test('page test --observe substitutes {{label}} into the URL so each client gets a distinct role', async () => {
+  mock.reset();
+  // The kickoff keys the job off the per-client URL (role=host vs role=join),
+  // proving one invocation launched two asymmetric roles concurrently.
+  mock.on('POST /tools/browser/eval', (req) => {
+    const url = String((req.body as { url?: string }).url ?? '');
+    return { body: { data: { evalJobId: url.includes('role=host') ? 'job-host' : 'job-join', status: 'queued' } } };
+  });
+  mock.on('GET /tools/browser/eval/job-host', evalDone({ label: 'host', startedAt: 1000, endedAt: 9000, samples: ['lobby', 'game'] }));
+  mock.on('GET /tools/browser/eval/job-join', evalDone({ label: 'join', startedAt: 2000, endedAt: 9000, samples: ['lobby', 'game'] }));
+  const r = await run([
+    'page', 'test', 'https://app.example/?role={{label}}',
+    '--clients', '2', '--labels', 'host,join', '--samples', '2',
+    '--observe', "document.querySelector('[data-screen]')?.dataset.screen",
+  ]);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Unrecognized placeholder \{\{name\}\}/);
-  assert.match(r.stdout, /\{\{i\}\}/);
+  assert.match(r.stdout, /overlapped for/);
+  const urls = mock.requests().filter((q) => q.url === '/tools/browser/eval').map((q) => (q.body as { url: string }).url);
+  assert.equal(urls.length, 2);
+  assert.ok(urls.includes('https://app.example/?role=host'), `expected a host URL, got ${urls.join(', ')}`);
+  assert.ok(urls.includes('https://app.example/?role=join'), `expected a join URL, got ${urls.join(', ')}`);
+});
+
+test('page test --observe warns to stderr when --hold exceeds the cap, keeping json stdout clean', async () => {
+  mock.reset();
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 2] },
+    Bob: { label: 'Bob', startedAt: 2000, endedAt: 9000, samples: [1, 2] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/',
+    '--clients', '2', '--labels', 'Alice,Bob', '--samples', '2', '--hold', '45000',
+    '--observe', "document.querySelectorAll('.present').length", '--json',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /45000ms exceeds the 15000ms/);
+  // stdout stays parseable JSON despite the warning.
+  const out = JSON.parse(r.stdout.trim());
+  assert.equal(out.hold, 15000);
+});
+
+test('page test --observe warns on an unrecognized {{token}} instead of sending it literally', async () => {
+  mock.reset();
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 2] },
+    Bob: { label: 'Bob', startedAt: 2000, endedAt: 9000, samples: [1, 2] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/?name=Bot{{index}}',
+    '--clients', '2', '--labels', 'Alice,Bob', '--samples', '2',
+    '--observe', "document.querySelectorAll('.present').length",
+  ]);
+  assert.match(r.stderr, /Unrecognized placeholder/);
+  assert.match(r.stderr, /\{\{index\}\}/);
+  assert.match(r.stderr, /\{\{label\}\}/);
+});
+
+// ── screenshot --wait / --post-load-delay (request-body) ───────────────────
+
+/** Pack a minimal screenshot tar (meta.json + one png) the CLI can parse. */
+function screenshotTar(): Promise<Buffer> {
+  const meta = {
+    full: false, finalUrl: 'https://example.com/', title: 'Example', status: 200, performance: null,
+    screenshots: [{
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+      width: 1280, height: 720, screenshotSizeBytes: 4, phase: 'initial-load',
+    }],
+  };
+  const pack = tarPack.pack();
+  const chunks: Buffer[] = [];
+  return new Promise((resolve) => {
+    pack.on('data', (c: Buffer) => chunks.push(c));
+    pack.on('end', () => resolve(Buffer.concat(chunks)));
+    pack.entry({ name: 'meta.json' }, JSON.stringify(meta));
+    pack.entry({ name: 'shot.png' }, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    pack.finalize();
+  });
+}
+
+async function mockScreenshot() {
+  const tar = await screenshotTar();
+  mock.on('POST /tools/browser/screenshot', { raw: tar, contentType: 'application/x-tar' });
+}
+
+test('gipity page screenshot honors --wait as an alias for --post-load-delay', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--wait', '6000', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /undefined/);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 6000, '--wait must reach the server, not be silently dropped');
+});
+
+test('gipity page screenshot lets the canonical --post-load-delay win over --wait', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--post-load-delay', '2000', '--wait', '6000', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 2000);
+});
+
+test('gipity page screenshot defaults to 1000ms when neither delay flag is given', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 1000);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────

@@ -58,14 +58,16 @@ export function isExpired(): boolean {
   return Date.now() > expiresAt - buffer;
 }
 
-export function getTimeRemaining(): string {
+/** True only when re-login is genuinely required: the refresh token itself
+ *  has expired. Access-token expiry (`expiresAt` / isExpired) is invisible
+ *  to users — every API call renews it via refreshTokenIfNeeded() — so it
+ *  must never be surfaced as a session warning. */
+export function sessionExpired(): boolean {
   const auth = getAuth();
-  if (!auth) return 'not authenticated';
-  const ms = new Date(auth.expiresAt).getTime() - Date.now();
-  if (ms <= 0) return 'expired';
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m remaining`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m remaining`;
+  if (!auth) return true;
+  const exp = decodeJwtExp(auth.refreshToken);
+  if (!exp) return false; // undecodable - let the refresh path decide
+  return Date.now() > exp * 1000;
 }
 
 export async function refreshTokenIfNeeded(): Promise<void> {

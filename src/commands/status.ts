@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
-import { getAuth, getTimeRemaining } from '../auth.js';
+import { getAuth, sessionExpired } from '../auth.js';
 import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
 import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin } from '../setup.js';
@@ -42,10 +42,11 @@ export const statusCommand = new Command('status')
           apiBase: config.apiBase,
           url: liveUrl(config),
         } : null,
+        // `valid` reflects the refresh token (the real session) - access
+        // tokens auto-renew, so their expiry must not read as "invalid".
         auth: auth ? {
           email: auth.email,
-          expiresAt: auth.expiresAt,
-          valid: new Date(auth.expiresAt).getTime() > Date.now(),
+          valid: !sessionExpired(),
         } : null,
         plugin: hookCheck,
       }, null, 2));
@@ -64,8 +65,10 @@ export const statusCommand = new Command('status')
 
     if (!auth) {
       console.log(`${muted('Auth:')} ${warning('not logged in. Run: gipity login')}`);
+    } else if (sessionExpired()) {
+      console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login`)}`);
     } else {
-      console.log(`${muted('Auth:')} ${success(auth.email)} ${muted(`(${getTimeRemaining()})`)}`);
+      console.log(`${muted('Auth:')} ${success(auth.email)}`);
     }
 
     if (hookCheck) {
