@@ -33,6 +33,14 @@ test('gipity db list (project-scoped) prints friendly names', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity db list (project-scoped, empty) points at --all for the account cap', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/databases', { body: { data: [] } });
+  const r = await inProject(['db', 'list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /gipity db list --all/);
+});
+
 test('gipity db list --all shows count/limit and groups by project', async () => {
   mock.reset();
   mock.on('GET /users/me/databases', { body: { data: {

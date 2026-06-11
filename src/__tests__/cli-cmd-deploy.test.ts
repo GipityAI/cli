@@ -50,6 +50,23 @@ test('gipity deploy --json emits raw data', async () => {
   assert.equal(parsed.fileCount, 1);
 });
 
+test('gipity deploy database-cap failure points at db list --all / db drop', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 19, totalBytes: 1000, target: 'dev', elapsedMs: 500, batch: 1,
+    phases: [
+      { name: 'files', status: 'ok', summary: '19 files deployed' },
+      { name: 'database', status: 'failed', summary: 'Failed to create database: Maximum of 100 databases reached. Drop one first.' },
+      { name: 'functions', status: 'skipped', summary: 'previous phase failed' },
+    ],
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /gipity db list --all/);
+  assert.match(r.stdout, /gipity db drop <name> --project <slug>/);
+  assert.match(r.stdout, /Deploy failed/);
+});
+
 test('gipity deploy fails when target is invalid', async () => {
   mock.reset();
   const r = await fresh(['deploy', 'staging', '--no-sync']);

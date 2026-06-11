@@ -98,8 +98,20 @@ export const deployCommand = new Command('deploy')
 
       console.log(muted('─'.repeat(40)));
 
-      const hasFailed = d.phases?.some(p => p.status === 'failed');
-      if (hasFailed) {
+      const failedPhases = d.phases?.filter(p => p.status === 'failed') ?? [];
+      if (failedPhases.length > 0) {
+        // The database phase can fail on the account-wide database cap, whose
+        // server message ("Maximum of N databases reached. Drop one first.")
+        // names no command. The droppable databases live in OTHER projects, so
+        // the default project-scoped `gipity db list` shows nothing — point the
+        // caller straight at the account-wide list + drop path so they don't
+        // dead-end (or reach for raw DB access) to free a slot.
+        if (failedPhases.some(p => /databases? reached|database (cap|limit)/i.test(p.summary))) {
+          console.log('');
+          console.log(muted('Free a slot under the account database cap:'));
+          console.log(`  ${brand('gipity db list --all')}            ${muted('# every database counting toward the cap, by project')}`);
+          console.log(`  ${brand('gipity db drop <name> --project <slug>')} ${muted('# drop one from another project')}`);
+        }
         console.log(clrError(`Deploy failed`) + muted(` (${d.elapsedMs}ms)`));
         process.exit(1);
       } else {
