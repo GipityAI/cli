@@ -149,11 +149,36 @@ function fmtSamples(samples: unknown[]): string {
 async function runInteractive(url: string, observe: string, opts: TestOpts): Promise<void> {
   const clients = Math.max(1, parseInt(opts.clients, 10) || 2);
   const stagger = opts.stagger != null ? Math.max(0, parseInt(opts.stagger, 10) || 0) : 0;
-  const hold = Math.min(MAX_HOLD_MS, Math.max(MIN_HOLD_MS, parseInt(opts.hold, 10) || 8000));
+  const rawHold = parseInt(opts.hold, 10) || 8000;
+  const hold = Math.min(MAX_HOLD_MS, Math.max(MIN_HOLD_MS, rawHold));
+  if (rawHold > MAX_HOLD_MS) {
+    // Surface the clamp (to stderr, so --json stdout stays clean) instead of
+    // leaving the agent to infer it from the printed "hold Nms" line.
+    console.error(warning(
+      `--hold ${rawHold}ms exceeds the ${MAX_HOLD_MS}ms per-client cap (each client samples inside one browser eval, bounded by the server's eval budget) — using ${MAX_HOLD_MS}ms. ` +
+      `Co-launch every role in this one command (put {{label}}/{{i}} in the URL) so all clients overlap for the whole window; a separately-started background client overlaps only the sliver of its window that lines up.`,
+    ));
+  }
   const samples = Math.min(30, Math.max(2, parseInt(opts.samples, 10) || 6));
   const settle = opts.waitFor ? 200 : 1000;
   const labels = (opts.labels ? String(opts.labels).split(',').map((s) => s.trim()) : []).filter(Boolean);
   const labelFor = (i: number) => labels[i] ?? `client-${i}`;
+
+  // Only {{label}} and {{i}} are substituted. Warn once on any other {{token}}
+  // (a natural guess like {{name}} or {{index}}) so it isn't sent literally to
+  // every client — the silent wrong-behavior trap of identical clients.
+  const unknown = new Set<string>();
+  for (const s of [url, opts.action ?? '', observe]) {
+    for (const m of s.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
+      if (m[1] !== 'label' && m[1] !== 'i') unknown.add(`{{${m[1]}}}`);
+    }
+  }
+  if (unknown.size > 0) {
+    console.error(warning(
+      `Unrecognized placeholder(s) ${[...unknown].join(', ')} — only {{label}} and {{i}} are substituted per client; ` +
+      `anything else is sent literally to every client. Set per-client values with --labels and reference them as {{label}}.`,
+    ));
+  }
 
   if (!opts.json) {
     console.log(`${brand('Page test')} ${muted('(interactive)')} ${bold(url)}`);
@@ -165,6 +190,10 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
     runs.push((async () => {
       await sleep(i * stagger * 1000);
       if (!opts.json) console.log(muted(`client ${i} (${labelFor(i)}) joining`));
+      // {{label}}/{{i}} substitute into the URL too, so one invocation can launch
+      // asymmetric roles concurrently (e.g. ?role={{label}} with --labels host,join)
+      // and the overlap check still confirms they coexisted.
+      const clientUrl = subst(url, labelFor(i), i);
       const expr = buildHarness(
         opts.action ? subst(opts.action, labelFor(i), i) : undefined,
         subst(observe, labelFor(i), i),
@@ -172,7 +201,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
         hold,
         samples,
       );
-      return observeClient(url, expr, i, labelFor(i), settle, hold, opts.waitFor);
+      return observeClient(clientUrl, expr, i, labelFor(i), settle, hold, opts.waitFor);
     })());
   }
   const results = (await Promise.all(runs)).sort((a, b) => a.i - b.i);
@@ -296,7 +325,7 @@ async function runPassive(url: string, opts: TestOpts): Promise<void> {
 //  just because the clients never actually ran together.
 export const pageTestCommand = new Command('test')
   .description('Multi-client realtime check: load a URL in N concurrent headless clients; flag console errors, or drive an action and observe shared state (--observe)')
-  .argument('<url>', 'Deployed URL to load in every client')
+  .argument('<url>', 'Deployed URL to load in every client. In interactive mode (--observe), {{label}}/{{i}} substitute per client, so one invocation can give each client a distinct role (e.g. ?role={{label}} with --labels host,join).')
   .option('--clients <n>', 'Number of headless clients to launch', '2')
   .option('--stagger <s>', 'Seconds between client starts (passive default 12; interactive default 0)')
   .option('--wait <ms>', 'Passive mode: ms each client stays open after load (max 30000)', '24000')
@@ -318,7 +347,14 @@ Examples:
   gipity page test "https://dev.gipity.ai/me/app/" --clients 2 \\
     --action "document.querySelector('#name').value='{{label}}'; document.querySelector('form').requestSubmit();" \\
     --observe "document.querySelectorAll('.present').length" \\
-    --labels Alice,Bob`)
+    --labels Alice,Bob
+
+  # Asymmetric roles in ONE invocation: {{label}} in the URL routes client 0 to
+  # host and client 1 to join. They overlap in time (verified), so the joiner
+  # observes the live state the host is driving — no background-process dance.
+  gipity page test "https://dev.gipity.ai/me/app/?test-action={{label}}" --clients 2 \\
+    --labels host,join \\
+    --observe "document.querySelector('[data-screen]')?.dataset.screen"`)
   .action((url: string, opts: TestOpts) => run('Page test', async () => {
     if (opts.observe) {
       await runInteractive(url, opts.observe, opts);
