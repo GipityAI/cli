@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome } from './helpers/test-home.js';
@@ -406,6 +407,61 @@ test('page test --observe surfaces a client action failure and exits non-zero', 
   ]);
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /action failed/);
+});
+
+// ── screenshot --wait / --post-load-delay (request-body) ───────────────────
+
+/** Pack a minimal screenshot tar (meta.json + one png) the CLI can parse. */
+function screenshotTar(): Promise<Buffer> {
+  const meta = {
+    full: false, finalUrl: 'https://example.com/', title: 'Example', status: 200, performance: null,
+    screenshots: [{
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+      width: 1280, height: 720, screenshotSizeBytes: 4, phase: 'initial-load',
+    }],
+  };
+  const pack = tarPack.pack();
+  const chunks: Buffer[] = [];
+  return new Promise((resolve) => {
+    pack.on('data', (c: Buffer) => chunks.push(c));
+    pack.on('end', () => resolve(Buffer.concat(chunks)));
+    pack.entry({ name: 'meta.json' }, JSON.stringify(meta));
+    pack.entry({ name: 'shot.png' }, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    pack.finalize();
+  });
+}
+
+async function mockScreenshot() {
+  const tar = await screenshotTar();
+  mock.on('POST /tools/browser/screenshot', { raw: tar, contentType: 'application/x-tar' });
+}
+
+test('gipity page screenshot honors --wait as an alias for --post-load-delay', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--wait', '6000', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /undefined/);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 6000, '--wait must reach the server, not be silently dropped');
+});
+
+test('gipity page screenshot lets the canonical --post-load-delay win over --wait', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--post-load-delay', '2000', '--wait', '6000', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 2000);
+});
+
+test('gipity page screenshot defaults to 1000ms when neither delay flag is given', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 1000);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────
