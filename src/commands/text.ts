@@ -49,7 +49,7 @@ function formatProfile(a: ReturnType<typeof analyzeText>): string {
   row('Sentences', a.sentences);
   row('Lines', a.lines);
   row('Paragraphs', a.paragraphs);
-  if (a.words) {
+  if (a.longestWord) {
     row('Longest word', `${a.longestWord} (${[...a.longestWord].length})`);
     row('Shortest word', `${a.shortestWord} (${[...a.shortestWord].length})`);
     row('Avg word length', a.averageWordLength);

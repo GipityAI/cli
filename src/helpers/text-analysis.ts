@@ -58,9 +58,11 @@ export interface TextAnalysis {
   lines: number;
   /** Blocks separated by one or more blank lines. */
   paragraphs: number;
+  /** Longest word, surrounding punctuation trimmed ("sentence?" → "sentence"). */
   longestWord: string;
+  /** Shortest word, surrounding punctuation trimmed; pure-punctuation tokens excluded. */
   shortestWord: string;
-  /** Mean token length, one decimal. */
+  /** Mean word length (surrounding punctuation trimmed), one decimal. */
   averageWordLength: number;
   /** a–z frequency, case-insensitive, only letters that appear, count desc. */
   letterFrequency: LetterCount[];
@@ -134,8 +136,12 @@ export function analyzeText(text: string): TextAnalysis {
   }
 
   const tokens = tokenize(text);
-  const lengths = tokens.map((t) => chars(t).length);
-  const cleaned = tokens.map((t) => trimWordPunct(t).toLowerCase()).filter(Boolean);
+  // Word identity for the per-word stats: surrounding punctuation trimmed
+  // ("sentence?" → "sentence"), internal hyphens/apostrophes kept, and
+  // pure-punctuation tokens dropped. `words` itself stays the wc -w token count.
+  const wordsTrimmed = tokens.map((t) => trimWordPunct(t)).filter(Boolean);
+  const lengths = wordsTrimmed.map((t) => chars(t).length);
+  const cleaned = wordsTrimmed.map((t) => t.toLowerCase());
   const uniq = new Set(cleaned);
 
   const wordFreqMap = new Map<string, number>();
@@ -149,12 +155,12 @@ export function analyzeText(text: string): TextAnalysis {
   const lines = text === '' ? 0 : text.split('\n').length;
   const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).length;
 
-  const longestWord = tokens.reduce(
+  const longestWord = wordsTrimmed.reduce(
     (a, b) => (chars(b).length > chars(a).length ? b : a),
     '',
   );
-  const shortestWord = tokens.length
-    ? tokens.reduce((a, b) => (chars(b).length < chars(a).length ? b : a))
+  const shortestWord = wordsTrimmed.length
+    ? wordsTrimmed.reduce((a, b) => (chars(b).length < chars(a).length ? b : a))
     : '';
   const averageWordLength = lengths.length
     ? Math.round((lengths.reduce((a, b) => a + b, 0) / lengths.length) * 10) / 10

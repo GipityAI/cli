@@ -130,6 +130,22 @@ test('areAnagrams: ignores case/space/punct', () => {
   assert.equal(areAnagrams('hello', 'world').isAnagram, false);
 });
 
+test('analyzeText: longest/shortest/avg use punctuation-trimmed words', () => {
+  const a = analyzeText('how many s in this sentence?');
+  assert.equal(a.longestWord, 'sentence', 'trailing "?" is not part of the word');
+  assert.equal(a.shortestWord, 's');
+  assert.equal(a.averageWordLength, 3.7); // 22 letters / 6 words
+
+  const b = analyzeText('a well-known — "quote"');
+  assert.equal(b.words, 4); // wc -w semantics: the bare dash is still a token
+  assert.equal(b.longestWord, 'well-known', 'internal hyphen kept');
+  assert.equal(b.shortestWord, 'a', 'pure-punctuation token is not a word');
+  assert.equal(b.averageWordLength, 5.3); // (1 + 10 + 5) / 3
+
+  const c = analyzeText("Don't stop");
+  assert.equal(c.longestWord, "Don't", 'internal apostrophe and case kept');
+});
+
 test('analyzeText: vowel/consonant/case + word frequency', () => {
   const a = analyzeText('The cat sat. The cat ran.');
   assert.equal(a.uppercase, 2); // two T's
