@@ -25,7 +25,11 @@ interface DebugBundle {
     amount: number;
     culprits: { tag: string; cls: string; left: number; right: number; width: number }[];
   } | null;
+  transientConsole?: string[];
 }
+
+/** A console line is an error-level entry (page error or console.error). */
+const isErrorLine = (line: string): boolean => /^error:/i.test(line);
 
 function shortUrl(url: string, truncate = true, maxLen = 100): string {
   let result: string;
@@ -69,20 +73,39 @@ export const pageInspectCommand = new Command('inspect')
     const truncate = opts.truncate !== false;
     const showAll = opts.all === true;
 
-    const res = await post<{ data: DebugBundle }>(
-      `/tools/browser/inspect`,
-      {
-        url, waitMs,
-        waitForSelector: opts.waitFor || undefined,
-        waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
-        fakeMedia: opts.fakeMedia || undefined,
-      },
-    );
+    const inspectBody = {
+      url, waitMs,
+      waitForSelector: opts.waitFor || undefined,
+      waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
+      fakeMedia: opts.fakeMedia || undefined,
+    };
+
+    const res = await post<{ data: DebugBundle }>(`/tools/browser/inspect`, inspectBody);
 
     const b = res.data;
 
+    // Self-verify console errors before flagging them. A freshly-deployed page's
+    // first hit can throw a one-time, non-reproducible error — typically a
+    // cross-origin "Script error." with no message/stack from a CDN asset still
+    // propagating — and reporting it as a real defect sends agents chasing a
+    // phantom. So when the first probe reports error-level console lines, re-probe
+    // once (the sticky session is now warm) and keep only the errors that recur;
+    // errors seen on a single probe are surfaced separately as transient noise.
+    let transientErrors: string[] = [];
+    if ((b.console || []).some(isErrorLine)) {
+      try {
+        const verify = await post<{ data: DebugBundle }>(`/tools/browser/inspect`, inspectBody);
+        const recurring = new Set((verify.data.console || []).filter(isErrorLine));
+        transientErrors = (b.console || []).filter((l) => isErrorLine(l) && !recurring.has(l));
+        b.console = (b.console || []).filter((l) => !isErrorLine(l) || recurring.has(l));
+      } catch {
+        // Re-probe failed (timeout / browser error) — report the first probe's
+        // console as-is rather than hiding anything.
+      }
+    }
+
     if (opts.json) {
-      console.log(JSON.stringify(b));
+      console.log(JSON.stringify(transientErrors.length ? { ...b, transientConsole: transientErrors } : b));
       return;
     }
 
@@ -114,6 +137,15 @@ export const pageInspectCommand = new Command('inspect')
       }
     } else {
       console.log(`\n${bold('Console:')} ${muted('(clean)')}`);
+    }
+
+    // ── Transient console errors (seen on first probe, gone on re-probe) ──
+    if (transientErrors.length > 0) {
+      console.log(`\n${bold('Transient console errors')} ${muted(`(${transientErrors.length}, not reproduced on re-probe)`)}:`);
+      for (const line of transientErrors) {
+        console.log(muted(line));
+      }
+      console.log(muted('One-time cold-load artifact (first hit of freshly-deployed assets, or a cross-origin script) — not reproducible, not in your app code. Ignore unless it recurs.'));
     }
 
     // ── Failed Resources ──
