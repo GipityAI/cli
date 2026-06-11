@@ -4,6 +4,24 @@ import { requireConfig } from '../config.js';
 import { success, error as clrError, muted, bold } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
+// `--json` is declared on the parent `workflow` command (so the bare list
+// supports it) and again on every subcommand. Commander attributes a `--json`
+// typed AFTER a positional arg to the parent's (global) scope, so a
+// subcommand's local `opts.json` is missed and JSON output is silently
+// dropped. Read the merged opts so `gipity workflow <sub> … --json` always
+// works, wherever the flag lands.
+function mergedOpts(cmd: Command): { json?: boolean } {
+  return cmd.optsWithGlobals();
+}
+
+// Platform timestamp convention (yyyy-mm-dd_hh-mm-ss): sorts chronologically,
+// unambiguous, no locale drift.
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
 interface WorkflowData {
   short_guid: string;
   name: string;
@@ -26,8 +44,34 @@ interface RunData {
   status: string;
   started_at: string;
   completed_at: string | null;
-  total_tokens: number;
+  // workflow_runs tracks input/output tokens separately; there is no single
+  // `total_tokens` column (reading it rendered a literal "undefined tokens").
+  total_input_tokens: number;
+  total_output_tokens: number;
   error_message: string | null;
+}
+
+interface StepRunData {
+  step_order: number;
+  status: string;
+  output_json: unknown;
+  tokens_used: number;
+  model_used: string | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+function runTokens(r: RunData): number {
+  return (r.total_input_tokens ?? 0) + (r.total_output_tokens ?? 0);
+}
+
+function formatRunLine(r: RunData): string {
+  const dur = r.completed_at
+    ? `${((new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000).toFixed(1)}s`
+    : 'running';
+  const statusColor = r.status === 'completed' ? success : r.status === 'failed' ? clrError : muted;
+  return `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${runTokens(r)} tokens  ${muted(fmtTime(r.started_at))}`;
 }
 
 async function listWorkflows(opts: { json?: boolean }): Promise<void> {
@@ -54,19 +98,20 @@ async function listWorkflows(opts: { json?: boolean }): Promise<void> {
 export const workflowCommand = new Command('workflow')
   .description('Manage workflows')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('Workflow', () => listWorkflows(opts)));
+  .action((_opts, cmd) => run('Workflow', () => listWorkflows(mergedOpts(cmd))));
 
 workflowCommand
   .command('list')
   .description('List workflows')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('List', () => listWorkflows(opts)));
+  .action((_opts, cmd) => run('List', () => listWorkflows(mergedOpts(cmd))));
 
 workflowCommand
   .command('info <name>')
   .description('Show workflow details')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Info', async () => {
+  .action((name: string, _opts, cmd) => run('Info', async () => {
+    const opts = mergedOpts(cmd);
     const wf = await resolveWorkflow(name);
     const res = await get<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`);
     if (opts.json) {
@@ -91,26 +136,52 @@ workflowCommand
   .command('run <name>')
   .description('Trigger a workflow')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Run', async () => {
+  .action((name: string, _opts, cmd) => run('Run', async () => {
+    const opts = mergedOpts(cmd);
     const wf = await resolveWorkflow(name);
     const res = await post<{ data: { message: string; workflow_guid: string } }>(`/workflows/${wf.short_guid}/run`, {});
     printResult(`Triggered "${wf.name}".`, opts, res.data);
   }));
 
 workflowCommand
-  .command('runs <name>')
-  .description('List recent runs')
+  .command('runs <name> [runGuid]')
+  .description('List recent runs, or pass a run guid (wr_…) to see that run\'s per-step outputs')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Runs', async () => {
+  .action((name: string, runGuid: string | undefined, _opts, cmd) => run('Runs', async () => {
+    const opts = mergedOpts(cmd);
     const wf = await resolveWorkflow(name);
-    const res = await get<{ data: RunData[] }>(`/workflows/${wf.short_guid}/runs`);
 
+    // Drill into one run: show each step's status, tokens, and output so you
+    // can verify what a run actually did (e.g. that a notify step sent).
+    if (runGuid) {
+      const res = await get<{ data: RunData & { step_runs: StepRunData[] } }>(`/workflows/${wf.short_guid}/runs/${runGuid}`);
+      const r = res.data;
+      if (opts.json) {
+        console.log(JSON.stringify(r));
+        return;
+      }
+      console.log(formatRunLine(r));
+      const steps = r.step_runs ?? [];
+      if (steps.length === 0) {
+        console.log('  (no steps recorded)');
+        return;
+      }
+      for (const s of steps) {
+        const statusColor = s.status === 'completed' ? success : s.status === 'failed' ? clrError : muted;
+        const model = s.model_used ? `  ${muted(`[${s.model_used}]`)}` : '';
+        console.log(`  ${s.step_order}. ${statusColor(s.status)}  ${s.tokens_used ?? 0} tokens${model}`);
+        if (s.error_message) console.log(`     ${clrError(s.error_message)}`);
+        if (s.output_json !== null && s.output_json !== undefined) {
+          const pretty = JSON.stringify(s.output_json, null, 2).split('\n').map(l => `     ${l}`).join('\n');
+          console.log(pretty);
+        }
+      }
+      return;
+    }
+
+    const res = await get<{ data: RunData[] }>(`/workflows/${wf.short_guid}/runs`);
     printList(res.data, opts, 'No runs.', r => {
-      const dur = r.completed_at
-        ? `${((new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000).toFixed(1)}s`
-        : 'running';
-      const statusColor = r.status === 'completed' ? success : r.status === 'failed' ? clrError : muted;
-      const line = `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${r.total_tokens} tokens  ${muted(new Date(r.started_at).toLocaleString())}`;
+      const line = formatRunLine(r);
       // Surface why a run failed inline so you don't have to hit the REST API.
       return r.error_message ? `${line}\n  ${clrError(r.error_message)}` : line;
     });
@@ -120,7 +191,8 @@ workflowCommand
   .command('enable <name>')
   .description('Enable a workflow')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Enable', async () => {
+  .action((name: string, _opts, cmd) => run('Enable', async () => {
+    const opts = mergedOpts(cmd);
     const wf = await resolveWorkflow(name);
     const res = await put<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`, { is_active: true });
     if (!res.data?.is_active) {
@@ -134,7 +206,8 @@ workflowCommand
   .command('disable <name>')
   .description('Disable a workflow')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Disable', async () => {
+  .action((name: string, _opts, cmd) => run('Disable', async () => {
+    const opts = mergedOpts(cmd);
     const wf = await resolveWorkflow(name);
     const res = await put<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`, { is_active: false });
     if (res.data?.is_active) {
@@ -150,7 +223,8 @@ workflowCommand
   .requiredOption('--from <path>', 'Project-relative YAML file path')
   .option('--name <name>', 'Override the name in the YAML')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('Create', async () => {
+  .action((_opts, cmd) => run('Create', async () => {
+    const opts = mergedOpts(cmd) as { from?: string; name?: string; json?: boolean };
     const config = requireConfig();
     const body: Record<string, unknown> = {
       config_yaml_path: opts.from,
@@ -168,7 +242,8 @@ workflowCommand
   .description('Update a workflow from a YAML file')
   .requiredOption('--from <path>', 'Project-relative YAML file path')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Edit', async () => {
+  .action((name: string, _opts, cmd) => run('Edit', async () => {
+    const opts = mergedOpts(cmd) as { from?: string; json?: boolean };
     const config = requireConfig();
     const wf = await resolveWorkflow(name);
     await put(`/workflows/${wf.short_guid}`, {
@@ -182,7 +257,8 @@ workflowCommand
   .command('delete <name>')
   .description('Delete a workflow')
   .option('--json', 'Output as JSON')
-  .action((name: string, opts) => run('Delete', async () => {
+  .action((name: string, _opts, cmd) => run('Delete', async () => {
+    const opts = mergedOpts(cmd);
     const wf = await resolveWorkflow(name);
     await del(`/workflows/${wf.short_guid}`);
     // Delete is a soft-delete (is_active → 0). Verify the targeted record
