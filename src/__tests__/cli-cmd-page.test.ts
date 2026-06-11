@@ -390,6 +390,63 @@ test('page test --observe surfaces a client action failure and exits non-zero', 
   assert.match(r.stdout, /action failed/);
 });
 
+test('page test --observe substitutes {{label}} into the URL so each client gets a distinct role', async () => {
+  mock.reset();
+  // The kickoff keys the job off the per-client URL (role=host vs role=join),
+  // proving one invocation launched two asymmetric roles concurrently.
+  mock.on('POST /tools/browser/eval', (req) => {
+    const url = String((req.body as { url?: string }).url ?? '');
+    return { body: { data: { evalJobId: url.includes('role=host') ? 'job-host' : 'job-join', status: 'queued' } } };
+  });
+  mock.on('GET /tools/browser/eval/job-host', evalDone({ label: 'host', startedAt: 1000, endedAt: 9000, samples: ['lobby', 'game'] }));
+  mock.on('GET /tools/browser/eval/job-join', evalDone({ label: 'join', startedAt: 2000, endedAt: 9000, samples: ['lobby', 'game'] }));
+  const r = await run([
+    'page', 'test', 'https://app.example/?role={{label}}',
+    '--clients', '2', '--labels', 'host,join', '--samples', '2',
+    '--observe', "document.querySelector('[data-screen]')?.dataset.screen",
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /overlapped for/);
+  const urls = mock.requests().filter((q) => q.url === '/tools/browser/eval').map((q) => (q.body as { url: string }).url);
+  assert.equal(urls.length, 2);
+  assert.ok(urls.includes('https://app.example/?role=host'), `expected a host URL, got ${urls.join(', ')}`);
+  assert.ok(urls.includes('https://app.example/?role=join'), `expected a join URL, got ${urls.join(', ')}`);
+});
+
+test('page test --observe warns to stderr when --hold exceeds the cap, keeping json stdout clean', async () => {
+  mock.reset();
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 2] },
+    Bob: { label: 'Bob', startedAt: 2000, endedAt: 9000, samples: [1, 2] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/',
+    '--clients', '2', '--labels', 'Alice,Bob', '--samples', '2', '--hold', '45000',
+    '--observe', "document.querySelectorAll('.present').length", '--json',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /45000ms exceeds the 15000ms/);
+  // stdout stays parseable JSON despite the warning.
+  const out = JSON.parse(r.stdout.trim());
+  assert.equal(out.hold, 15000);
+});
+
+test('page test --observe warns on an unrecognized {{token}} instead of sending it literally', async () => {
+  mock.reset();
+  mockInteractive({
+    Alice: { label: 'Alice', startedAt: 1000, endedAt: 9000, samples: [1, 2] },
+    Bob: { label: 'Bob', startedAt: 2000, endedAt: 9000, samples: [1, 2] },
+  });
+  const r = await run([
+    'page', 'test', 'https://app.example/?name=Bot{{index}}',
+    '--clients', '2', '--labels', 'Alice,Bob', '--samples', '2',
+    '--observe', "document.querySelectorAll('.present').length",
+  ]);
+  assert.match(r.stderr, /Unrecognized placeholder/);
+  assert.match(r.stderr, /\{\{index\}\}/);
+  assert.match(r.stderr, /\{\{label\}\}/);
+});
+
 // ── screenshot default filename helpers (pure) ─────────────────────────────
 
 test('timestampSlug renders yyyy-mm-dd_hh-mm-ss, zero-padded, sortable', () => {
