@@ -90,13 +90,27 @@ describe('cli-smoke: error behavior', () => {
   it('the one-line error is the LAST line, after the help (survives `| tail`)', () => {
     // Agents pipe CLI output through `| tail` to bound context; a leading error
     // would be dropped, leaving only help that reads as success-with-no-result.
-    const r = runCli(['page', 'eval', 'http://a']);
+    // (`expr` became optional for --file support, so `url` is the missing arg.)
+    const r = runCli(['page', 'eval']);
     const out = (r.stdout + r.stderr).replace(/\s+$/, '');
     const lastLine = out.slice(out.lastIndexOf('\n') + 1);
-    assert.match(lastLine, /error: missing required argument 'expr'/);
+    assert.match(lastLine, /error: missing required argument 'url'/);
     // Help still renders inline (no second --help trip), including addHelpText.
     assert.match(out, /Usage: gipity page eval/);
     assert.match(out, /Testing realtime\/shared state/);
+  });
+
+  it('eval with a url but neither <expr> nor --file renders help inline, error last', () => {
+    // Action-level arg-shape errors (expr is optional so commander can't catch
+    // this one) must follow the same convention as commander-detected errors:
+    // help inline, one-line error LAST so it survives `| tail`.
+    const r = runCli(['page', 'eval', 'http://a']);
+    const out = (r.stdout + r.stderr).replace(/\s+$/, '');
+    const lastLine = out.slice(out.lastIndexOf('\n') + 1);
+    assert.match(lastLine, /error: Provide an inline <expr> arg or --file <path>/);
+    assert.match(out, /Usage: gipity page eval/);
+    assert.match(out, /Testing realtime\/shared state/);
+    assert.notEqual(r.status, 0);
   });
 
   it('status without auth prints not-logged-in message', () => {
