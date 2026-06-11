@@ -3,6 +3,8 @@ import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { resolveProjectContext } from '../config.js';
+import { uploadPublicFixture, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 export interface EvalResult {
   url: string;
@@ -153,6 +155,12 @@ export const pageEvalCommand = new Command('eval')
   .argument('<url>', 'URL to load')
   .argument('[expr]', 'JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file.')
   .option('--file <path>', 'Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work.')
+  .option(
+    '--fixture <path>',
+    'Host a local file and expose it to the eval as `fixtureUrl` (and under `fixtures` by basename) to fetch in-page. For verifying a render/parse path against a real binary (an MP3, an image) - no size limit, auto-deleted after the run. Repeat for several files (single-value so it never swallows the inline <expr>).',
+    (val: string, prev: string[]) => [...prev, val],
+    [] as string[],
+  )
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
@@ -180,30 +188,63 @@ export const pageEvalCommand = new Command('eval')
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
 
-    const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
-      url, expr, waitMs,
-      waitForSelector: opts.waitFor || undefined,
-      waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
-    });
-    const d = await pollEvalResult(kickoff.data.evalJobId, waitMs);
-    const { result, noValue } = normalizeEvalResult(d.result);
+    // --fixture: host each file publicly, then splice `fixtures` / `fixtureUrl`
+    // into the eval scope so the page can fetch the bytes. The prelude makes the
+    // body a statement (const/return), so the server's expression form fails to
+    // parse and it falls back to the function-body form - which runs both inline
+    // exprs (wrapped in `return (...)`) and --file scripts. Cleanup in `finally`.
+    const fixturePaths: string[] = opts.fixture ?? [];
+    const hosted: HostedFixture[] = [];
+    let projectGuid: string | undefined;
+    let sentExpr = expr;
+    try {
+      if (fixturePaths.length) {
+        const { config } = await resolveProjectContext({});
+        projectGuid = config.projectGuid;
+        for (const p of fixturePaths) {
+          console.log(muted(`Hosting fixture ${p}…`));
+          hosted.push(await uploadPublicFixture(projectGuid!, p));
+        }
+        const map: Record<string, string> = {};
+        for (const h of hosted) map[h.name] = h.url;
+        const prelude = `const fixtures=${JSON.stringify(map)};const fixtureUrl=${JSON.stringify(hosted[0].url)};`;
+        sentExpr = opts.file ? `${prelude}\n${expr}` : `${prelude}\nreturn (${expr});`;
+      }
 
-    const execTimeout = evalExecTimeoutMessage(d.result);
-    if (execTimeout) throw new Error(execTimeout);
+      const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
+        url, expr: sentExpr, waitMs,
+        waitForSelector: opts.waitFor || undefined,
+        waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
+      });
+      const d = await pollEvalResult(kickoff.data.evalJobId, waitMs);
+      const { result, noValue } = normalizeEvalResult(d.result);
 
-    if (opts.json) {
-      console.log(JSON.stringify(noValue ? { ...d, result, hint: EVAL_NO_VALUE_HINT } : { ...d, result }));
-      return;
+      const execTimeout = evalExecTimeoutMessage(d.result);
+      if (execTimeout) throw new Error(execTimeout);
+
+      if (opts.json) {
+        console.log(JSON.stringify(noValue ? { ...d, result, hint: EVAL_NO_VALUE_HINT } : { ...d, result }));
+        return;
+      }
+
+      console.log(`${brand('Eval')} ${bold(d.url || url)}`);
+      if (d.navigationIncomplete) {
+        console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
+      }
+      if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
+      console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${expr}`);
+      console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
+      if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
+      if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
+    } finally {
+      for (const h of hosted) {
+        try {
+          await deleteFixture(projectGuid!, h.guid);
+        } catch (err) {
+          console.error(warning(`⚠ Could not auto-delete fixture "${h.name}" (${h.guid}) — still hosted at ${h.url}: ${(err as Error).message}`));
+        }
+      }
     }
-
-    console.log(`${brand('Eval')} ${bold(d.url || url)}`);
-    if (d.navigationIncomplete) {
-      console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
-    }
-    console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${expr}`);
-    console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
-    if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
-    if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
   }));
 
 // Each `page eval` call runs to completion before the next starts, so two evals
@@ -217,6 +258,10 @@ Examples:
   # Functionally test a page's own code paths: save a script that drives the UI
   # and returns a JSON-serializable result, then run it (no /tmp + shell quoting):
   gipity page eval "https://dev.gipity.ai/me/app/" --file ./tests/draw-flow.js --json
+  # Verify a render/parse path against a REAL file: --fixture hosts it, injects a
+  # fetch-able 'fixtureUrl', runs the eval, then deletes the hosted copy:
+  gipity page eval "https://dev.gipity.ai/me/app/" --fixture ./sample.mp3 \\
+    "(async()=>{ const b = await fetch(fixtureUrl).then(r=>r.arrayBuffer()); return window.App.parseId3(b); })()"
 
 The eval body runs under a ~20s in-page execution budget (its own await/setTimeout
 pauses count; --wait only sleeps BEFORE the eval and does not extend it). For a long

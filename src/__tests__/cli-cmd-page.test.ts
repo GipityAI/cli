@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
-import { makeAuthedHome } from './helpers/test-home.js';
+import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 import { timestampSlug, defaultFilename } from '../commands/page-screenshot.js';
 
 let mock: MockServer;
@@ -355,6 +355,76 @@ test('gipity page eval translates the CDP execution-budget timeout into guidance
   assert.match(r.stderr, /in-page execution budget/);
   assert.match(r.stderr, /separate from --wait/);
   assert.doesNotMatch(r.stderr, /CDP command timed out/);
+});
+
+// ── page eval --fixture (host a real file, inject fixtureUrl, auto-delete) ──
+// --fixture uploads a local file to the app's public store, splices a fetch-able
+// `fixtureUrl` into the eval scope, runs the eval, then deletes the hosted copy.
+// Needs a linked project (cwd) so the upload targets p_TestProj.
+
+/** Register the init → PUT → complete → delete chain for one fixture guid. */
+function mockFixtureUpload(guid: string, mediaUrl: string) {
+  mock.on(`POST /api/p_TestProj/uploads/init`, { body: { data: { upload_guid: guid, method: 'PUT', url: `${mock.apiBase}/presign/${guid}` } } });
+  mock.on(`PUT /presign/${guid}`, { status: 200, raw: 'ok', contentType: 'text/plain' });
+  mock.on(`POST /api/p_TestProj/uploads/complete`, { body: { data: { guid, url: mediaUrl } } });
+  mock.on(`DELETE /api/p_TestProj/uploads/${guid}`, { body: { data: { guid, deleted: true } } });
+}
+
+test('page eval --fixture hosts a file, injects fixtureUrl + fixtures, and deletes it after', async () => {
+  mock.reset();
+  const mediaUrl = 'https://media.gipity.ai/app-files/p_TestProj/2026-06/f_1/sample.bin';
+  mockFixtureUpload('f_1', mediaUrl);
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-fx', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-fx', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '{"ok":true}', truncated: false,
+  } } });
+
+  const fixturePath = join(home, 'sample.bin');
+  writeFileSync(fixturePath, Buffer.from([1, 2, 3, 4]));
+  const projectDir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'eval', 'https://example.com', 'await fetch(fixtureUrl)', '--fixture', fixturePath],
+    { env: { HOME: home }, cwd: projectDir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+
+  // The bytes went up via PUT, and the eval body got the injected fixtureUrl.
+  const evalReq = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  const expr = (evalReq!.body as { expr: string }).expr;
+  assert.match(expr, /const fixtureUrl=/);
+  assert.match(expr, /media\.gipity\.ai\/app-files\/p_TestProj\/2026-06\/f_1\/sample\.bin/);
+  assert.match(expr, /"sample\.bin"/);  // basename key in the `fixtures` map
+  assert.ok(mock.requests().some((q) => q.method === 'PUT' && q.url === '/presign/f_1'), 'bytes were PUT to the presigned URL');
+
+  // Cleanup: the hosted fixture was deleted after the run.
+  assert.ok(
+    mock.requests().some((q) => q.method === 'DELETE' && q.url === '/api/p_TestProj/uploads/f_1'),
+    'fixture was auto-deleted',
+  );
+});
+
+test('page eval --fixture still deletes the hosted file when the eval itself fails', async () => {
+  mock.reset();
+  mockFixtureUpload('f_2', 'https://media.gipity.ai/app-files/p_TestProj/2026-06/f_2/clip.mp3');
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-fxe', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-fxe', { body: { data: {
+    status: 'error', httpStatus: 502, code: 'BROWSER_ERROR', reason: 'stayed on about:blank',
+  } } });
+
+  const fixturePath = join(home, 'clip.mp3');
+  writeFileSync(fixturePath, Buffer.from([0, 1, 2]));
+  const projectDir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'eval', 'https://example.com', '--fixture', fixturePath, 'fetch(fixtureUrl)'],
+    { env: { HOME: home }, cwd: projectDir },
+  );
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /about:blank/);
+  // The eval failed, but the finally-block cleanup still ran.
+  assert.ok(
+    mock.requests().some((q) => q.method === 'DELETE' && q.url === '/api/p_TestProj/uploads/f_2'),
+    'fixture was deleted even though the eval errored',
+  );
 });
 
 // ── page test interactive mode (concurrent clients + overlap verification) ──
