@@ -7,7 +7,7 @@
 import { clearConfigCache, saveConfigAt, getApiBaseOverride, GipityConfig } from './config.js';
 import { sync } from './sync.js';
 import { createProgressReporter } from './progress.js';
-import { setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
+import { setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
 import { substituteDir } from './template-vars.js';
 import { muted } from './colors.js';
 
@@ -27,9 +27,10 @@ export interface FinalizeLocalProjectOpts {
   sync?: 'soft' | 'strict';
   /** Allow interactive bulk-deletion confirmation. Hook-driven callers pass false. */
   interactive?: boolean;
-  /** Subset of AI-tool primers to write. Defaults to all of `SUPPORTED_TOOLS`
+  /** Subset of AI-tool primers to write. Defaults to `DEFAULT_TOOLS`
    *  (preserves the historical behavior of writing CLAUDE.md + AGENTS.md
-   *  unconditionally, plus the new Gemini/Copilot/Cursor primers). */
+   *  unconditionally, plus the new Gemini/Copilot/Cursor primers - but not
+   *  opt-in tools like aider, whose setup writes an `.aider.conf.yml`). */
   tools?: typeof SUPPORTED_TOOLS;
 }
 
@@ -89,7 +90,7 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
     // soft mode - swallow; caller can log
   }
 
-  const tools = opts.tools ?? SUPPORTED_TOOLS;
+  const tools = opts.tools ?? DEFAULT_TOOLS;
   // Claude hooks (file-sync + capture) only matter if the Claude primer is
   // being written. Skipping them for Codex/Gemini/Cursor-only inits avoids
   // littering `.claude/settings.json` into projects that don't use Claude.

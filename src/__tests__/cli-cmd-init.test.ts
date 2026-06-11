@@ -7,7 +7,7 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCliAsync } from './helpers/spawn-cli.js';
@@ -67,6 +67,43 @@ test('gipity init warns and aborts when it would nest inside an existing project
   assert.match(r.stdout, /already a Gipity project/);
   assert.match(r.stdout, /Aborted/);
   assert.equal(existsSync(join(sub, '.gipity.json')), false, 'an aborted init must not write a config');
+});
+
+test('gipity init --for aider writes AGENTS.md plus a read: entry in .aider.conf.yml', async () => {
+  mock.reset();
+  const dir = freshDir();
+  writeConfig(dir, 'aider-proj');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init', '--for', 'aider'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(dir, 'AGENTS.md')), 'writes the shared AGENTS.md primer');
+  const conf = readFileSync(join(dir, '.aider.conf.yml'), 'utf-8');
+  assert.match(conf, /^read: \[AGENTS\.md\]$/m, 'conf points aider at AGENTS.md');
+  assert.equal(existsSync(join(dir, 'CLAUDE.md')), false, '--for aider writes no other primers');
+});
+
+test('gipity init default tool set skips aider (opt-in only)', async () => {
+  mock.reset();
+  const dir = freshDir();
+  writeConfig(dir, 'no-aider');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(dir, 'AGENTS.md')), 'codex primer still written');
+  assert.equal(existsSync(join(dir, '.aider.conf.yml')), false, 'no aider conf without --for aider');
+});
+
+test('gipity init re-run refreshes a stale config ignore list with current defaults', async () => {
+  mock.reset();
+  const dir = freshDir();
+  writeConfig(dir, 'stale-ignore'); // fixture writes ignore: []... seed a stale non-empty list
+  const cfgPath = join(dir, '.gipity.json');
+  const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+  cfg.ignore = ['node_modules', '.git'];
+  writeFileSync(cfgPath, JSON.stringify(cfg));
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init', '--for', 'aider'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const after = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+  assert.ok(after.ignore.includes('.aider.conf.yml'), 'new workstation artifacts unioned into ignore');
+  assert.ok(after.ignore.includes('node_modules'), 'existing entries kept');
 });
 
 test('gipity init creates a new project in an empty directory', async () => {

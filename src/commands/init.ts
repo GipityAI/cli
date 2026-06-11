@@ -2,9 +2,9 @@ import { Command } from 'commander';
 import { basename, resolve, dirname } from 'path';
 import { existsSync } from 'fs';
 import { getAccountSlug } from '../api.js';
-import { getConfig, getConfigPath } from '../config.js';
+import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
 import { getAuth } from '../auth.js';
-import { slugify, setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS } from '../setup.js';
+import { slugify, setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from '../setup.js';
 import { success, error as clrError, info, muted, bold } from '../colors.js';
 import { confirm } from '../utils.js';
 import {
@@ -19,14 +19,17 @@ import {
 const TOOL_KEYS = SUPPORTED_TOOLS.map(t => t.key);
 
 function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
-  if (!forFlag || forFlag === 'all') return SUPPORTED_TOOLS;
+  if (!forFlag) return DEFAULT_TOOLS;
   const requested = forFlag.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   const unknown = requested.filter(k => !TOOL_KEYS.includes(k) && k !== 'all');
   if (unknown.length) {
     throw new Error(`Unknown --for value(s): ${unknown.join(', ')}. Valid: ${TOOL_KEYS.join(', ')}, all`);
   }
-  if (requested.includes('all')) return SUPPORTED_TOOLS;
-  return SUPPORTED_TOOLS.filter(t => requested.includes(t.key));
+  // `all` expands to the default set; an opt-in tool still joins when named
+  // alongside it (`--for all,aider`).
+  return SUPPORTED_TOOLS.filter(
+    t => requested.includes(t.key) || (!t.optIn && requested.includes('all')),
+  );
 }
 
 export const initCommand = new Command('init')
@@ -35,7 +38,7 @@ export const initCommand = new Command('init')
   .option('--agent <guid>', 'Agent GUID to use')
   .option(
     '--for <tools>',
-    `Which AI tool primer files to write (comma-separated). Default: all. Choices: ${TOOL_KEYS.join(', ')}, all`,
+    `Which AI tool primer files to write (comma-separated). Default: all except aider (opt-in - it also writes .aider.conf.yml). Choices: ${TOOL_KEYS.join(', ')}, all`,
   )
   .addHelpText('after', `
 Examples:
@@ -43,6 +46,8 @@ Examples:
   $ gipity init my-app                   Link cwd with an explicit slug.
   $ gipity init --for codex              Write only AGENTS.md (skip Claude/Cursor/etc).
   $ gipity init --for cursor,gemini      Write only the Cursor + Gemini primers.
+  $ gipity init --for aider              AGENTS.md + a read: entry in .aider.conf.yml
+                                         (aider auto-reads nothing, so it's opt-in).
 
 Working with an existing Gipity project:
   - If cwd's name matches the remote project's slug, init auto-adopts it.
@@ -90,6 +95,17 @@ Working with an existing Gipity project:
         if (wantsClaude) setupClaudeHooks();
         writeAllPrimers();
         setupGitignore();
+        // The config's ignore list was frozen at link time, so a workstation
+        // artifact introduced by a newer CLI (e.g. aider's .aider.conf.yml)
+        // would sync up as project content. Union in the current defaults.
+        if (existing) {
+          const cur = existing.ignore ?? (existing.ignore = []);
+          const missing = DEFAULT_SYNC_IGNORE.filter(e => !cur.includes(e));
+          if (missing.length) {
+            cur.push(...missing);
+            saveConfigAt(cwd, existing);
+          }
+        }
         console.log(success(`Refreshed primer files: ${primerSummary}.`));
         return;
       }

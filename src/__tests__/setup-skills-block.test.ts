@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySkillsBlock, GIPITY_BLOCK_BEGIN, GIPITY_BLOCK_END, SKILLS_CONTENT, PRIMER_FILES, DEFAULT_SYNC_IGNORE, SUPPORTED_TOOLS } from '../setup.js';
+import { applySkillsBlock, applyAiderConf, GIPITY_BLOCK_BEGIN, GIPITY_BLOCK_END, SKILLS_CONTENT, PRIMER_FILES, AIDER_CONF_FILE, DEFAULT_SYNC_IGNORE, SUPPORTED_TOOLS, DEFAULT_TOOLS } from '../setup.js';
 import { shouldIgnore } from '../config.js';
 
 function count(haystack: string, needle: string): number {
@@ -91,5 +91,90 @@ test('every supported tool maps to a known primer file', () => {
   const known = new Set<string>(Object.keys(PRIMER_FILES));
   for (const tool of SUPPORTED_TOOLS) {
     assert.ok(known.has(tool.key), `tool "${tool.key}" has no PRIMER_FILES entry`);
+  }
+});
+
+test('the aider conf file is excluded by the sync filter', () => {
+  assert.ok(shouldIgnore(AIDER_CONF_FILE, DEFAULT_SYNC_IGNORE));
+});
+
+test('the default tool set excludes opt-in tools', () => {
+  assert.ok(SUPPORTED_TOOLS.some(t => t.key === 'aider'), 'aider is a supported tool');
+  assert.ok(!DEFAULT_TOOLS.some(t => t.optIn), 'no opt-in tool in the default set');
+  assert.ok(DEFAULT_TOOLS.some(t => t.key === 'claude'), 'default set keeps the standard tools');
+});
+
+// ── applyAiderConf - the .aider.conf.yml read: merge ────────────────────
+// Aider auto-discovers no instruction file, so its setup must wire a
+// `read: AGENTS.md` entry into .aider.conf.yml without clobbering whatever
+// config the user already has. Covers the three `read:` shapes aider
+// documents (flow list, scalar, block list) plus absence and idempotency.
+
+test('aider conf: no file -> fresh conf reading AGENTS.md', () => {
+  const out = applyAiderConf(null);
+  assert.ok(out, 'writes a new file');
+  assert.match(out!, /^read: \[AGENTS\.md\]$/m, 'has a read: entry');
+  assert.ok(out!.startsWith('#'), 'leads with an explanatory comment');
+  assert.ok(out!.endsWith('\n'), 'newline-terminated');
+});
+
+test('aider conf: existing conf without read: -> entry appended, rest kept', () => {
+  const out = applyAiderConf('model: gpt-5\nauto-commits: false\n');
+  assert.ok(out!.includes('model: gpt-5'), 'user keys preserved');
+  assert.match(out!, /^read: \[AGENTS\.md\]$/m);
+});
+
+test('aider conf: flow-list read: -> AGENTS.md joins the list', () => {
+  const out = applyAiderConf('read: [CONVENTIONS.md, notes.txt]\n');
+  assert.match(out!, /^read: \[CONVENTIONS\.md, notes\.txt, AGENTS\.md\]$/m);
+});
+
+test('aider conf: empty flow-list read: -> AGENTS.md fills it', () => {
+  const out = applyAiderConf('read: []\n');
+  assert.match(out!, /^read: \[AGENTS\.md\]$/m);
+});
+
+test('aider conf: scalar read: -> promoted to a list with both entries', () => {
+  const out = applyAiderConf('read: CONVENTIONS.md\n');
+  assert.match(out!, /^read: \[CONVENTIONS\.md, AGENTS\.md\]$/m);
+});
+
+test('aider conf: block-list read: -> AGENTS.md added as an item, indent matched', () => {
+  const out = applyAiderConf('read:\n  - CONVENTIONS.md\nmodel: gpt-5\n');
+  const lines = out!.split('\n');
+  assert.deepEqual(lines.slice(0, 3), ['read:', '  - AGENTS.md', '  - CONVENTIONS.md']);
+  assert.ok(out!.includes('model: gpt-5'), 'later keys preserved');
+});
+
+test('aider conf: AGENTS.md already wired -> no change', () => {
+  for (const conf of [
+    'read: [AGENTS.md]\n',
+    'read: AGENTS.md\n',
+    'read:\n  - AGENTS.md\n',
+    'read: [CONVENTIONS.md, AGENTS.md]\n',
+  ]) {
+    assert.equal(applyAiderConf(conf), null, `should be a no-op for: ${JSON.stringify(conf)}`);
+  }
+});
+
+test('aider conf: a commented-out entry does not count as wired', () => {
+  const out = applyAiderConf('# read: [AGENTS.md]\nmodel: gpt-5\n');
+  assert.ok(out, 'still adds a live entry');
+  assert.match(out!, /^read: \[AGENTS\.md\]$/m);
+  assert.ok(out!.includes('# read: [AGENTS.md]'), 'the comment is preserved');
+});
+
+test('aider conf: idempotent - re-applying the result is a no-op', () => {
+  const inputs: (string | null)[] = [
+    null,
+    'model: gpt-5\n',
+    'read: [CONVENTIONS.md]\n',
+    'read: CONVENTIONS.md\n',
+    'read:\n  - CONVENTIONS.md\n',
+  ];
+  for (const input of inputs) {
+    const once = applyAiderConf(input);
+    assert.ok(once, 'first apply changes the file');
+    assert.equal(applyAiderConf(once), null, 'second apply is a no-op');
   }
 });
