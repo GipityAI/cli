@@ -156,6 +156,54 @@ test('gipity page inspect --json emits the raw inspect bundle', async () => {
   assert.equal(parsed.overflow.overflowX, false);
 });
 
+// A console error that recurs on the re-probe is a real defect — reported as-is.
+test('gipity page inspect re-probes on console errors and reports reproducible ones', async () => {
+  mock.reset();
+  let calls = 0;
+  mock.on('POST /tools/browser/inspect', () => {
+    calls++;
+    return { body: { data: { ...baseBundle, console: ['error: ReferenceError: foo is not defined'] } } };
+  });
+  const r = await run(['page', 'inspect', 'https://example.com']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(calls, 2, 'inspect re-probes once when errors are present');
+  assert.match(r.stdout, /ReferenceError: foo is not defined/);
+  assert.doesNotMatch(r.stdout, /Transient console errors/);
+});
+
+// A console error gone on the re-probe is a cold-load transient — demoted, not flagged.
+test('gipity page inspect demotes a non-reproducible console error to transient', async () => {
+  mock.reset();
+  let calls = 0;
+  mock.on('POST /tools/browser/inspect', () => {
+    calls++;
+    const console = calls === 1
+      ? ['error: (message-less error — details hidden by the browser\'s cross-origin policy)']
+      : [];
+    return { body: { data: { ...baseBundle, console } } };
+  });
+  const r = await run(['page', 'inspect', 'https://example.com']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(calls, 2);
+  assert.match(r.stdout, /Transient console errors/);
+  assert.match(r.stdout, /not reproduced on re-probe/);
+});
+
+test('gipity page inspect --json moves transient errors to transientConsole', async () => {
+  mock.reset();
+  let calls = 0;
+  mock.on('POST /tools/browser/inspect', () => {
+    calls++;
+    const console = calls === 1 ? ['error: (message-less error)'] : [];
+    return { body: { data: { ...baseBundle, console } } };
+  });
+  const r = await run(['page', 'inspect', 'https://example.com', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.deepEqual(parsed.console, []);
+  assert.deepEqual(parsed.transientConsole, ['error: (message-less error)']);
+});
+
 // Eval is async: POST returns a job id, the CLI polls GET until the job is
 // done. The mock returns a fixed evalJobId and the matching done record.
 test('gipity page eval prints the serialized expression result', async () => {
