@@ -87,6 +87,18 @@ describe('cli-smoke: error behavior', () => {
     assert.match(out, /Showing `gipity page screenshot --help`:/);
   });
 
+  it('the one-line error is the LAST line, after the help (survives `| tail`)', () => {
+    // Agents pipe CLI output through `| tail` to bound context; a leading error
+    // would be dropped, leaving only help that reads as success-with-no-result.
+    const r = runCli(['page', 'eval', 'http://a']);
+    const out = (r.stdout + r.stderr).replace(/\s+$/, '');
+    const lastLine = out.slice(out.lastIndexOf('\n') + 1);
+    assert.match(lastLine, /error: missing required argument 'expr'/);
+    // Help still renders inline (no second --help trip), including addHelpText.
+    assert.match(out, /Usage: gipity page eval/);
+    assert.match(out, /Testing realtime\/shared state/);
+  });
+
   it('status without auth prints not-logged-in message', () => {
     const r = runCli(['status']);
     // status returns 0 even when not logged in (it's a status report)

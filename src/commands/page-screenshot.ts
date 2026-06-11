@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { mkdirSync, writeFileSync } from 'fs';
-import { join, resolve as resolvePath } from 'path';
+import { dirname, join, resolve as resolvePath } from 'path';
 import { postForTarEntries } from '../api.js';
 import { getProjectRoot } from '../config.js';
 import { brand, bold, muted, success } from '../colors.js';
@@ -187,7 +187,6 @@ export const pageScreenshotCommand = new Command('screenshot')
     const slug = slugFromUrl(url);
     const ts = timestampSlug();
     const dir = defaultScreenshotDir();
-    if (!opts.output) mkdirSync(dir, { recursive: true });
     const savedFiles: string[] = [];
     for (let i = 0; i < pngs.length; i++) {
       const shot = meta.screenshots[i];
@@ -195,6 +194,10 @@ export const pageScreenshotCommand = new Command('screenshot')
       const target = opts.output
         ? opts.output
         : join(dir, defaultFilename(slug, ts, suffix));
+      // Create the target's parent dir so a `-o` path under a not-yet-existing
+      // directory (e.g. .gipity/screenshots/home.png) writes cleanly instead of
+      // failing with a raw ENOENT and forcing a manual `mkdir -p`.
+      mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, pngs[i].buffer);
       // Absolute path so the agent knows exactly where the file landed.
       savedFiles.push(resolvePath(target));

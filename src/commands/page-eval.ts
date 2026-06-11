@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
-import { brand, bold, muted, warning } from '../colors.js';
+import { brand, bold, muted, warning, error as clrError } from '../colors.js';
 import { run } from '../helpers/index.js';
 
 export interface EvalResult {
@@ -72,15 +73,40 @@ export async function pollEvalResult(evalJobId: string, expectedWorkMs: number):
 // curated metrics don't cover what you need (computed styles, element rects,
 // visibility, z-index stacks), eval an expression in page context and get the
 // serialized result back. Runs in the same browser sandbox as inspect.
+//
+// The body runs as an async function, so it can be an inline expression OR a
+// multi-statement script with `return`/`await`. Pass a saved script with
+// --file to functionally exercise a page's own code paths headlessly (drive
+// tools, undo/redo, transforms) and `return` a JSON-serializable result —
+// no /tmp + shell command-substitution harness needed.
 export const pageEvalCommand = new Command('eval')
-  .description('Evaluate a JS expression in a real browser on a page (DOM, computed styles, element rects)')
+  .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script)')
   .argument('<url>', 'URL to load')
-  .argument('<expr>', 'JavaScript expression to evaluate in page context (result is JSON-serialized)')
+  .argument('[expr]', 'JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file.')
+  .option('--file <path>', 'Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work.')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
-  .action((url: string, expr: string, opts) => run('Page eval', async () => {
+  .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
+    if (exprArg !== undefined && opts.file) {
+      console.error(clrError('Pass either an inline <expr> arg or --file <path>, not both'));
+      process.exit(1);
+    }
+    if (exprArg === undefined && !opts.file) {
+      console.error(clrError('Provide an inline <expr> arg or --file <path>'));
+      process.exit(1);
+    }
+    let expr = exprArg as string;
+    if (opts.file) {
+      try {
+        expr = readFileSync(opts.file, 'utf8');
+      } catch {
+        console.error(clrError(`Cannot read file: ${opts.file}`));
+        process.exit(1);
+      }
+    }
+
     const waitMs = capWaitMs(opts.wait, url);
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
@@ -101,7 +127,7 @@ export const pageEvalCommand = new Command('eval')
     if (d.navigationIncomplete) {
       console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
     }
-    console.log(`${muted('Expression:')} ${expr}`);
+    console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${expr}`);
     console.log(`\n${d.result || muted('(empty result)')}`);
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
   }));
@@ -112,6 +138,12 @@ export const pageEvalCommand = new Command('eval')
 // concurrent `page test --observe` instead, which overlaps N clients and reports
 // whether they actually ran together.
 pageEvalCommand.addHelpText('after', `
+Examples:
+  gipity page eval "https://dev.gipity.ai/me/app/" "document.title"
+  # Functionally test a page's own code paths: save a script that drives the UI
+  # and returns a JSON-serializable result, then run it (no /tmp + shell quoting):
+  gipity page eval "https://dev.gipity.ai/me/app/" --file ./tests/draw-flow.js --json
+
 Testing realtime/shared state across clients?
   Separate 'page eval' calls run sequentially (one finishes before the next
   starts), so they never overlap and will each see only themselves - a false
