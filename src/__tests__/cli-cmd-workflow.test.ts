@@ -55,14 +55,46 @@ test('gipity workflow runs <name> lists recent runs', async () => {
   mock.reset();
   mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
   mock.on('GET /workflows/wf_WflowAa0/runs', { body: { data: [
-    { short_guid: 'wr_Run00001', status: 'completed', started_at: '2026-05-01T10:00:00Z', completed_at: '2026-05-01T10:00:05Z', total_tokens: 100 },
-    { short_guid: 'wr_Run00002', status: 'failed',    started_at: '2026-05-02T10:00:00Z', completed_at: null, total_tokens: 50 },
+    { short_guid: 'wr_Run00001', status: 'completed', started_at: '2026-05-01T10:00:00Z', completed_at: '2026-05-01T10:00:05Z', total_input_tokens: 80, total_output_tokens: 20 },
+    { short_guid: 'wr_Run00002', status: 'failed',    started_at: '2026-05-02T10:00:00Z', completed_at: null, total_input_tokens: 40, total_output_tokens: 10 },
   ] } });
   const r = await fresh(['workflow', 'runs', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /wr_Run00001/);
   assert.match(r.stdout, /completed/);
   assert.match(r.stdout, /failed/);
+  // input + output tokens summed; never the literal "undefined".
+  assert.match(r.stdout, /100 tokens/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity workflow runs <name> --json emits JSON (flag after positional)', async () => {
+  mock.reset();
+  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('GET /workflows/wf_WflowAa0/runs', { body: { data: [
+    { short_guid: 'wr_Run00001', status: 'completed', started_at: '2026-05-01T10:00:00Z', completed_at: '2026-05-01T10:00:05Z', total_input_tokens: 80, total_output_tokens: 20 },
+  ] } });
+  const r = await fresh(['workflow', 'runs', 'Daily', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout);
+  assert.equal(parsed[0].short_guid, 'wr_Run00001');
+});
+
+test('gipity workflow runs <name> <runGuid> shows per-step outputs', async () => {
+  mock.reset();
+  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('GET /workflows/wf_WflowAa0/runs/wr_Run00001', { body: { data: {
+    short_guid: 'wr_Run00001', status: 'completed', started_at: '2026-05-01T10:00:00Z', completed_at: '2026-05-01T10:00:05Z', total_input_tokens: 80, total_output_tokens: 20,
+    step_runs: [
+      { step_order: 1, status: 'completed', tokens_used: 100, model_used: 'claude-sonnet-4-6', error_message: null, output_json: { sent: true, to: 'user@example.com' }, started_at: '2026-05-01T10:00:00Z', completed_at: '2026-05-01T10:00:05Z' },
+    ],
+  } } });
+  const r = await fresh(['workflow', 'runs', 'Daily', 'wr_Run00001']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /wr_Run00001/);
+  assert.match(r.stdout, /completed/);
+  assert.match(r.stdout, /"sent": true/);
+  assert.match(r.stdout, /user@example\.com/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
