@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { dirname, extname, relative } from 'path';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
@@ -12,6 +12,20 @@ const LANG_MAP: Record<string, string> = {
   javascript: 'javascript',
   py: 'python',
   python: 'python',
+  bash: 'bash',
+  sh: 'bash',
+};
+
+// Interpreter tokens accepted at the head of a `run <interpreter> <file>`
+// invocation (e.g. `gipity sandbox run python build_report.py`), mirroring how
+// you'd launch a script locally. Maps each token to the canonical language.
+const INTERPRETERS: Record<string, string> = {
+  python: 'python',
+  python3: 'python',
+  py: 'python',
+  node: 'javascript',
+  js: 'javascript',
+  javascript: 'javascript',
   bash: 'bash',
   sh: 'bash',
 };
@@ -31,7 +45,7 @@ export const sandboxCommand = new Command('sandbox')
   .description('Run code in a sandbox');
 
 sandboxCommand
-  .command('run [code]')
+  .command('run [args...]')
   .description('Run code')
   .option('--language <language>', 'Language: js, py, or bash', 'js')
   .option('--file <path>', 'Read the code body from a file instead of the inline <code> arg; --language is inferred from the extension when not given')
@@ -65,6 +79,8 @@ Examples:
 
   # Run a script file directly (language inferred from .py)
   $ gipity sandbox run --file build_report.py
+  $ gipity sandbox run python build_report.py   # same thing, interpreter shorthand
+  $ gipity sandbox run bash "echo hi; ffmpeg -version"   # inline, language pinned
 
   # Surgical: only these files are mirrored in
   $ gipity sandbox run --language bash \\
@@ -79,33 +95,62 @@ Pre-installed: Python (pandas, numpy, matplotlib, Pillow, scipy, bs4),
 CLI tools (ImageMagick, FFmpeg, webp/cwebp, optipng, jq, pandoc, exiftool,
 GCC/Rust).
 `)
-  .action((code: string | undefined, opts, command: Command) => run('Sandbox', async () => {
+  .action((args: string[] = [], opts, command: Command) => run('Sandbox', async () => {
     const { config } = await resolveProjectContext();
 
-    if (code !== undefined && opts.file) {
+    // Resolve the positional args into either inline code or a script-file path.
+    // `run <interpreter> <file>` (e.g. `run python build_report.py`) is the natural
+    // mental model, so accept it: a leading interpreter token + a path becomes
+    // --file with the language pinned by the interpreter. A single positional is
+    // inline code, same as before.
+    let inlineCode: string | undefined;
+    let filePath: string | undefined = opts.file;
+    let langFromInterp: string | undefined;
+    if (args.length >= 2 && INTERPRETERS[args[0].toLowerCase()] !== undefined) {
+      langFromInterp = INTERPRETERS[args[0].toLowerCase()];
+      const rest = args.slice(1).join(' ');
+      // `run python build_report.py` -> a script file; `run bash "echo hi"` -> inline code.
+      if (existsSync(rest) && statSync(rest).isFile()) filePath = rest;
+      else inlineCode = rest;
+    } else if (args.length === 1) {
+      inlineCode = args[0];
+    } else if (args.length > 1) {
+      console.error(clrError('Unrecognized invocation. Pass inline code as a single quoted arg, a script with --file <path>, or use the `run <python|node|bash> <file>` shorthand.'));
+      process.exit(1);
+    }
+
+    if (inlineCode !== undefined && filePath) {
       console.error(clrError('Pass either an inline <code> arg or --file <path>, not both'));
       process.exit(1);
     }
-    if (code === undefined && !opts.file) {
+    if (inlineCode === undefined && !filePath) {
       console.error(clrError('Provide an inline <code> arg or --file <path>'));
       process.exit(1);
     }
 
-    let source = code;
-    if (opts.file) {
+    let source = inlineCode;
+    if (filePath) {
       try {
-        source = readFileSync(opts.file, 'utf8');
+        source = readFileSync(filePath, 'utf8');
       } catch {
-        console.error(clrError(`Cannot read file: ${opts.file}`));
+        console.error(clrError(`Cannot read file: ${filePath}`));
         process.exit(1);
       }
     }
 
-    // Infer language from the file extension unless --language was given explicitly.
-    const fromExt = opts.file && command.getOptionValueSource('language') === 'default'
-      ? LANG_MAP[extname(opts.file).slice(1).toLowerCase()]
+    // Language precedence: interpreter token > file extension (unless --language
+    // was passed explicitly) > the --language value (default js).
+    const fromExt = filePath && !langFromInterp && command.getOptionValueSource('language') === 'default'
+      ? LANG_MAP[extname(filePath).slice(1).toLowerCase()]
       : undefined;
-    const language = fromExt || LANG_MAP[opts.language] || opts.language;
+    const language = langFromInterp || fromExt || LANG_MAP[opts.language] || opts.language;
+
+    // True when the run fell back to the implicit JS default - nothing in the
+    // command shape pinned a language. Used to explain the execution mode if a
+    // shell/Python snippet gets parsed as JavaScript and blows up (see hint below).
+    const usedDefaultJs = !langFromInterp
+      && command.getOptionValueSource('language') === 'default'
+      && language === 'javascript';
 
     if (!['javascript', 'python', 'bash'].includes(language)) {
       console.error(clrError(`Invalid language: ${opts.language}. Use: js, py, or bash`));
@@ -157,6 +202,14 @@ GCC/Rust).
         console.log(`\nOutput files ${pulledLocal ? 'synced to this directory' : 'saved to project'}:`);
         for (const f of res.data.outputFiles) console.log(`${f}`);
       }
-      if (res.data.exitCode !== 0) process.exit(res.data.exitCode);
+      if (res.data.exitCode !== 0) {
+        // A SyntaxError / CJS-loader trace under the implicit JS default almost
+        // always means the input was shell or Python that got run as JavaScript.
+        // The raw Node stack trace never says which mode ran, so name it.
+        if (usedDefaultJs && /SyntaxError|cjs\/loader|wrapSafe/.test(res.data.stderr || '')) {
+          console.error(dim('Hint: ran as JavaScript (the default). For a shell command pass `--language bash` (or `gipity sandbox run bash "<cmd>"`); for Python pass `--language py`.'));
+        }
+        process.exit(res.data.exitCode);
+      }
     }
   }));
