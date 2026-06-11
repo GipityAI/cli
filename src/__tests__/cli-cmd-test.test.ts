@@ -36,6 +36,9 @@ test('gipity test --no-sync runs and prints pass/fail summary', async () => {
   assert.match(r.stdout, /3 passed/);
   assert.match(r.stdout, /health endpoint/);
   assert.doesNotMatch(r.stdout, /undefined/);
+  // The run prints a discoverable retrieval path so details can be re-fetched
+  // by GUID later without re-running the (possibly paid) suite.
+  assert.match(r.stdout, new RegExp(`gipity test status ${RUN_GUID} --json`));
 });
 
 test('gipity test --filter <path> runs tests for that path', async () => {
@@ -132,6 +135,26 @@ test('gipity test status <runGuid> shows current run state', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /passed/);
   assert.match(r.stdout, /5\/5 passed/);
+});
+
+test('gipity test results <runGuid> --json re-fetches a finished run without re-running', async () => {
+  mock.reset();
+  mock.on(`GET /projects/p_TestProj/test/status/${RUN_GUID}`, { body: { data: {
+    runGuid: RUN_GUID, status: 'failed', total: 6, passed: 4, failed: 2, skipped: 0,
+    durationMs: 13467, totalFiles: 2, completedFiles: 2,
+    startedAt: '2026-05-01T10:00:00Z', updatedAt: '2026-05-01T10:00:01Z', finishedAt: '2026-05-01T10:00:01Z',
+    results: [
+      { path: 'api/gen.test.js', name: 'image gen', status: 'failed', durationMs: 9000, error: 'boom', retryCount: 0, isFlaky: false },
+    ],
+  } } });
+  // `results` is an alias for `status`; no /test/run POST should be issued.
+  const r = await fresh(['test', 'results', RUN_GUID, '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.runGuid, RUN_GUID);
+  assert.equal(parsed.failed, 2);
+  assert.equal(parsed.results[0].error, 'boom');
+  assert.ok(!mock.requests().some((q) => q.url.endsWith('/test/run')), 'must not start a new run');
 });
 
 test('gipity test history shows recent runs', async () => {
