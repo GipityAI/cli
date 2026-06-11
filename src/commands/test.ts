@@ -126,8 +126,11 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
           const progress = data.totalFiles === 0
             ? 'starting up'
             : `${data.completedFiles}/${data.totalFiles} files`;
+          // "so far" so a heartbeat line, if captured on its own (tail/grep),
+          // can't be mistaken for the final tally — the partial count climbing
+          // toward the total previously read as "tests vanished".
           const tally = data.passed + data.failed > 0
-            ? ` (${data.passed} passed${data.failed > 0 ? `, ${data.failed} failed` : ''})`
+            ? ` (${data.passed} passed${data.failed > 0 ? `, ${data.failed} failed` : ''} so far)`
             : '';
           console.log(muted(`  … still running — ${progress}${tally}, ${elapsed}s elapsed`));
           if (now - startTime >= LONG_RUN_MS && !longRunHintShown) {

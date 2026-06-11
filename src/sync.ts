@@ -328,6 +328,24 @@ async function downloadAll(
 }
 
 async function fetchOne(projectGuid: string, path: string): Promise<Buffer | null> {
+  // Exact single-file read first. The tree-tar endpoint below treats its `path`
+  // as a DIRECTORY prefix, so a single root file (e.g. `gipity.yaml`) comes back
+  // empty — which silently broke conflict restores and trapped sync in an
+  // unresolvable delete-vs-newer loop. `/files/read` is the exact-path endpoint
+  // (what `gipity file cat` uses); it returns text content, reliable for the
+  // config/code files that actually hit a restore. Binary falls through to tar.
+  try {
+    const res = await get<{ data: { content: string; mime?: string } }>(
+      `/projects/${projectGuid}/files/read?path=${encodeURIComponent(path)}`,
+    );
+    const content = res?.data?.content;
+    if (typeof content === 'string' && isTextMime(res?.data?.mime, path)) {
+      return Buffer.from(content, 'utf-8');
+    }
+  } catch {
+    /* fall through to the tar path */
+  }
+
   try {
     const stream = await downloadStream(
       `/projects/${projectGuid}/files/tree?content=tar&path=${encodeURIComponent(path)}`,
@@ -352,6 +370,14 @@ async function fetchOne(projectGuid: string, path: string): Promise<Buffer | nul
   } catch {
     return null;
   }
+}
+
+// Treat a file as text (safe to round-trip through `/files/read`'s string body)
+// from its mime or, failing that, a code/config extension. Binary needs the
+// byte-exact tar path.
+function isTextMime(mime: string | undefined, path: string): boolean {
+  if (mime && (mime.startsWith('text/') || /(json|javascript|xml|yaml|x-sh|sql)/.test(mime))) return true;
+  return /\.(js|mjs|cjs|ts|tsx|jsx|json|yaml|yml|sql|md|txt|html|css|svg|csv|env|sh|toml|ini)$/i.test(path);
 }
 
 // ─── Classification ────────────────────────────────────────────
@@ -479,9 +505,13 @@ export function plan(
     }
     // deleted × absent → baseline is stale, drop it silently (no action)
     if (lSide === 'deleted' && rSide === 'absent') continue;
-    // deleted × unchanged → delete remote
+    // deleted × unchanged → delete remote. Use the remote's CURRENT version for
+    // the optimistic-delete check, not the baseline's: the content can be equal
+    // (rSide 'unchanged' is sha-based) while the server version moved ahead - the
+    // baseline version would then fail the CAS and the delete would loop. The
+    // remote read we already have carries the live version.
     if (lSide === 'deleted' && rSide === 'unchanged') {
-      actions.push({ path, kind: 'delete-remote', remoteSize: R!.size, expectedServerVersion: B!.serverVersion });
+      actions.push({ path, kind: 'delete-remote', remoteSize: R!.size, expectedServerVersion: R!.serverVersion });
       continue;
     }
     // deleted × modified → remote wins, restore locally — but only if the remote
@@ -906,7 +936,13 @@ async function syncInner(
             };
             errors.push(`Could not delete ${a.path}: server has a newer version - restored the server copy locally (delete it again and re-sync to confirm)`);
           } catch {
-            errors.push(`Could not delete ${a.path}: server has newer version - re-sync to resolve`);
+            // Restore failed (e.g. the bytes truly couldn't be fetched). DROP the
+            // baseline entry rather than leave a stale one: a stale entry re-plans
+            // the same impossible delete every run (the original loop). With no
+            // baseline, the next sync re-evaluates this path from scratch — as a
+            // remote 'added' it downloads cleanly, no loop.
+            delete baseline.files[a.path];
+            errors.push(`Could not delete ${a.path}: server has a newer version - reset its sync state; re-run \`gipity sync\` to pull the server copy.`);
           }
         } else if (err instanceof ApiError && err.statusCode === 404) {
           // Already gone - drop from baseline.
