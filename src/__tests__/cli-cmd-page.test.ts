@@ -1,5 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome } from './helpers/test-home.js';
@@ -145,6 +147,45 @@ test('gipity page eval --json emits url, result, and truncated', async () => {
   const parsed = JSON.parse(r.stdout.trim());
   assert.equal(parsed.result, '42');
   assert.equal(parsed.truncated, true);
+});
+
+test('gipity page eval --file sends the script file contents as the expr', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-1', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-1', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '{"ok":true}', truncated: false,
+  } } });
+  const scriptPath = join(home, 'draw-flow.js');
+  const script = '(function(){ return JSON.stringify({ ok: true }); })()';
+  writeFileSync(scriptPath, script);
+  const r = await run(['page', 'eval', 'https://example.com', '--file', scriptPath, '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  assert.ok(req, 'eval request was received');
+  assert.equal((req!.body as { expr: string }).expr, script);
+});
+
+test('gipity page eval rejects passing both an inline expr and --file', async () => {
+  mock.reset();
+  const scriptPath = join(home, 'flow.js');
+  writeFileSync(scriptPath, 'document.title');
+  const r = await run(['page', 'eval', 'https://example.com', 'document.title', '--file', scriptPath]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /either an inline <expr> arg or --file/);
+});
+
+test('gipity page eval requires an inline expr or --file', async () => {
+  mock.reset();
+  const r = await run(['page', 'eval', 'https://example.com']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Provide an inline <expr> arg or --file/);
+});
+
+test('gipity page eval reports an unreadable --file path', async () => {
+  mock.reset();
+  const r = await run(['page', 'eval', 'https://example.com', '--file', join(home, 'does-not-exist.js')]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Cannot read file/);
 });
 
 test('gipity page eval surfaces a failed eval job', async () => {
