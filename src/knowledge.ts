@@ -114,7 +114,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-audio\` - sound effects, music, transcription
 - \`app-auth\` - sign in with Gipity, popup vs redirect
 - \`app-files\` - uploads, variants, file listing
-- \`app-image\` - providers, sizes, aspect ratios
+- \`app-image\` - text-to-image only (no input image / editing); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
 - \`app-realtime\` - Gipity Realtime rooms, relay vs state
