@@ -281,6 +281,24 @@ test('gipity page eval surfaces a failed eval job', async () => {
   assert.match(r.stderr, /about:blank/);
 });
 
+// An eval body whose own awaits overrun the in-page execution budget comes back
+// from agent-browser as a {success:false, error:"CDP command timed out:
+// Runtime.evaluate"} envelope, surfaced verbatim as the result. The CLI must
+// translate that into an actionable error, not print the opaque envelope.
+test('gipity page eval translates the CDP execution-budget timeout into guidance', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-cdp', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-cdp', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":false,"data":null,"error":"CDP command timed out: Runtime.evaluate"}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '(async()=>{})()']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /in-page execution budget/);
+  assert.match(r.stderr, /separate from --wait/);
+  assert.doesNotMatch(r.stderr, /CDP command timed out/);
+});
+
 // ── page test interactive mode (concurrent clients + overlap verification) ──
 // Each client posts to /tools/browser/eval (a harness that runs --action then
 // samples --observe) and polls the job. The mock keys off the per-client label
