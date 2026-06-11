@@ -11,13 +11,33 @@ sync-docs:
     cd ../platform && node --import tsx scripts/build-knowledge.ts
     echo "✓ Synced knowledge.ts from platform"
 
-# Build CLI (sync docs, auto-bump patch version, compile TypeScript)
+# Build CLI (sync docs, compile TypeScript). No version bump — versions advance
+# at publish time only, so local builds/links don't dirty package.json with
+# numbers npm has never seen.
 cli-build:
-    just sync-docs && npm version patch --no-git-tag-version && npm run build
+    just sync-docs && npm run build
 
-# Publish CLI to npm (build bumps version, then publish)
+# Publish CLI to npm (bump patch, build, publish, record the bump in git).
+# The git steps are best-effort: a publish must never fail on them, but an
+# unrecorded bump means the next publish from a fresh checkout collides with
+# an already-published version — so warn loudly and let `gw ready` flag it.
 cli-publish:
-    just cli-build && npm publish --access public
+    #!/usr/bin/env bash
+    set -e
+    just sync-docs
+    npm version patch --no-git-tag-version
+    npm run build
+    npm publish --access public
+    VER=$(node -p "require('./package.json').version")
+    git commit -m "chore: cli v${VER} (npm publish)" -- package.json package-lock.json \
+      || { echo "WARN: could not commit version bump — record v${VER} manually"; exit 0; }
+    git fetch origin main
+    if [ "$(git rev-list --count origin/main..HEAD)" -gt 1 ]; then
+      echo "WARN: checkout has other unpushed commits — v${VER} bump committed locally only"
+      exit 0
+    fi
+    git pull --rebase --autostash origin main && git push origin main \
+      || echo "WARN: push failed — v${VER} bump committed locally; push manually (gw ready will flag it)"
 
 # Run CLI locally without linking (compile + execute, passes args through)
 cli-dev *ARGS:
