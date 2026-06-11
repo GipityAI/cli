@@ -29,6 +29,7 @@ interface WorkflowData {
   is_active: number;
   trigger_type: string;
   cron_expression: string | null;
+  trigger_table: string | null;
   project_name: string | null;
   project_slug: string | null;
   steps?: any[];
@@ -89,8 +90,9 @@ async function listWorkflows(opts: { json?: boolean }): Promise<void> {
   printList(res.data, opts, 'No workflows.', w => {
     const statusText = w.is_active ? success('on') : clrError('off');
     const cron = w.cron_expression ? `  ${muted(`cron: ${w.cron_expression}`)}` : '';
+    const table = w.trigger_table ? `  ${muted(`table: ${w.trigger_table}`)}` : '';
     const proj = w.project_slug ? `  ${muted(`(${w.project_slug})`)}` : '';
-    const line = `${bold(w.name)}  [${statusText}]  ${muted(w.trigger_type)}${cron}${proj}`;
+    const line = `${bold(w.name)}  [${statusText}]  ${muted(w.trigger_type)}${cron}${table}${proj}`;
     return w.description ? `${line}\n  ${muted(w.description)}` : line;
   });
 }
@@ -121,7 +123,7 @@ workflowCommand
       console.log(`Name:    ${w.name}`);
       console.log(`GUID:    ${w.short_guid}`);
       console.log(`Active:  ${w.is_active ? 'yes' : 'no'}`);
-      console.log(`Trigger: ${w.trigger_type}${w.cron_expression ? ` (${w.cron_expression})` : ''}`);
+      console.log(`Trigger: ${w.trigger_type}${w.cron_expression ? ` (${w.cron_expression})` : ''}${w.trigger_table ? ` (table: ${w.trigger_table})` : ''}`);
       if (w.description) console.log(`Desc:    ${w.description}`);
       if (w.steps && w.steps.length > 0) {
         console.log(`Steps:`);
