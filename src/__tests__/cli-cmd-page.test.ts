@@ -281,6 +281,63 @@ test('gipity page eval surfaces a failed eval job', async () => {
   assert.match(r.stderr, /about:blank/);
 });
 
+// A script that runs but returns undefined (no `return`) comes back as the raw
+// agent-browser envelope. The CLI must unwrap it to a clean value and explain
+// how to shape a returnable result instead of printing an opaque blob.
+test('gipity page eval explains a no-value (undefined) result and hides the raw envelope', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-nv', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-nv', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":true,"data":{"origin":"https://example.com","result":null},"error":null}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', "document.getElementById('x').value='hi'"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /no JSON-serializable value/);
+  assert.doesNotMatch(r.stdout, /"success":true/);  // raw envelope never shown
+});
+
+test('gipity page eval --json cleans the leaked envelope and attaches a hint', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-nvj', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-nvj', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":true,"data":{"origin":"https://example.com","result":null},"error":null}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'void 0', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.result, 'null');
+  assert.match(parsed.hint, /no JSON-serializable value/);
+});
+
+test('gipity page eval hints on a bare null result', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-null', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-null', { body: { data: {
+    status: 'done', url: 'https://example.com', result: 'null', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'window.missing', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.result, 'null');
+  assert.match(parsed.hint, /no JSON-serializable value/);
+});
+
+// A genuine serialized value must pass through untouched — no spurious hint.
+test('gipity page eval does not hint on a real value', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-ok', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-ok', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '{"n":1}', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '({n:1})', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.result, '{"n":1}');
+  assert.equal(parsed.hint, undefined);
+});
+
 // ── page test interactive mode (concurrent clients + overlap verification) ──
 // Each client posts to /tools/browser/eval (a harness that runs --action then
 // samples --observe) and polls the job. The mock keys off the per-client label

@@ -12,6 +12,45 @@ export interface EvalResult {
   note?: string;
 }
 
+// Shown when an eval runs cleanly but returns nothing serializable. Turns a
+// bare/opaque `null` into a deterministic, actionable nudge so the agent shapes
+// a returnable value instead of guessing and retrying.
+export const EVAL_NO_VALUE_HINT =
+  'The eval ran but returned no JSON-serializable value. A statement body with no `return`, an assignment, a void call, or a DOM node/function all serialize to null. ' +
+  'End the script with an expression — or an explicit `return` — that yields plain data, e.g. `return { label: input.value, count: items.length }` or `return JSON.stringify(payload)`.';
+
+/** Normalize a raw eval result for display. The eval can come back as a useful
+ *  serialized value, the literal `null`/`undefined`/empty string, or — when the
+ *  script returns undefined — agent-browser's raw envelope leaking through
+ *  (`{"success":true,"data":{"origin":…,"result":null},"error":null}`). The last
+ *  two mean the same thing to the agent: no value came back. Unwrap the leaked
+ *  envelope so it never reaches the agent as an opaque blob, and flag the
+ *  no-value cases so the caller can attach EVAL_NO_VALUE_HINT. */
+export function normalizeEvalResult(raw: string): { result: string; noValue: boolean } {
+  const trimmed = (raw ?? '').trim();
+  if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') {
+    return { result: trimmed, noValue: true };
+  }
+  // A leaked agent-browser eval envelope (only emitted when the eval returns
+  // undefined): unwrap to the inner value. Strict shape match — exact key set
+  // plus a string origin — so a genuine user object never trips this.
+  if (trimmed.startsWith('{') && trimmed.includes('"result"')) {
+    try {
+      const env = JSON.parse(trimmed);
+      const isEnvelope = env && typeof env === 'object'
+        && Object.keys(env).every((k) => k === 'success' || k === 'data' || k === 'error')
+        && env.data && typeof env.data === 'object'
+        && typeof env.data.origin === 'string' && 'result' in env.data;
+      if (isEnvelope) {
+        const inner = env.data.result;
+        if (inner == null) return { result: 'null', noValue: true };
+        return { result: typeof inner === 'string' ? inner : JSON.stringify(inner), noValue: false };
+      }
+    } catch { /* not the envelope — fall through and show the raw value */ }
+  }
+  return { result: raw, noValue: false };
+}
+
 type EvalJobRecord =
   | { status: 'running' }
   | ({ status: 'done' } & EvalResult)
@@ -117,9 +156,10 @@ export const pageEvalCommand = new Command('eval')
       waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
     });
     const d = await pollEvalResult(kickoff.data.evalJobId, waitMs);
+    const { result, noValue } = normalizeEvalResult(d.result);
 
     if (opts.json) {
-      console.log(JSON.stringify(d));
+      console.log(JSON.stringify(noValue ? { ...d, result, hint: EVAL_NO_VALUE_HINT } : { ...d, result }));
       return;
     }
 
@@ -128,7 +168,8 @@ export const pageEvalCommand = new Command('eval')
       console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
     }
     console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${expr}`);
-    console.log(`\n${d.result || muted('(empty result)')}`);
+    console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
+    if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
     if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
   }));
 
