@@ -110,6 +110,40 @@ test('gipity page inspect omits fakeMedia when --fake-media is absent', async ()
   assert.equal((req!.body as { fakeMedia?: boolean }).fakeMedia, undefined);
 });
 
+test('gipity page inspect clamps --wait over the 30s cap and explains instead of leaking a raw server error', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run(['page', 'inspect', 'https://example.com', '--wait', '60000']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/inspect');
+  assert.equal((req!.body as { waitMs?: number }).waitMs, 30000, 'waitMs clamped to the cap');
+  assert.match(r.stderr, /30000ms cap/);
+  assert.match(r.stderr, /page test/);
+});
+
+test('gipity page inspect forwards a sub-cap --wait unchanged with no warning', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run(['page', 'inspect', 'https://example.com', '--wait', '5000']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/inspect');
+  assert.equal((req!.body as { waitMs?: number }).waitMs, 5000);
+  assert.doesNotMatch(r.stderr, /cap/);
+});
+
+test('gipity page eval clamps --wait over the 30s cap in the kickoff body', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-w', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-w', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '1', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '1', '--wait', '90000']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { waitMs?: number }).waitMs, 30000);
+  assert.match(r.stderr, /30000ms cap/);
+});
+
 test('gipity page inspect --json emits the raw inspect bundle', async () => {
   mock.reset();
   mock.on('POST /tools/browser/inspect', { body: { data: {
