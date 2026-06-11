@@ -50,11 +50,33 @@ interface ObserveResult {
 const MAX_HOLD_MS = 15_000; // keep each in-page await under the ~20s browser action timeout
 const MIN_HOLD_MS = 1_000;
 
-/** Splice per-client values into a user expression. `{{label}}` → the client's
- *  label, `{{i}}` → its 0-based index. Plain string replace (no regex) so the
- *  expression's own characters are never treated as patterns. */
+/** Splice per-client values into a user string (URL, --action, or --observe).
+ *  `{{label}}` → the client's label, `{{i}}` → its 0-based index. Plain string
+ *  replace (no regex) so the string's own characters are never treated as
+ *  patterns. */
 function subst(expr: string, label: string, i: number): string {
   return expr.split('{{label}}').join(label).split('{{i}}').join(String(i));
+}
+
+/** Collect any `{{...}}` placeholders the runner does NOT recognize, so an
+ *  invented token (e.g. `{{name}}`) is flagged instead of passing through
+ *  verbatim into every client's URL/expression. */
+function unknownTokens(...strings: (string | undefined)[]): string[] {
+  const out = new Set<string>();
+  for (const s of strings) {
+    for (const m of (s ?? '').match(/\{\{[^}]*\}\}/g) ?? []) {
+      if (m !== '{{i}}' && m !== '{{label}}') out.add(m);
+    }
+  }
+  return [...out];
+}
+
+/** One-time warning (non-JSON) for unrecognized placeholders left as-is. */
+function warnUnknownTokens(unknown: string[], json?: boolean): void {
+  if (json || unknown.length === 0) return;
+  console.log(warning(
+    `⚠ Unrecognized placeholder ${unknown.join(', ')} left as-is — only {{i}} (0-based client index) and {{label}} are substituted per client.`,
+  ));
 }
 
 /** Build the statement-body script one client runs: do the one-time action,
@@ -155,6 +177,8 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
   const labels = (opts.labels ? String(opts.labels).split(',').map((s) => s.trim()) : []).filter(Boolean);
   const labelFor = (i: number) => labels[i] ?? `client-${i}`;
 
+  warnUnknownTokens(unknownTokens(url, opts.action, observe), opts.json);
+
   if (!opts.json) {
     console.log(`${brand('Page test')} ${muted('(interactive)')} ${bold(url)}`);
     console.log(muted(`${clients} client(s), stagger ${stagger}s, hold ${hold}ms, ${samples} samples each`));
@@ -172,7 +196,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
         hold,
         samples,
       );
-      return observeClient(url, expr, i, labelFor(i), settle, hold, opts.waitFor);
+      return observeClient(subst(url, labelFor(i), i), expr, i, labelFor(i), settle, hold, opts.waitFor);
     })());
   }
   const results = (await Promise.all(runs)).sort((a, b) => a.i - b.i);
@@ -235,6 +259,10 @@ async function runPassive(url: string, opts: TestOpts): Promise<void> {
   const clients = Math.max(1, parseInt(opts.clients, 10) || 2);
   const stagger = opts.stagger != null ? Math.max(0, parseInt(opts.stagger, 10) || 0) : 12;
   const wait = Math.min(30000, Math.max(2000, parseInt(opts.wait, 10) || 24000));
+  const labels = (opts.labels ? String(opts.labels).split(',').map((s) => s.trim()) : []).filter(Boolean);
+  const labelFor = (i: number) => labels[i] ?? `client-${i}`;
+
+  warnUnknownTokens(unknownTokens(url), opts.json);
 
   if (!opts.json) {
     console.log(`${brand('Page test')} ${bold(url)}`);
@@ -246,7 +274,7 @@ async function runPassive(url: string, opts: TestOpts): Promise<void> {
     runs.push((async () => {
       await sleep(i * stagger * 1000);
       if (!opts.json) console.log(`${muted(`client ${i}${i === 0 ? ' (first)' : ''} starting`)}`);
-      return inspectClient(url, wait, i);
+      return inspectClient(subst(url, labelFor(i), i), wait, i);
     })());
   }
   const results = (await Promise.all(runs)).sort((a, b) => a.i - b.i);
@@ -296,14 +324,14 @@ async function runPassive(url: string, opts: TestOpts): Promise<void> {
 //  just because the clients never actually ran together.
 export const pageTestCommand = new Command('test')
   .description('Multi-client realtime check: load a URL in N concurrent headless clients; flag console errors, or drive an action and observe shared state (--observe)')
-  .argument('<url>', 'Deployed URL to load in every client')
+  .argument('<url>', 'Deployed URL to load in every client ({{i}}=client index, {{label}}=client label are substituted per client, e.g. ?name=Bot{{i}})')
   .option('--clients <n>', 'Number of headless clients to launch', '2')
   .option('--stagger <s>', 'Seconds between client starts (passive default 12; interactive default 0)')
   .option('--wait <ms>', 'Passive mode: ms each client stays open after load (max 30000)', '24000')
   // Interactive mode (--observe drives it):
   .option('--observe <expr>', 'Interactive: JS expression sampled in each client to read shared state (e.g. presence count). Switches on interactive mode.')
   .option('--action <expr>', 'Interactive: one-time JS run in each client before observing (e.g. fill a name + submit). {{label}}/{{i}} are substituted per client.')
-  .option('--labels <csv>', 'Interactive: per-client labels substituted for {{label}} (default client-0, client-1, …)')
+  .option('--labels <csv>', 'Per-client labels substituted for {{label}} in the URL/--action/--observe (default client-0, client-1, …)')
   .option('--hold <ms>', `Interactive: total observe window per client (${MIN_HOLD_MS}-${MAX_HOLD_MS}ms)`, '8000')
   .option('--samples <k>', 'Interactive: number of observations across the hold window (2-30)', '6')
   .option('--wait-for <selector>', 'Interactive: wait for this CSS selector before running --action (deterministic readiness gate)')
@@ -312,6 +340,9 @@ export const pageTestCommand = new Command('test')
 Examples:
   # Passive: load in 3 staggered clients, flag console errors
   gipity page test "https://dev.gipity.ai/me/app/" --clients 3 --stagger 8
+
+  # Per-client URL params: each client joins under a distinct name (Bot0, Bot1, …)
+  gipity page test "https://dev.gipity.ai/me/app/?name=Bot{{i}}" --clients 2
 
   # Interactive: two concurrent clients each join with a name, then watch the
   # live presence count. The command confirms the clients actually overlapped.

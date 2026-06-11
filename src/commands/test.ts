@@ -208,6 +208,9 @@ export const testCommand = new Command('test')
       if (data.skipped > 0) parts.push(muted(`${data.skipped} skipped`));
       console.log(`${parts.join(', ')} ${muted(`(${data.durationMs}ms)`)}`);
 
+      // The run's results are stored; re-fetch them (no re-run) by GUID.
+      console.log(muted(`Re-fetch this run's details (no re-run): gipity test status ${runGuid} --json`));
+
       if (data.failed > 0) process.exit(1);
   }));
 
@@ -215,11 +218,16 @@ export const testCommand = new Command('test')
 
 testCommand
   .command('status')
-  .description('Check a test run')
+  .alias('results')
+  .description('Fetch a finished (or running) test run by GUID — full per-test results, no re-run')
   .argument('<runGuid>', 'Test run GUID (e.g. tr_abc123)')
   .option('--json', 'Output as JSON')
   .option('--follow', 'Follow until complete (poll)')
-  .action((runGuid: string, opts) => run('Status', async () => {
+  // optsWithGlobals: the parent `test` command also declares `--json`, and with
+  // root-level enablePositionalOptions commander attaches a post-subcommand
+  // `--json` to that parent — so the subcommand's own opts would miss it.
+  .action((runGuid: string, _o, command: Command) => run('Status', async () => {
+      const opts = command.optsWithGlobals();
       const config = requireConfig();
 
       if (opts.follow) {
@@ -263,7 +271,9 @@ testCommand
   .description('Show recent runs')
   .option('--limit <n>', 'Number of runs to show', '10')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('History', async () => {
+  // optsWithGlobals: see the status subcommand — `--json` lands on the parent.
+  .action((_o, command: Command) => run('History', async () => {
+      const opts = command.optsWithGlobals();
       const config = requireConfig();
       const res = await get<{
         data: Array<{

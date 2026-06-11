@@ -390,6 +390,37 @@ test('page test --observe surfaces a client action failure and exits non-zero', 
   assert.match(r.stdout, /action failed/);
 });
 
+// ── page test per-client URL substitution + unknown-token warning ──────────
+
+test('page test substitutes {{i}} in the URL so each client loads a distinct URL', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run([
+    'page', 'test', 'https://app.example/?name=Bot{{i}}',
+    '--clients', '2', '--stagger', '0',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  const urls = mock.requests()
+    .filter((q) => q.url === '/tools/browser/inspect')
+    .map((q) => (q.body as { url: string }).url);
+  assert.ok(urls.includes('https://app.example/?name=Bot0'), urls.join(', '));
+  assert.ok(urls.includes('https://app.example/?name=Bot1'), urls.join(', '));
+  // The literal placeholder must NOT survive into any request.
+  assert.ok(!urls.some((u) => u.includes('{{i}}')));
+});
+
+test('page test warns when the URL carries an unrecognized {{...}} placeholder', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run([
+    'page', 'test', 'https://app.example/?name=Bot{{name}}',
+    '--clients', '1', '--stagger', '0',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Unrecognized placeholder \{\{name\}\}/);
+  assert.match(r.stdout, /\{\{i\}\}/);
+});
+
 // ── screenshot default filename helpers (pure) ─────────────────────────────
 
 test('timestampSlug renders yyyy-mm-dd_hh-mm-ss, zero-padded, sortable', () => {
