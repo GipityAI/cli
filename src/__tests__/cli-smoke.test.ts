@@ -122,7 +122,7 @@ describe('cli-smoke: error behavior', () => {
 });
 
 describe('cli-smoke: subcommand --help wiring', () => {
-  for (const cmd of ['chat', 'deploy', 'db', 'fn', 'memory', 'scaffold', 'login', 'doctor', 'update']) {
+  for (const cmd of ['chat', 'deploy', 'db', 'fn', 'memory', 'add', 'login', 'doctor', 'update']) {
     it(`gipity ${cmd} --help exits 0`, () => {
       const r = runCli([cmd, '--help']);
       assert.equal(r.status, 0, `${cmd} --help failed: ${r.stderr}`);

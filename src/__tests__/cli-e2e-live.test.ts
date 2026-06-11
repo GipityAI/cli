@@ -73,9 +73,13 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.equal(data.project?.slug, projectSlug);
   });
 
-  it('3. scaffold --type api creates expected files', () => {
-    const r = cli(['scaffold', '--type', 'api']);
-    assert.equal(r.status, 0, `scaffold failed: ${r.stderr || r.stdout}`);
+  it('3. add web-fullstack creates expected files', () => {
+    // `gipity scaffold` was retired in the move to templates/kits; `add` is the
+    // user path now. web-fullstack keeps every downstream assertion meaningful:
+    // its gipity.yaml declares files + database + functions phases, ships the
+    // `example` function (5a/5b), and auto-creates the project DB (6b).
+    const r = cli(['add', 'web-fullstack'], { timeout: 120000 });
+    assert.equal(r.status, 0, `add web-fullstack failed: ${r.stderr || r.stdout}`);
     assert.ok(existsSync(join(projectDir, 'gipity.yaml')), 'gipity.yaml missing');
     assert.ok(existsSync(join(projectDir, 'functions')), 'functions/ missing');
     assert.ok(existsSync(join(projectDir, 'tests')), 'tests/ missing');
@@ -103,7 +107,7 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.equal(r.status, 0);
   });
 
-  it('5a. fn list shows the scaffolded example function', () => {
+  it('5a. fn list shows the template example function', () => {
     const r = cli(['fn', 'list', '--json']);
     assert.equal(r.status, 0);
     const fns = JSON.parse(r.stdout);
