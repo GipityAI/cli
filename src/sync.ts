@@ -279,13 +279,25 @@ interface RemoteFileRaw {
   serverVersion: number;
 }
 
+// Tree paths key everything: the remote listing, the tar entries, the local
+// walk (which uses leading-slash-free `relative(root, …)`), and the baseline.
+// Source files come back slash-free, but Storage/job-written objects (e.g.
+// `/uploads/fl_…/clip.mp4`) are listed with a leading slash while their tar
+// entry is slash-free - so a blind `all.get('/uploads/…')` misses and sync
+// reports a freshly-pulled file as "Download missing", then re-plans it every
+// run. Strip leading slashes at every boundary so all four keys agree.
+function normalizeTreePath(p: string): string {
+  return p.replace(/^\/+/, '');
+}
+
 async function fetchRemote(projectGuid: string): Promise<Map<string, RemoteFileInfo>> {
   const res = await get<{ data: RemoteFileRaw[] }>(`/projects/${projectGuid}/files/tree`);
   const out = new Map<string, RemoteFileInfo>();
   for (const f of res.data) {
     if (f.type !== 'file') continue;
-    out.set(f.path, {
-      path: f.path,
+    const path = normalizeTreePath(f.path);
+    out.set(path, {
+      path,
       size: f.size,
       sha256: f.contentHash,
       serverVersion: f.serverVersion,
@@ -306,7 +318,7 @@ async function downloadAll(
     extract.on('entry', (header, entryStream, next) => {
       const chunks: Buffer[] = [];
       entryStream.on('data', (c: Buffer) => { chunks.push(c); onBytes?.(c.length); });
-      entryStream.on('end', () => { files.set(header.name, Buffer.concat(chunks)); next(); });
+      entryStream.on('end', () => { files.set(normalizeTreePath(header.name), Buffer.concat(chunks)); next(); });
       entryStream.resume();
     });
     extract.on('finish', () => resolve(files));
@@ -324,7 +336,7 @@ async function fetchOne(projectGuid: string, path: string): Promise<Buffer | nul
     return await new Promise<Buffer | null>((resolve, reject) => {
       let found: Buffer | null = null;
       extract.on('entry', (header, entryStream, next) => {
-        if (header.name === path) {
+        if (normalizeTreePath(header.name) === normalizeTreePath(path)) {
           const chunks: Buffer[] = [];
           entryStream.on('data', (c: Buffer) => chunks.push(c));
           entryStream.on('end', () => { found = Buffer.concat(chunks); next(); });
