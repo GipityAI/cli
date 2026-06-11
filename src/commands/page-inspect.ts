@@ -3,6 +3,7 @@ import { post } from '../api.js';
 import { formatSize } from '../utils.js';
 import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { capWaitMs } from './page-eval.js';
 
 interface DebugBundle {
   url: string;
@@ -45,7 +46,7 @@ function shortUrl(url: string, truncate = true, maxLen = 100): string {
 export const pageInspectCommand = new Command('inspect')
   .description('Inspect a web page (console, failed resources, timing, layout overflow)')
   .argument('<url>', 'URL to inspect')
-  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before capturing (lets late async/LCP work settle)', '500')
+  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before capturing (lets late async/LCP work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before capturing (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
@@ -62,8 +63,7 @@ export const pageInspectCommand = new Command('inspect')
       process.exit(1);
     }
     return run('Page inspect', async () => {
-    const parsedWait = parseInt(opts.wait, 10);
-    const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
+    const waitMs = capWaitMs(opts.wait, url);
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
     const truncate = opts.truncate !== false;

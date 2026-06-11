@@ -18,6 +18,26 @@ type EvalJobRecord =
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// A single browser session is held open synchronously for the whole --wait, so
+// the server caps it at the gateway idle timeout. Longer is impossible in one
+// shot; watching an app past 30s means several windows, not one big wait.
+export const MAX_WAIT_MS = 30_000;
+
+/** Parse --wait (defaulting to 500ms), clamping to the per-call cap. When the
+ *  caller asks for more than the cap, clamp and explain — to stderr, so --json
+ *  stdout stays clean — and point at the windowed watch primitive instead of
+ *  leaking the server's raw "Too big" validation error. */
+export function capWaitMs(rawWait: string, url: string): number {
+  const parsed = parseInt(rawWait, 10);
+  const wait = Number.isFinite(parsed) && parsed >= 0 ? parsed : 500;
+  if (wait <= MAX_WAIT_MS) return wait;
+  console.error(warning(
+    `--wait ${wait}ms exceeds the ${MAX_WAIT_MS}ms cap (one browser session is held open synchronously; longer trips the gateway timeout) — using ${MAX_WAIT_MS}ms. ` +
+    `To watch an app that keeps changing past 30s, cover the span with staggered windows in one command: gipity page test "${url}" --clients N --stagger S.`,
+  ));
+  return MAX_WAIT_MS;
+}
+
 /** Poll the async eval job until it finishes. Eval runs server-side as a
  *  short-lived job (so a long --wait can't trip the gateway idle timeout);
  *  we submit, then poll the result out of the job store. `expectedWorkMs` is
@@ -56,13 +76,12 @@ export const pageEvalCommand = new Command('eval')
   .description('Evaluate a JS expression in a real browser on a page (DOM, computed styles, element rects)')
   .argument('<url>', 'URL to load')
   .argument('<expr>', 'JavaScript expression to evaluate in page context (result is JSON-serialized)')
-  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle)', '500')
+  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
   .action((url: string, expr: string, opts) => run('Page eval', async () => {
-    const parsedWait = parseInt(opts.wait, 10);
-    const waitMs = Number.isFinite(parsedWait) && parsedWait >= 0 ? parsedWait : 500;
+    const waitMs = capWaitMs(opts.wait, url);
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
 
