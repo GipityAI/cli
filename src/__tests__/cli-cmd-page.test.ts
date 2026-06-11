@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome } from './helpers/test-home.js';
@@ -281,6 +282,24 @@ test('gipity page eval surfaces a failed eval job', async () => {
   assert.match(r.stderr, /about:blank/);
 });
 
+// An eval body whose own awaits overrun the in-page execution budget comes back
+// from agent-browser as a {success:false, error:"CDP command timed out:
+// Runtime.evaluate"} envelope, surfaced verbatim as the result. The CLI must
+// translate that into an actionable error, not print the opaque envelope.
+test('gipity page eval translates the CDP execution-budget timeout into guidance', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-cdp', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-cdp', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"success":false,"data":null,"error":"CDP command timed out: Runtime.evaluate"}',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '(async()=>{})()']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /in-page execution budget/);
+  assert.match(r.stderr, /separate from --wait/);
+  assert.doesNotMatch(r.stderr, /CDP command timed out/);
+});
+
 // ── page test interactive mode (concurrent clients + overlap verification) ──
 // Each client posts to /tools/browser/eval (a harness that runs --action then
 // samples --observe) and polls the job. The mock keys off the per-client label
@@ -445,6 +464,61 @@ test('page test --observe warns on an unrecognized {{token}} instead of sending 
   assert.match(r.stderr, /Unrecognized placeholder/);
   assert.match(r.stderr, /\{\{index\}\}/);
   assert.match(r.stderr, /\{\{label\}\}/);
+});
+
+// ── screenshot --wait / --post-load-delay (request-body) ───────────────────
+
+/** Pack a minimal screenshot tar (meta.json + one png) the CLI can parse. */
+function screenshotTar(): Promise<Buffer> {
+  const meta = {
+    full: false, finalUrl: 'https://example.com/', title: 'Example', status: 200, performance: null,
+    screenshots: [{
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+      width: 1280, height: 720, screenshotSizeBytes: 4, phase: 'initial-load',
+    }],
+  };
+  const pack = tarPack.pack();
+  const chunks: Buffer[] = [];
+  return new Promise((resolve) => {
+    pack.on('data', (c: Buffer) => chunks.push(c));
+    pack.on('end', () => resolve(Buffer.concat(chunks)));
+    pack.entry({ name: 'meta.json' }, JSON.stringify(meta));
+    pack.entry({ name: 'shot.png' }, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    pack.finalize();
+  });
+}
+
+async function mockScreenshot() {
+  const tar = await screenshotTar();
+  mock.on('POST /tools/browser/screenshot', { raw: tar, contentType: 'application/x-tar' });
+}
+
+test('gipity page screenshot honors --wait as an alias for --post-load-delay', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--wait', '6000', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /undefined/);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 6000, '--wait must reach the server, not be silently dropped');
+});
+
+test('gipity page screenshot lets the canonical --post-load-delay win over --wait', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--post-load-delay', '2000', '--wait', '6000', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 2000);
+});
+
+test('gipity page screenshot defaults to 1000ms when neither delay flag is given', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 1000);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────

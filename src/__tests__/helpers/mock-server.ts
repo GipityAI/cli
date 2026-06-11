@@ -14,10 +14,10 @@ import { AddressInfo } from 'net';
  */
 
 export type MockHandler =
-  | { status?: number; body?: unknown; raw?: string; contentType?: string }
+  | { status?: number; body?: unknown; raw?: string | Buffer; contentType?: string }
   | ((req: { method: string; url: string; body: unknown; headers: Record<string, string | string[] | undefined> }) =>
-      Promise<{ status?: number; body?: unknown; raw?: string; contentType?: string }> |
-      { status?: number; body?: unknown; raw?: string; contentType?: string });
+      Promise<{ status?: number; body?: unknown; raw?: string | Buffer; contentType?: string }> |
+      { status?: number; body?: unknown; raw?: string | Buffer; contentType?: string });
 
 export class MockServer {
   private routes = new Map<string, MockHandler>();
