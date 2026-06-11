@@ -100,11 +100,16 @@ describe('cli-smoke: error behavior', () => {
     assert.match(out, /Testing realtime\/shared state/);
   });
 
-  it('eval with a url but neither <expr> nor --file errors on the last line', () => {
+  it('eval with a url but neither <expr> nor --file renders help inline, error last', () => {
+    // Action-level arg-shape errors (expr is optional so commander can't catch
+    // this one) must follow the same convention as commander-detected errors:
+    // help inline, one-line error LAST so it survives `| tail`.
     const r = runCli(['page', 'eval', 'http://a']);
     const out = (r.stdout + r.stderr).replace(/\s+$/, '');
     const lastLine = out.slice(out.lastIndexOf('\n') + 1);
-    assert.match(lastLine, /Provide an inline <expr> arg or --file <path>/);
+    assert.match(lastLine, /error: Provide an inline <expr> arg or --file <path>/);
+    assert.match(out, /Usage: gipity page eval/);
+    assert.match(out, /Testing realtime\/shared state/);
     assert.notEqual(r.status, 0);
   });
 

@@ -421,6 +421,57 @@ describe('sync() - fetch-intercepted', () => {
     assert.ok(completeCalls.length >= 1, 'at least one upload-complete for the conflict copy');
   });
 
+  it('downloads a Storage/job file listed with a leading slash; no "Download missing", and a re-sync is a noop', async () => {
+    // Repro: a job writes its output to Storage at `/uploads/fl_x/clip.mp4`. The
+    // tree listing returns that path WITH a leading slash, but the tar entry is
+    // slash-free (`uploads/fl_x/clip.mp4`) - matching the local fs key. Without
+    // normalization the bulk-tar lookup misses and sync reports "Download missing"
+    // for a file it just streamed, then re-plans it on every later run/deploy.
+    const { createHash } = await import('crypto');
+    const remoteSha = createHash('sha256').update('mp4-bytes').digest('hex');
+
+    let treeListCalls = 0;
+    const makeStub = () => stubFetch(async (url) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        treeListCalls++;
+        return new Response(JSON.stringify({ data: [
+          { path: '/uploads/fl_x/clip.mp4', size: 9, modified: '2024', type: 'file',
+            guid: 'fl_x', contentHash: remoteSha, serverVersion: 4 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/files/tree?content=tar')) {
+        const tar = await import('tar-stream');
+        const pack = tar.pack();
+        pack.entry({ name: 'uploads/fl_x/clip.mp4' }, 'mp4-bytes');  // slash-free, like real tar
+        pack.finalize();
+        const chunks: Buffer[] = [];
+        for await (const c of pack as any) chunks.push(c);
+        return new Response(Buffer.concat(chunks), { status: 200 });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+
+    makeStub();
+    const result = await sync({ interactive: false });
+
+    assert.equal(result.errors.length, 0, `no errors, got: ${result.errors.join(', ')}`);
+    assert.equal(result.applied, 1);
+    assert.equal(readFileSync(join(projectDir, 'uploads', 'fl_x', 'clip.mp4'), 'utf-8'), 'mp4-bytes');
+
+    // The warning must not persist: the baseline now records the file, so a
+    // second sync sees it unchanged and plans nothing.
+    makeStub();
+    const again = await sync({ interactive: false });
+    assert.equal(again.errors.length, 0);
+    assert.equal(again.applied, 0);
+    assert.equal(again.plan.downloads, 0, 'no re-download on the next sync');
+    assert.ok(treeListCalls >= 2, 'both syncs hit the tree listing');
+  });
+
   it('apply-time 409 (baseline fresh but another client raced in between) → re-plans as conflict', async () => {
     // Plan sees: local='modified', remote='unchanged' → upload with CAS=baseline.
     // But server has already moved on between manifest-fetch and upload - returns

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { post, get, ApiError } from '../api.js';
-import { brand, bold, muted, warning, error as clrError } from '../colors.js';
+import { brand, bold, muted, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 
 export interface EvalResult {
@@ -108,6 +108,36 @@ export async function pollEvalResult(evalJobId: string, expectedWorkMs: number):
   throw new ApiError(504, 'EVAL_TIMEOUT', 'Eval did not finish in time; narrow the expression or lower --wait');
 }
 
+// The in-page execution budget for an eval body's OWN runtime (its `await`/
+// `setTimeout` pauses), enforced by agent-browser's per-command CDP timeout
+// (AGENT_BROWSER_DEFAULT_TIMEOUT) — distinct from --wait, which only sleeps
+// BEFORE the eval. Used to translate the opaque timeout envelope into guidance.
+const EVAL_EXEC_BUDGET_MS = 20_000;
+
+/** When the eval body's own runtime overruns the in-page execution budget,
+ *  agent-browser aborts the `Runtime.evaluate` CDP call and the failure comes
+ *  back as a `{success:false, error:"CDP command timed out: Runtime.evaluate"}`
+ *  envelope that the server surfaces verbatim as the eval `result` — opaque to
+ *  the caller (no timeout named, no distinction from the page or --wait). Detect
+ *  exactly that envelope and return an actionable message; null otherwise. */
+export function evalExecTimeoutMessage(result: string): string | null {
+  let parsed: { success?: unknown; error?: unknown };
+  try {
+    parsed = JSON.parse(result);
+  } catch {
+    return null;
+  }
+  if (!parsed || parsed.success !== false || typeof parsed.error !== 'string') return null;
+  if (!/CDP command timed out:\s*Runtime\.evaluate/i.test(parsed.error)) return null;
+  return (
+    `the expression hit the ~${EVAL_EXEC_BUDGET_MS / 1000}s in-page execution budget — the eval body ` +
+    `(including its own await/setTimeout pauses) ran longer than that. This budget is the time the ` +
+    `expression itself is allowed to run; it is separate from --wait, which only sleeps BEFORE the eval ` +
+    `and cannot extend it. Split a long interactive check into several shorter 'page eval' calls (e.g. ` +
+    `one per state to verify), keeping each body's in-page waits well under ${EVAL_EXEC_BUDGET_MS / 1000}s.`
+  );
+}
+
 // The long-tail escape hatch alongside `page inspect`'s fixed bundle: when the
 // curated metrics don't cover what you need (computed styles, element rects,
 // visibility, z-index stacks), eval an expression in page context and get the
@@ -128,21 +158,21 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
+    // Arg-shape errors go through commander's error() so the enableHelpAfterError
+    // hook renders this command's help inline with the one-line error LAST
+    // (survives `| tail`), same as commander-detected errors like a missing url.
     if (exprArg !== undefined && opts.file) {
-      console.error(clrError('Pass either an inline <expr> arg or --file <path>, not both'));
-      process.exit(1);
+      pageEvalCommand.error('error: Pass either an inline <expr> arg or --file <path>, not both');
     }
     if (exprArg === undefined && !opts.file) {
-      console.error(clrError('Provide an inline <expr> arg or --file <path>'));
-      process.exit(1);
+      pageEvalCommand.error('error: Provide an inline <expr> arg or --file <path>');
     }
     let expr = exprArg as string;
     if (opts.file) {
       try {
         expr = readFileSync(opts.file, 'utf8');
       } catch {
-        console.error(clrError(`Cannot read file: ${opts.file}`));
-        process.exit(1);
+        pageEvalCommand.error(`error: Cannot read file: ${opts.file}`);
       }
     }
 
@@ -157,6 +187,9 @@ export const pageEvalCommand = new Command('eval')
     });
     const d = await pollEvalResult(kickoff.data.evalJobId, waitMs);
     const { result, noValue } = normalizeEvalResult(d.result);
+
+    const execTimeout = evalExecTimeoutMessage(d.result);
+    if (execTimeout) throw new Error(execTimeout);
 
     if (opts.json) {
       console.log(JSON.stringify(noValue ? { ...d, result, hint: EVAL_NO_VALUE_HINT } : { ...d, result }));
@@ -184,6 +217,11 @@ Examples:
   # Functionally test a page's own code paths: save a script that drives the UI
   # and returns a JSON-serializable result, then run it (no /tmp + shell quoting):
   gipity page eval "https://dev.gipity.ai/me/app/" --file ./tests/draw-flow.js --json
+
+The eval body runs under a ~20s in-page execution budget (its own await/setTimeout
+pauses count; --wait only sleeps BEFORE the eval and does not extend it). For a long
+interactive sequence, split it into several shorter evals (one per state to verify)
+rather than one body with many long waits.
 
 Testing realtime/shared state across clients?
   Separate 'page eval' calls run sequentially (one finishes before the next

@@ -91,6 +91,8 @@ Before telling the user the app is online, verify the source tree is consistent:
 Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
+Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** — read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
+
 ## Tool output is complete and synchronous
 
 Every tool call returns its full output with that call. There is no output buffer to flush. Never run no-op commands (echo, date, sleep, repeated reads) to "retrieve" or "flush" lagged output - if a result looks empty or delayed, treat it as the actual result and move on, or re-run the real command once.
