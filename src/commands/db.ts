@@ -116,7 +116,10 @@ dbCommand
     } else {
       const config = requireConfig();
       const res = await get<{ data: DatabaseEntry[] }>(`/projects/${config.projectGuid}/databases`);
-      printList(res.data, opts, 'No databases. Create one: gipity db create <name>', db => db.friendlyName);
+      // This list is project-scoped; the account-wide database cap counts
+      // databases across ALL projects. An empty project can still be at the
+      // cap, so point at `--all` rather than implying nothing exists.
+      printList(res.data, opts, 'No databases in this project. Run `gipity db list --all` to see every database counting toward your account cap, or create one: gipity db create <name>', db => db.friendlyName);
     }
   }));
 
