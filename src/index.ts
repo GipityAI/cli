@@ -199,22 +199,33 @@ for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
   program.addCommand(cmd);
 }
 
-// ── Malformed invocation → print the error AND the command's help inline ──
+// ── Malformed invocation → print the command's help inline, error LAST ──
 // When an agent guesses the wrong shape (excess args, unknown command/option,
-// missing arg), don't make it run `--help` as a second trip: Commander fires
-// error() on the offending (sub)command, so showHelpAfterError(true) appends
-// that exact command's help, and a labeled header names the canonical help
-// invocation. addCommand doesn't inherit these settings, so apply recursively.
+// missing arg), don't make it run `--help` as a second trip: render that exact
+// command's help inline. The one-line error goes LAST, not first: agents
+// routinely pipe CLI output through `| tail` to bound context, which would drop
+// a leading error and leave only the help — reading as success-with-no-result.
+// A trailing error survives `tail`, names exactly which argument was wrong, and
+// reads as the conclusive failure it is. addCommand doesn't inherit this, so
+// apply recursively. (We render help ourselves rather than via
+// showHelpAfterError so the error can come after it.)
 function fullCommandName(cmd: Command): string {
   const parts: string[] = [];
   for (let c: Command | null = cmd; c; c = c.parent) parts.unshift(c.name());
   return parts.join(' ');
 }
 function enableHelpAfterError(cmd: Command): void {
-  cmd.showHelpAfterError(true);
   cmd.configureOutput({
-    outputError: (str, write) =>
-      write(`${str.replace(/\n+$/, '')}\n\nShowing \`${fullCommandName(cmd)} --help\`:\n`),
+    // Commander calls this on the offending (sub)command. We render that exact
+    // command's full help (via outputHelp, so addHelpText blocks are included)
+    // FIRST, then write the one-line error LAST. Both go to the same writeErr
+    // stream synchronously, so the order holds. We do NOT call
+    // showHelpAfterError - that would render help a second time, before the error.
+    outputError: (str, write) => {
+      write(`Showing \`${fullCommandName(cmd)} --help\`:\n\n`);
+      cmd.outputHelp({ error: true });
+      write(`\n${str.replace(/\n+$/, '')}\n`);
+    },
   });
   for (const sub of cmd.commands) enableHelpAfterError(sub);
 }
