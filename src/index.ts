@@ -28,6 +28,7 @@ import { planCommand } from './commands/plan.js';
 import { fileCommand } from './commands/file.js';
 import { claudeCommand } from './commands/claude.js';
 import { addCommand } from './commands/add.js';
+import { removeCommand } from './commands/remove.js';
 import { logsCommand } from './commands/logs.js';
 import { pageCommand } from './commands/page.js';
 import { recordsCommand } from './commands/records.js';
@@ -104,7 +105,7 @@ const program = new Command();
 program.enablePositionalOptions();
 
 // ── Command groups (logical ordering within each) ──────────────────────
-const commonGroup      = [skillCommand, projectCommand, addCommand, deployCommand];
+const commonGroup      = [skillCommand, projectCommand, addCommand, removeCommand, deployCommand];
 const connectGroup     = [claudeCommand, relayCommand];
 const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];

@@ -1,0 +1,51 @@
+import { Command } from 'commander';
+import { post } from '../api.js';
+import { requireConfig } from '../config.js';
+import { sync } from '../sync.js';
+import { success, muted } from '../colors.js';
+import { run } from '../helpers/index.js';
+import { confirm } from '../utils.js';
+
+interface RemoveResponse {
+  kind: 'kit';
+  kit: string;
+  removed: string[];
+  notes: string[];
+}
+
+export const removeCommand = new Command('remove')
+  .description('Remove an installed kit from the project (inverse of `gipity add <kit>`).')
+  .argument('<kit>', 'Kit key/directory under src/packages/ to remove')
+  .option('-y, --yes', 'Skip the confirmation prompt')
+  .option('--json', 'Output as JSON')
+  .action((kit: string, opts) => run('Remove', async () => {
+    const config = requireConfig();
+
+    if (!opts.yes && !opts.json) {
+      if (!await confirm(`Remove the "${kit}" kit (its files, import-map entries, and gipity.yaml wiring)?`)) {
+        console.log('Cancelled.');
+        return;
+      }
+    }
+
+    const res = await post<{ data: RemoveResponse }>(`/projects/${config.projectGuid}/remove`, { name: kit });
+    // Force the pull so the kit's deletions land locally without tripping the
+    // bulk-deletion guard - the removal is an explicit, user-invoked action.
+    const syncResult = await sync({ interactive: false, force: true });
+    const data = res.data;
+
+    if (opts.json) {
+      console.log(JSON.stringify({ ...data, synced: syncResult.applied }));
+      return;
+    }
+
+    console.log(success(`Removed the "${data.kit}" kit.`));
+    for (const r of data.removed) console.log(muted(`  - ${r}`));
+    if (data.notes?.length) {
+      console.log('');
+      for (const n of data.notes) console.log(n);
+    }
+    if (syncResult.applied > 0) {
+      console.log(`\nPulled ${syncResult.applied} change(s) to local.`);
+    }
+  }));
