@@ -18,6 +18,8 @@ export interface GipityConfig {
 
 const CONFIG_FILE = '.gipity.json';
 
+export const DEFAULT_API_BASE = 'https://a.gipity.ai';
+
 let cached: GipityConfig | null = null;
 let cachedPath: string | null = null;
 
@@ -30,6 +32,50 @@ export function setApiBaseOverride(url: string): void {
 
 export function getApiBaseOverride(): string | null {
   return apiBaseOverride;
+}
+
+/**
+ * Hosts we will attach the account/device token to. `.gipity.json` is found by
+ * walking up from cwd, so its `apiBase` is attacker-controllable: cloning a repo
+ * (or installing a template) that ships `{"apiBase":"https://evil.example"}`
+ * would otherwise redirect the very next `gipity` command's bearer — and, on
+ * refresh, the 7-day refresh token — to that host. Tokens are account-global, so
+ * that's account takeover from merely cd-ing into a poisoned tree. Only Gipity
+ * hosts over https may receive tokens; the explicit `--api-base` flag is trusted
+ * (it's how local dev points at localhost). */
+export function isAllowedApiHost(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    if (protocol !== 'https:') return false;
+    return hostname === 'gipity.ai' || hostname.endsWith('.gipity.ai');
+  } catch {
+    return false;
+  }
+}
+
+const warnedHosts = new Set<string>();
+
+/**
+ * The API base for token-bearing requests. Precedence:
+ *   1. explicit `--api-base` flag (trusted — any host, enables local dev)
+ *   2. the project config's `apiBase`, but only if it's an allowed Gipity host
+ *   3. the production default
+ * A config `apiBase` that fails the allowlist is dropped (with a one-time
+ * warning) rather than trusted — see {@link isAllowedApiHost}. */
+export function resolveApiBase(): string {
+  const override = getApiBaseOverride();
+  if (override) return override;
+  const fromConfig = getConfig()?.apiBase;
+  if (fromConfig) {
+    if (isAllowedApiHost(fromConfig)) return fromConfig;
+    if (!warnedHosts.has(fromConfig)) {
+      warnedHosts.add(fromConfig);
+      console.error(
+        `⚠ Ignoring untrusted apiBase "${fromConfig}" from .gipity.json — not a gipity.ai host. Using ${DEFAULT_API_BASE}.`,
+      );
+    }
+  }
+  return DEFAULT_API_BASE;
 }
 
 /** Find .gipity.json starting from cwd and walking up */
@@ -119,7 +165,7 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
         accountSlug,
         agentGuid: agents.data[0]?.short_guid ?? '',
         conversationGuid: null,
-        apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+        apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
         ignore: [],
       },
       oneOff: true,
@@ -149,7 +195,7 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
       accountSlug: res.data.accountSlug,
       agentGuid: res.data.agentGuid ?? '',
       conversationGuid: null,
-      apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+      apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
       ignore: [],
     },
     oneOff: true,

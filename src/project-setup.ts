@@ -4,7 +4,7 @@
  * drop the Claude Code hooks/skills/gitignore into the target dir - consolidating
  * here keeps both call sites honest and the wording consistent.
  */
-import { clearConfigCache, saveConfigAt, getApiBaseOverride, GipityConfig } from './config.js';
+import { clearConfigCache, saveConfigAt, getApiBaseOverride, DEFAULT_API_BASE, GipityConfig } from './config.js';
 import { sync } from './sync.js';
 import { createProgressReporter } from './progress.js';
 import { setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
@@ -48,7 +48,7 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
     accountSlug: opts.accountSlug,
     agentGuid: opts.agentGuid,
     conversationGuid: null,
-    apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+    apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
     ignore: [...DEFAULT_SYNC_IGNORE],
   };
 

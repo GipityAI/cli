@@ -26,7 +26,7 @@ import { stat, readFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { homedir, hostname, platform as osPlatform } from 'os';
 import { join } from 'path';
-import { getApiBaseOverride, getConfig } from '../config.js';
+import { getApiBaseOverride, DEFAULT_API_BASE } from '../config.js';
 import { getProjectsRoot } from './paths.js';
 import { setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
 import { getAuth, readAuthFresh } from '../auth.js';
@@ -840,7 +840,7 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<{ cwd: string; 
 
   log('info', 'bootstrapping new project dir', { slug: d.project_slug, path });
   mkdirSync(path, { recursive: true });
-  const apiBase = getApiBaseOverride() || getConfig()?.apiBase || 'https://a.gipity.ai';
+  const apiBase = getApiBaseOverride() || DEFAULT_API_BASE;
   writeFileSync(configPath, JSON.stringify({
     projectGuid: d.project_guid,
     projectSlug: d.project_slug,

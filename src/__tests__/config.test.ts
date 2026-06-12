@@ -8,6 +8,10 @@ import {
   saveConfig,
   saveConfigAt,
   clearConfigCache,
+  isAllowedApiHost,
+  resolveApiBase,
+  setApiBaseOverride,
+  DEFAULT_API_BASE,
   type GipityConfig,
 } from '../config.js';
 
@@ -54,6 +58,56 @@ const SAMPLE: GipityConfig = {
   apiBase: 'https://a.gipity.ai',
   ignore: [],
 };
+
+describe('isAllowedApiHost (token-redirect guard)', () => {
+  it('accepts the canonical Gipity hosts over https', () => {
+    assert.equal(isAllowedApiHost('https://a.gipity.ai'), true);
+    assert.equal(isAllowedApiHost('https://gipity.ai'), true);
+    assert.equal(isAllowedApiHost('https://dev.gipity.ai/x'), true);
+  });
+
+  it('rejects non-Gipity hosts, http, and lookalikes', () => {
+    assert.equal(isAllowedApiHost('https://evil.example'), false);
+    assert.equal(isAllowedApiHost('http://a.gipity.ai'), false);          // not https
+    assert.equal(isAllowedApiHost('https://gipity.ai.evil.com'), false);  // suffix trick
+    assert.equal(isAllowedApiHost('https://notgipity.ai'), false);        // not a subdomain
+    assert.equal(isAllowedApiHost('not a url'), false);
+  });
+});
+
+describe('resolveApiBase (untrusted .gipity.json apiBase is ignored)', () => {
+  it('falls back to the default when a poisoned config points off-allowlist', () => {
+    const cwd0 = process.cwd();
+    const dir = mkdtempSync(join(tmpdir(), 'gip-apibase-'));
+    try {
+      setApiBaseOverride('');  // no explicit --api-base flag
+      writeFileSync(join(dir, '.gipity.json'), JSON.stringify({ ...SAMPLE, apiBase: 'https://evil.example' }));
+      process.chdir(dir);
+      clearConfigCache();
+      assert.equal(resolveApiBase(), DEFAULT_API_BASE);
+    } finally {
+      process.chdir(cwd0);
+      clearConfigCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('honors an allowed Gipity host from config', () => {
+    const cwd0 = process.cwd();
+    const dir = mkdtempSync(join(tmpdir(), 'gip-apibase-'));
+    try {
+      setApiBaseOverride('');
+      writeFileSync(join(dir, '.gipity.json'), JSON.stringify({ ...SAMPLE, apiBase: 'https://dev.gipity.ai' }));
+      process.chdir(dir);
+      clearConfigCache();
+      assert.equal(resolveApiBase(), 'https://dev.gipity.ai');
+    } finally {
+      process.chdir(cwd0);
+      clearConfigCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('saveConfig / saveConfigAt', () => {
   it('saveConfigAt writes .gipity.json at the given directory', () => {

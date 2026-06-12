@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { decodeJwtExp } from './utils.js';
@@ -40,8 +40,13 @@ export function readAuthFresh(): AuthData | null {
 }
 
 export function saveAuth(data: AuthData): void {
-  mkdirSync(AUTH_DIR, { recursive: true });
-  writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2));
+  // Lock down to owner-only: this file holds the account access + 7-day refresh
+  // tokens, so a default 0644/0755 would let any other local user read them.
+  // (The relay state file already does this; auth.json is the more sensitive of
+  // the two.) chmod after write to also tighten any pre-existing loose file.
+  mkdirSync(AUTH_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  try { chmodSync(AUTH_FILE, 0o600); } catch { /* best-effort on platforms without chmod */ }
   cached = data;
 }
 
@@ -78,7 +83,7 @@ export async function refreshTokenIfNeeded(): Promise<void> {
 
   try {
     const config = await import('./config.js');
-    const apiBase = config.getApiBaseOverride() || config.getConfig()?.apiBase || 'https://a.gipity.ai';
+    const apiBase = config.resolveApiBase();
 
     const res = await fetch(`${apiBase}/auth/refresh`, {
       method: 'POST',

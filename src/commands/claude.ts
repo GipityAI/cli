@@ -18,7 +18,7 @@ function resolveCommand(cmd: string): string {
 }
 import { getAuth, saveAuth, clearAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
-import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, getConfigPath } from '../config.js';
+import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
 import { slugify, setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
@@ -438,7 +438,7 @@ export const claudeCommand = new Command('claude')
           accountSlug,
           agentGuid,
           conversationGuid: null,
-          apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+          apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
           ignore: DEFAULT_SYNC_IGNORE,
         });
 
@@ -525,7 +525,7 @@ export const claudeCommand = new Command('claude')
               err?.code === 'ETIMEDOUT' || err?.cause?.code === 'ECONNREFUSED' ||
               err?.cause?.code === 'ENOTFOUND' || err?.cause?.code === 'ETIMEDOUT';
             if (isConnectionError) {
-              const apiBase = getApiBaseOverride() || 'https://a.gipity.ai';
+              const apiBase = getApiBaseOverride() || DEFAULT_API_BASE;
               console.error(`  ${clrError(`Could not connect to ${apiBase}`)}`);
               console.error(`  ${muted('Check your connection and try again.')}`);
               process.exit(1);
@@ -614,7 +614,7 @@ export const claudeCommand = new Command('claude')
             accountSlug,
             agentGuid,
             conversationGuid: null,
-            apiBase: getApiBaseOverride() || 'https://a.gipity.ai',
+            apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
             ignore: DEFAULT_SYNC_IGNORE,
           });
 

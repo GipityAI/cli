@@ -8,11 +8,11 @@
  * `gipity login` / the relay onboarding flow and never leaves this file
  * or the Authorization header.
  */
-import { getApiBaseOverride, getConfig } from '../config.js';
+import { resolveApiBase } from '../config.js';
 import * as state from './state.js';
 
 export function apiBase(): string {
-  return getApiBaseOverride() || getConfig()?.apiBase || 'https://a.gipity.ai';
+  return resolveApiBase();
 }
 
 export function deviceToken(): string {

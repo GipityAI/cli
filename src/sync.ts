@@ -22,7 +22,7 @@
  * the next pass so every client sees it. No content merging, ever.
  */
 import { writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync, readFileSync, renameSync, openSync, closeSync } from 'fs';
-import { join, relative, dirname, extname } from 'path';
+import { join, relative, dirname, extname, resolve, sep } from 'path';
 import { hostname } from 'os';
 import { get, del, downloadStream, ApiError } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
@@ -288,6 +288,24 @@ interface RemoteFileRaw {
 // run. Strip leading slashes at every boundary so all four keys agree.
 function normalizeTreePath(p: string): string {
   return p.replace(/^\/+/, '');
+}
+
+/**
+ * Resolve a relative path against the project root and assert it stays inside.
+ * Remote-supplied paths (the server's `/files/tree`, tar entry names, and the
+ * conflict-rename targets derived from them) are untrusted: `normalizeTreePath`
+ * strips a leading slash but NOT `..` segments, so a path like
+ * `../../.ssh/authorized_keys` would otherwise resolve outside the project and
+ * be written/renamed/deleted there. The relay daemon runs `sync` unattended on
+ * every dispatch, so an unchecked traversal is arbitrary file write with no
+ * human in the loop. Throws on escape; callers skip the offending action. */
+export function resolveInRoot(root: string, relPath: string): string {
+  const rootResolved = resolve(root);
+  const full = resolve(rootResolved, relPath);
+  if (full !== rootResolved && !full.startsWith(rootResolved + sep)) {
+    throw new Error(`Refusing path outside project root: ${relPath}`);
+  }
+  return full;
 }
 
 async function fetchRemote(projectGuid: string): Promise<Map<string, RemoteFileInfo>> {
@@ -758,7 +776,9 @@ async function syncInner(
       errors.push(`Download missing: ${a.path}`);
       continue;
     }
-    const full = join(root, a.path);
+    let full: string;
+    try { full = resolveInRoot(root, a.path); }
+    catch (e) { errors.push((e as Error).message); continue; }
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, buf);
     const stat = statSync(full);
@@ -775,8 +795,12 @@ async function syncInner(
   // upload the renamed copy. If the upload of the renamed copy fails, we
   // still keep the rename on disk - next sync picks it up as "added".
   for (const a of conflictQueue) {
-    const full = join(root, a.path);
-    const renamed = join(root, a.renamedLocalTo!);
+    let full: string;
+    let renamed: string;
+    try {
+      full = resolveInRoot(root, a.path);
+      renamed = resolveInRoot(root, a.renamedLocalTo!);
+    } catch (e) { errors.push((e as Error).message); continue; }
     try {
       mkdirSync(dirname(renamed), { recursive: true });
       renameSync(full, renamed);
@@ -834,7 +858,9 @@ async function syncInner(
         const idx = cursor++;
         if (idx >= uploadQueue.length) return;
         const a = uploadQueue[idx];
-        const full = join(root, a.path);
+        let full: string;
+        try { full = resolveInRoot(root, a.path); }
+        catch (e) { errors.push((e as Error).message); continue; }
         try {
           const result = await uploadOneFile(config.projectGuid, full, a.path, {
             expectedServerVersion: a.expectedServerVersion,
@@ -854,8 +880,11 @@ async function syncInner(
             // re-upload the rename.
             const currentBytes = await fetchOne(config.projectGuid, a.path);
             const renamedRel = conflictedCopyName(a.path);
+            let renamedFull: string;
+            try { renamedFull = resolveInRoot(root, renamedRel); }
+            catch (e) { errors.push((e as Error).message); continue; }
             try {
-              renameSync(full, join(root, renamedRel));
+              renameSync(full, renamedFull);
             } catch (e) {
               errors.push(`Rename failed for ${a.path}: ${(e as Error).message}`);
               continue;
@@ -872,11 +901,11 @@ async function syncInner(
             }
             try {
               const result = await uploadOneFile(
-                config.projectGuid, join(root, renamedRel), renamedRel,
+                config.projectGuid, renamedFull, renamedRel,
                 { expectedServerVersion: null },
               );
-              const stat = statSync(join(root, renamedRel));
-              const { sha256 } = await hashFile(join(root, renamedRel));
+              const stat = statSync(renamedFull);
+              const { sha256 } = await hashFile(renamedFull);
               baseline.files[renamedRel] = {
                 size: stat.size, mtime: stat.mtime.toISOString(),
                 sha256, serverVersion: result.serverVersion,
@@ -898,8 +927,8 @@ async function syncInner(
   for (const a of plannedToApply) {
     if (a.kind === 'delete-local') {
       try {
-        unlinkSync(join(root, a.path));
-      } catch { /* already gone */ }
+        unlinkSync(resolveInRoot(root, a.path));
+      } catch { /* already gone or outside root */ }
       delete baseline.files[a.path];
       applied++;
     } else if (a.kind === 'delete-remote') {
@@ -923,7 +952,7 @@ async function syncInner(
           try {
             const buf = await fetchOne(config.projectGuid, a.path);
             if (!buf) throw new Error('remote bytes unavailable');
-            const full = join(root, a.path);
+            const full = resolveInRoot(root, a.path);
             mkdirSync(dirname(full), { recursive: true });
             writeFileSync(full, buf);
             const stat = statSync(full);

@@ -204,7 +204,8 @@ export const addCommand = new Command('add')
       }
       const { name: labelName, files } = buildLocalPayload(resolved);
       const kind = sniffPayloadKind(files);
-      console.log(muted(`Uploading ${files.length} file(s) from ${resolved} (${kind}) ...`));
+      // Progress goes to stderr so `gipity add … --json` keeps stdout pure JSON.
+      console.error(muted(`Uploading ${files.length} file(s) from ${resolved} (${kind}) ...`));
       body = {
         name: labelName,
         title: opts.title,

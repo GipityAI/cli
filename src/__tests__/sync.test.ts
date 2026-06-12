@@ -3,7 +3,27 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, type BaselineEntry } from '../sync.js';
+import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, resolveInRoot, type BaselineEntry } from '../sync.js';
+
+describe('resolveInRoot (path-traversal guard)', () => {
+  const root = join(tmpdir(), 'proj-root');
+
+  it('resolves normal paths inside the project', () => {
+    assert.equal(resolveInRoot(root, 'src/app.js'), join(root, 'src/app.js'));
+    assert.equal(resolveInRoot(root, 'a/b/c.txt'), join(root, 'a/b/c.txt'));
+  });
+
+  it('throws on paths that escape the project root', () => {
+    for (const p of ['../../.ssh/authorized_keys', '../sibling/x', '../../../etc/passwd', 'a/../../b']) {
+      assert.throws(() => resolveInRoot(root, p), /outside project root/, `should reject ${p}`);
+    }
+  });
+
+  it('does not treat a sibling dir with a shared prefix as inside', () => {
+    // root + "-evil" shares the string prefix but is a different directory.
+    assert.throws(() => resolveInRoot(root, '../proj-root-evil/x'), /outside project root/);
+  });
+});
 
 type L = { size: number; mtime: string; sha256?: string };
 type R = { path: string; size: number; sha256: string | null; serverVersion: number; modified: string };

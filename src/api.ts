@@ -1,7 +1,7 @@
 import { Readable } from 'stream';
 import * as tar from 'tar-stream';
 import { getAuth, refreshTokenIfNeeded } from './auth.js';
-import { getConfig, getApiBaseOverride, requireConfig, saveConfig } from './config.js';
+import { resolveApiBase, requireConfig, saveConfig } from './config.js';
 
 export class ApiError extends Error {
   constructor(
@@ -27,7 +27,7 @@ async function getHeaders(): Promise<Record<string, string>> {
 }
 
 function baseUrl(): string {
-  return getApiBaseOverride() || getConfig()?.apiBase || 'https://a.gipity.ai';
+  return resolveApiBase();
 }
 
 /** Exposed so streaming consumers (SSE) can build URLs without re-implementing
