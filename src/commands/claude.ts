@@ -263,6 +263,10 @@ export const claudeCommand = new Command('claude')
   .option('--project <slug>', 'Open an existing project by slug or id')
   .option('--here', 'Use the current directory instead of ~/GipityProjects/<slug>/')
   .option('--quiet', "Suppress Claude's live progress output (headless --new-project/--project runs)")
+  // Forwarded to `claude` via the unknown-arg passthrough below (NOT in the
+  // gipity strip lists). Declared here only so it shows up in --help — without
+  // this, callers can't discover that the session model is selectable.
+  .option('--model <model>', 'Model for the Claude session, forwarded to claude (e.g. sonnet, opus, or a full id like claude-sonnet-4-6)')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (opts) => {
