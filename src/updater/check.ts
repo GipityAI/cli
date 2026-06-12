@@ -35,7 +35,10 @@ async function fetchLatestVersion(): Promise<string> {
 }
 
 function installVersion(version: string): boolean {
-  const res = spawnSync('npm', ['install', '--silent', '--no-audit', '--no-fund', `gipity@${version}`], {
+  // --ignore-scripts: this runs unattended in the background, so don't let a
+  // compromised package's install lifecycle hooks execute. gipity ships
+  // precompiled (dist/) and its deps need no build step, so nothing is lost.
+  const res = spawnSync('npm', ['install', '--silent', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: 'ignore',
   });

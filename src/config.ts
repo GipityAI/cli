@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, resolve } from 'path';
+import ignore, { type Ignore } from 'ignore';
 
 export interface GipityConfig {
   projectGuid: string;
@@ -251,17 +252,29 @@ export function saveConfigAt(dir: string, data: GipityConfig): void {
   cachedPath = path;
 }
 
+/** Compiled matchers cached by their pattern set so the per-file `shouldIgnore`
+ *  call in the sync loop doesn't rebuild the matcher every time. */
+const ignoreMatcherCache = new Map<string, Ignore>();
+
+/**
+ * True if filePath (a POSIX-relative path under the project root) is excluded
+ * by the given .gipityignore / config ignore patterns. Uses real gitignore
+ * semantics via the "ignore" package, so all documented forms work: bare names
+ * match in any directory (node_modules), a trailing slash means directory
+ * (.gipity/), star-dot matches any depth (*.log), and the previously
+ * unsupported forms (data/*.csv, anchored /build, double-star, and negation
+ * with a leading bang) now behave as users expect.
+ */
 export function shouldIgnore(filePath: string, ignorePatterns: string[]): boolean {
-  for (const pattern of ignorePatterns) {
-    // Simple glob matching: exact match, prefix match, or extension match
-    if (filePath === pattern) return true;
-    if (filePath.startsWith(pattern + '/')) return true;
-    if (pattern.startsWith('*.') && filePath.endsWith(pattern.slice(1))) return true;
-    if (pattern.endsWith('/') && filePath.startsWith(pattern)) return true;
-    // Directory name match anywhere in path
-    if (!pattern.includes('*') && !pattern.includes('/')) {
-      if (filePath.split('/').includes(pattern)) return true;
-    }
+  if (ignorePatterns.length === 0) return false;
+  const key = ignorePatterns.join('\n');
+  let matcher = ignoreMatcherCache.get(key);
+  if (!matcher) {
+    matcher = ignore().add(ignorePatterns);
+    ignoreMatcherCache.set(key, matcher);
   }
-  return false;
+  // `ignore` wants a clean relative path; it rejects absolute paths and '.'.
+  const rel = filePath.replace(/^\.\//, '').replace(/\/+$/, '');
+  if (!rel || rel === '.') return false;
+  return matcher.ignores(rel);
 }

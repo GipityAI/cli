@@ -47,6 +47,34 @@ describe('shouldIgnore', () => {
   it('handles empty patterns', () => {
     assert.equal(shouldIgnore('anything.ts', []), false);
   });
+
+  // Previously-unsupported gitignore forms — these silently did NOT match before,
+  // so files users believed were excluded synced and deployed anyway.
+  it('supports a path glob like data/*.csv', () => {
+    const p = ['data/*.csv'];
+    assert.equal(shouldIgnore('data/report.csv', p), true);
+    assert.equal(shouldIgnore('data/nested/report.csv', p), false); // single level only
+    assert.equal(shouldIgnore('other/report.csv', p), false);
+  });
+
+  it('supports a root-anchored pattern like /build', () => {
+    const p = ['/build'];
+    assert.equal(shouldIgnore('build', p), true);
+    assert.equal(shouldIgnore('build/app.js', p), true);
+    assert.equal(shouldIgnore('src/build/app.js', p), false); // anchored to root
+  });
+
+  it('supports a double-star pattern like **/scratch', () => {
+    const p = ['**/scratch'];
+    assert.equal(shouldIgnore('scratch', p), true);
+    assert.equal(shouldIgnore('a/b/scratch', p), true);
+  });
+
+  it('supports negation (a later ! pattern re-includes)', () => {
+    const p = ['*.log', '!keep.log'];
+    assert.equal(shouldIgnore('app.log', p), true);
+    assert.equal(shouldIgnore('keep.log', p), false);
+  });
 });
 
 const SAMPLE: GipityConfig = {

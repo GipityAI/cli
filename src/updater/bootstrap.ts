@@ -25,7 +25,10 @@ export function bootstrap(version: string, quiet = false): boolean {
   }
 
   if (!quiet) process.stderr.write(`Setting up gipity local install at ~/.gipity/local (one-time)...\n`);
-  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', `gipity@${version}`], {
+  // --ignore-scripts: don't run install lifecycle hooks (gipity ships
+  // precompiled, deps need no build), so a compromised package can't execute
+  // code during this self-managed install.
+  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',
