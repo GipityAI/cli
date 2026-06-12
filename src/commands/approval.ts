@@ -67,11 +67,23 @@ approvalCommand
 approvalCommand
   .command('answer <guid> [selection...]')
   .description('Answer an approval: a = approve, b = deny, c = ignore, or free text for text-type')
+  .option('--deny', 'Resolve as denied; any trailing text is sent as feedback (e.g. requested edits)')
   .option('--json', 'Output as JSON')
   .action((guid: string, selectionParts: string[], opts) => run('Answer', async () => {
     if (!guid.startsWith('ap_')) {
       throw new Error('Expected approval guid like ap_xxxxxxxx');
     }
+
+    // Deny with optional free-text feedback works for every response type -
+    // it's how a workflow gate's revision loop gets the user's edits
+    // ({{gate.action}} == rejected + {{gate.human_response}}).
+    if (opts.deny) {
+      const feedback = selectionParts.join(' ').trim();
+      await post(`/approvals/${guid}/resolve`, { status: 'denied', response: feedback || undefined });
+      printResult(`Denied${feedback ? `: ${feedback}` : '.'}`, opts, { guid, status: 'denied' });
+      return;
+    }
+
     const detailRes = await get<{ data: { response_type: string; choices: string[] | null } }>(`/approvals/${guid}`);
     const detail = detailRes.data;
     const first = selectionParts[0];

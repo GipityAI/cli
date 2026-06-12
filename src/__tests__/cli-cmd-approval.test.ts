@@ -44,6 +44,19 @@ test('gipity approval answer a (approve) resolves a yes_no approval', async () =
   assert.match(r.stdout, /Approved/);
 });
 
+test('gipity approval answer --deny sends denied with free-text feedback', async () => {
+  mock.reset();
+  let resolveBody: Record<string, unknown> | undefined;
+  mock.on('POST /approvals/ap_Approv001/resolve', (req) => {
+    resolveBody = req.body as Record<string, unknown>;
+    return { body: { data: { resolved: true } } };
+  });
+  const r = await run(['approval', 'answer', 'ap_Approv001', '--deny', 'try', 'again,', 'friendlier', 'tone']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Denied: try again, friendlier tone/);
+  assert.deepEqual(resolveBody, { status: 'denied', response: 'try again, friendlier tone' });
+});
+
 test('gipity approval cancel <guid> POSTs cancel + prints cancelled', async () => {
   mock.reset();
   mock.on('POST /approvals/ap_Approv001/cancel', { body: { data: { cancelled: true } } });
