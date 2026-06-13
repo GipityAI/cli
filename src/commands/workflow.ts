@@ -30,6 +30,9 @@ interface WorkflowData {
   trigger_type: string;
   cron_expression: string | null;
   trigger_table: string | null;
+  // Present on the single-workflow info response for webhook-trigger workflows:
+  // the full external URL (including secret) to POST to. null otherwise.
+  webhook_url?: string | null;
   project_name: string | null;
   project_slug: string | null;
   steps?: any[];
@@ -124,6 +127,7 @@ workflowCommand
       console.log(`GUID:    ${w.short_guid}`);
       console.log(`Active:  ${w.is_active ? 'yes' : 'no'}`);
       console.log(`Trigger: ${w.trigger_type}${w.cron_expression ? ` (${w.cron_expression})` : ''}${w.trigger_table ? ` (table: ${w.trigger_table})` : ''}`);
+      if (w.webhook_url) console.log(`Webhook: ${w.webhook_url}`);
       if (w.description) console.log(`Desc:    ${w.description}`);
       if (w.steps && w.steps.length > 0) {
         console.log(`Steps:`);
