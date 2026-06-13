@@ -210,23 +210,25 @@ describe('sync() - fetch-intercepted', () => {
         return new Response(JSON.stringify({ data: [] }),
           { status: 200, headers: { 'content-type': 'application/json' } });
       }
-      if (url.includes('/files/upload-init')) {
+      if (url.includes('/files/upload-init-batch')) {
         initCallCount++;
         lastInitBody = JSON.parse(init!.body as string);
-        return new Response(JSON.stringify({ data: {
+        return new Response(JSON.stringify({ data: { results: [{
+          path: 'hello.txt', status: 'ready',
           upload_guid: 'fl_new', method: 'PUT',
           url: 'https://s3.example/stage', expires_in: 3600,
-        } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       if (url.startsWith('https://s3.example')) {
         return new Response('', { status: 200, headers: { etag: '"fake"' } });
       }
-      if (url.includes('/files/upload-complete')) {
+      if (url.includes('/files/upload-complete-batch')) {
         completeCallCount++;
         lastCompleteBody = JSON.parse(init!.body as string);
-        return new Response(JSON.stringify({ data: {
+        return new Response(JSON.stringify({ data: { results: [{
+          upload_guid: 'fl_new', status: 'completed',
           size: 2, guid: 'fl_new', version: 1, server_version: 1,
-        } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -240,11 +242,56 @@ describe('sync() - fetch-intercepted', () => {
     assert.equal(result.plan.uploads, 1);
     assert.equal(initCallCount, 1);
     assert.equal(completeCallCount, 1);
-    assert.equal(lastInitBody.expected_server_version, null, 'new file → expected=null');
-    assert.equal(lastCompleteBody.expected_server_version, null);
+    assert.equal(lastInitBody.files[0].expected_server_version, null, 'new file → expected=null');
+    assert.equal(lastCompleteBody.items[0].expected_server_version, null);
 
     const bl = readBaseline('proj_apply');
     assert.equal(bl.files['hello.txt']?.serverVersion, 1);
+  });
+
+  it('server-skipped files (already_current) transfer nothing but still finish the progress bar', async () => {
+    // Regression: files the server already had (skip-if-identical / content
+    // dedup) counted in the bar's total but never reported bytes, so a sync
+    // could "finish" with the bar stuck below 100% (seen at 83% in the field).
+    writeFileSync(join(projectDir, 'dup.bin'), 'same-bytes');
+
+    let s3Calls = 0;
+    stubFetch(async (url) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [] }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/files/upload-init-batch')) {
+        return new Response(JSON.stringify({ data: { results: [{
+          path: 'dup.bin', status: 'already_current', guid: 'fl_dup', size: 10, server_version: 4,
+        }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.startsWith('https://s3.example')) {
+        s3Calls++;
+        return new Response('', { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const transfers: Array<[number, number]> = [];
+    const progress = {
+      phase() {},
+      transfer(_label: string, done: number, total: number) { transfers.push([done, total]); },
+      finish() {},
+    };
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync, readBaseline } = await import('../sync.js');
+    const result = await sync({ interactive: false, progress });
+
+    assert.equal(result.applied, 1);
+    assert.deepEqual(result.errors, []);
+    assert.equal(s3Calls, 0, 'no bytes move for an already_current file');
+    const last = transfers[transfers.length - 1];
+    assert.ok(last, 'transfer progress was reported');
+    assert.equal(last[0], last[1], 'bar reaches 100% even when everything is server-skipped');
+    assert.equal(readBaseline('proj_apply').files['dup.bin']?.serverVersion, 4);
   });
 
   it('skips deletes in non-interactive mode when the bulk-delete threshold trips', async () => {
@@ -501,17 +548,22 @@ describe('sync() - fetch-intercepted', () => {
         ] }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       // Between plan and apply, another client bumped the version to 5.
-      if (url.includes('/files/upload-init')) {
+      // The sync engine sends the original upload through init-batch; the
+      // server reports a per-item conflict for it.
+      if (url.includes('/files/upload-init-batch')) {
         initCalls++;
         const body = JSON.parse(init!.body as string);
-        if (body.path === 'race.txt' && body.expected_server_version === 3) {
-          // Server has moved past 3 - return 409.
-          return new Response(JSON.stringify({
-            error: { code: 'CONFLICT', message: 'Version mismatch: expected 3, current 5' },
-            data: { current_server_version: 5 },
-          }), { status: 409, headers: { 'content-type': 'application/json' } });
-        }
-        // The conflict-copy re-upload (expected=null) succeeds.
+        const f = body.files[0];
+        assert.equal(f.path, 'race.txt');
+        assert.equal(f.expected_server_version, 3);
+        return new Response(JSON.stringify({ data: { results: [{
+          path: f.path, status: 'conflict', current_server_version: 5,
+        }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      // The conflict-copy re-upload (expected=null) goes through the
+      // single-file endpoints and succeeds.
+      if (url.includes('/files/upload-init')) {
+        initCalls++;
         return new Response(JSON.stringify({ data: {
           upload_guid: 'fl_copy', method: 'PUT',
           url: 'https://s3.example/stage', expires_in: 3600,
@@ -541,12 +593,23 @@ describe('sync() - fetch-intercepted', () => {
     const { clearConfigCache } = await import('../config.js');
     clearConfigCache();
     const { sync } = await import('../sync.js');
-    const result = await sync({ interactive: false });
+    const transfers: Array<[number, number]> = [];
+    const progress = {
+      phase() {},
+      transfer(_l: string, done: number, total: number) { transfers.push([done, total]); },
+      finish() {},
+    };
+    const result = await sync({ interactive: false, progress });
 
     // Plan thought it was a clean upload (not a plan-level conflict).
     assert.equal(result.plan.conflicts, 0, 'plan classified as upload, not conflict');
     assert.equal(result.plan.uploads, 1);
     assert.ok(initCalls >= 2, 'at least two upload-inits: original (409) + conflict-copy');
+
+    // The bar must still reach 100% even though the only queued upload was
+    // rejected at init (no PUT) - its bytes are accounted at conflict time.
+    const lastT = transfers[transfers.length - 1];
+    assert.ok(lastT && lastT[0] === lastT[1], 'upload bar completes despite the init-time conflict');
 
     // After 409 handling: original path must hold the newer remote bytes.
     assert.equal(readFileSync(join(projectDir, 'race.txt'), 'utf-8'), 'newer-remote');

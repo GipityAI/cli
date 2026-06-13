@@ -4,8 +4,22 @@ import { createHash } from 'crypto';
 import { post, putToPresignedUrl, ApiError } from './api.js';
 
 // Concurrency: parallel files in a batch + parallel parts within one multipart file.
-export const UPLOAD_CONCURRENCY = 4;
+// File-level parallelism is high because most files are small: the cost of a
+// small file is round-trip latency, not bandwidth, so wider = proportionally
+// faster. S3 PUTs go direct to S3; the API only sees batched init/complete.
+export const UPLOAD_CONCURRENCY = 16;
 const MULTIPART_PART_CONCURRENCY = 4;
+
+/** Files per upload-init-batch / upload-complete-batch call. Must not exceed
+ *  the server's UPLOAD_BATCH_MAX_ITEMS (200). */
+export const UPLOAD_INIT_BATCH_SIZE = 100;
+
+// Server-side per-file caps (PRESIGNED_UPLOAD_MAX_BYTES and the upload-init
+// path length in platform). The batch routes Zod-validate the whole array, so
+// one over-limit file would 400 its entire chunk - pre-check per file instead
+// and fail just that file, matching the old single-endpoint behavior.
+export const UPLOAD_MAX_BYTES = 30 * 1024 * 1024 * 1024;
+export const UPLOAD_MAX_PATH_CHARS = 1000;
 
 // Keep in sync with server's guessMime in platform/server/src/services/vfs/path-helpers.ts
 const MIME_BY_EXT: Record<string, string> = {
@@ -87,10 +101,10 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 3): 
   throw lastErr;
 }
 
-type InitData =
-  | { already_current: true; guid: string; size: number; server_version: number }
+/** An initialized upload the server expects bytes for: a presigned single PUT
+ *  or a multipart part fan-out (possibly resumed). */
+export type ReadyInit =
   | {
-      already_current?: false;
       upload_guid: string;
       method: 'PUT';
       url: string;
@@ -99,7 +113,6 @@ type InitData =
       resumed?: boolean;
     }
   | {
-      already_current?: false;
       upload_guid: string;
       method: 'multipart';
       upload_id: string;
@@ -109,6 +122,10 @@ type InitData =
       expires_in: number;
       resumed?: boolean;
     };
+
+type InitData =
+  | { already_current: true; guid: string; size: number; server_version: number }
+  | (ReadyInit & { already_current?: false });
 interface InitResponse { data: InitData }
 
 export interface UploadOpts {
@@ -179,16 +196,49 @@ export async function uploadOneFile(
   }
   const data = init.data;
 
-  // Skip-if-identical fast path.
+  // Skip-if-identical fast path. Count the bytes as "done" - the server has
+  // them - so a caller's progress bar still reaches 100%.
   if ('already_current' in data && data.already_current) {
+    opts.onBytes?.(size);
     return { status: 'skipped', size, guid: data.guid, serverVersion: data.server_version };
   }
 
-  const completeBody: Record<string, unknown> = { upload_guid: data.upload_guid };
+  const fields = await transferToS3(localPath, size, mime, data, opts);
+
+  const completeBody: Record<string, unknown> = { upload_guid: data.upload_guid, ...fields };
   if (opts.expectedServerVersion !== undefined) {
     completeBody.expected_server_version = opts.expectedServerVersion;
   }
+  let comp: { data: { size: number; guid: string; version: number; server_version: number } };
+  try {
+    comp = await post(`/projects/${projectGuid}/files/upload-complete`, completeBody);
+  } catch (err) {
+    if (err instanceof ApiError && err.statusCode === 409) {
+      const current = typeof err.data?.current_server_version === 'number'
+        ? err.data.current_server_version : null;
+      throw new UploadConflictError(current, virtualPath);
+    }
+    throw err;
+  }
+  return {
+    status: data.resumed ? 'resumed' : 'uploaded',
+    size: comp.data.size,
+    guid: comp.data.guid,
+    version: comp.data.version,
+    serverVersion: comp.data.server_version,
+  };
+}
 
+/**
+ * Move one file's bytes to S3 for an initialized upload: a single presigned
+ * PUT, or the multipart part fan-out (including server-driven resume).
+ * Returns the field upload-complete needs - `etag` for single-part, `parts`
+ * for multipart. Reports progress through opts.onBytes.
+ */
+export async function transferToS3(
+  localPath: string, size: number, mime: string, data: ReadyInit,
+  opts: Pick<UploadOpts, 'partConcurrency' | 'onBytes'> = {},
+): Promise<{ etag: string } | { parts: Array<{ part_number: number; etag: string }> }> {
   // Single-part (covers fresh + resumed PUT - single PUT is idempotent on the staging key).
   if (data.method === 'PUT') {
     const etag = await withRetry('PUT', async () => {
@@ -199,25 +249,7 @@ export async function uploadOneFile(
       );
     });
     opts.onBytes?.(size);
-    completeBody.etag = etag;
-    let comp: { data: { size: number; guid: string; version: number; server_version: number } };
-    try {
-      comp = await post(`/projects/${projectGuid}/files/upload-complete`, completeBody);
-    } catch (err) {
-      if (err instanceof ApiError && err.statusCode === 409) {
-        const current = typeof err.data?.current_server_version === 'number'
-          ? err.data.current_server_version : null;
-        throw new UploadConflictError(current, virtualPath);
-      }
-      throw err;
-    }
-    return {
-      status: data.resumed ? 'resumed' : 'uploaded',
-      size: comp.data.size,
-      guid: comp.data.guid,
-      version: comp.data.version,
-      serverVersion: comp.data.server_version,
-    };
+    return { etag };
   }
 
   // Multipart - start with any parts that already landed (resume case).
@@ -263,23 +295,54 @@ export async function uploadOneFile(
   // Sort by part_number so server CompleteMultipartUpload sees ascending order.
   completed.sort((a, b) => a.part_number - b.part_number);
 
-  completeBody.parts = completed;
-  let comp: { data: { size: number; guid: string; version: number; server_version: number } };
-  try {
-    comp = await post(`/projects/${projectGuid}/files/upload-complete`, completeBody);
-  } catch (err) {
-    if (err instanceof ApiError && err.statusCode === 409) {
-      const current = typeof err.data?.current_server_version === 'number'
-        ? err.data.current_server_version : null;
-      throw new UploadConflictError(current, virtualPath);
-    }
-    throw err;
-  }
-  return {
-    status: data.resumed ? 'resumed' : 'uploaded',
-    size: comp.data.size,
-    guid: comp.data.guid,
-    version: comp.data.version,
-    serverVersion: comp.data.server_version,
-  };
+  return { parts: completed };
+}
+
+// ── Batched init/complete (sync engine) ─────────────────────────
+// One API round trip per UPLOAD_INIT_BATCH_SIZE files in each direction
+// instead of two per file. The S3 PUTs in between still go per file, direct
+// to S3, with UPLOAD_CONCURRENCY of them in flight.
+
+export interface BatchInitFile {
+  path: string;
+  size: number;
+  sha256: string;
+  mime: string;
+  expected_server_version?: number | null;
+}
+
+export type BatchInitResult =
+  | { path: string; status: 'already_current'; guid: string; size: number; server_version: number }
+  | ({ path: string; status: 'ready' } & ReadyInit)
+  | { path: string; status: 'conflict'; current_server_version: number | null }
+  | { path: string; status: 'error'; message: string };
+
+export async function uploadInitBatch(
+  projectGuid: string, files: BatchInitFile[],
+): Promise<BatchInitResult[]> {
+  const res = await post<{ data: { results: BatchInitResult[] } }>(
+    `/projects/${projectGuid}/files/upload-init-batch`, { files },
+  );
+  return res.data.results;
+}
+
+export interface BatchCompleteItem {
+  upload_guid: string;
+  etag?: string;
+  parts?: Array<{ part_number: number; etag: string }>;
+  expected_server_version?: number | null;
+}
+
+export type BatchCompleteResult =
+  | { upload_guid: string; status: 'completed'; size: number; guid: string; version: number; server_version: number }
+  | { upload_guid: string; status: 'conflict'; current_server_version: number | null }
+  | { upload_guid: string; status: 'error'; code?: string; message: string };
+
+export async function uploadCompleteBatch(
+  projectGuid: string, items: BatchCompleteItem[],
+): Promise<BatchCompleteResult[]> {
+  const res = await post<{ data: { results: BatchCompleteResult[] } }>(
+    `/projects/${projectGuid}/files/upload-complete-batch`, { items },
+  );
+  return res.data.results;
 }

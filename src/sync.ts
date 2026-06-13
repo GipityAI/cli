@@ -27,7 +27,13 @@ import { hostname } from 'os';
 import { get, del, downloadStream, ApiError } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
 import { formatSize, prompt, getAutoConfirm } from './utils.js';
-import { uploadOneFile, hashFile, UploadConflictError } from './upload.js';
+import {
+  uploadOneFile, hashFile, guessMime, transferToS3,
+  uploadInitBatch, uploadCompleteBatch, UploadConflictError,
+  UPLOAD_CONCURRENCY, UPLOAD_INIT_BATCH_SIZE,
+  UPLOAD_MAX_BYTES, UPLOAD_MAX_PATH_CHARS,
+  type BatchInitResult, type BatchCompleteItem,
+} from './upload.js';
 import { DEFAULT_SYNC_IGNORE } from './setup.js';
 import type { ProgressReporter } from './progress.js';
 
@@ -42,8 +48,6 @@ import * as tar from 'tar-stream';
  *  project probably are intentional. */
 const BULK_DELETE_COUNT = 10;
 const BULK_DELETE_FRACTION = 0.25;
-
-const UPLOAD_CONCURRENCY = 4;
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -609,23 +613,6 @@ async function bulkDeleteGuard(
   return answer.trim().toLowerCase() === 'delete';
 }
 
-async function applyUpload(
-  projectGuid: string, root: string, a: Action,
-  onConflict: (path: string, current: number | null) => Action,
-): Promise<Action> {
-  try {
-    const result = await uploadOneFile(projectGuid, join(root, a.path), a.path, {
-      expectedServerVersion: a.expectedServerVersion,
-    });
-    return { ...a, reason: `uploaded serverVersion=${result.serverVersion}` };
-  } catch (err) {
-    if (err instanceof UploadConflictError) {
-      return onConflict(a.path, err.currentServerVersion);
-    }
-    throw err;
-  }
-}
-
 /** Name of the optional per-project ignore file (gitignore-style: one pattern
  *  per line, blank lines and `#` comments skipped). Patterns use the same
  *  matcher as the config `ignore` list (see shouldIgnore) and let research
@@ -840,9 +827,14 @@ async function syncInner(
     applied++;
   }
 
-  // Uploads: bounded concurrency. On 409, rewrite as a conflict inline.
-  // A single byte bar tracks the whole batch (workers share the counter; JS is
-  // single-threaded so the += is race-free).
+  // Uploads: batched. Each chunk of UPLOAD_INIT_BATCH_SIZE files costs one
+  // upload-init-batch call (the server answers per file: already-have-it /
+  // conflict / presigned URL), then the S3 PUTs run UPLOAD_CONCURRENCY wide,
+  // then one upload-complete-batch call registers everything that landed.
+  // A single byte bar tracks the whole run (workers share the counter; JS is
+  // single-threaded so the += is race-free). Files the server already has -
+  // identical content at the same path, or dedup-linked from another path -
+  // transfer nothing but still count their bytes, so the bar reaches 100%.
   const uploadLabel = `Uploading ${uploadQueue.length} file${uploadQueue.length === 1 ? '' : 's'}`;
   const totalUploadBytes = uploadQueue.reduce((sum, a) => sum + (a.localSize ?? 0), 0);
   let sentBytes = 0;
@@ -850,78 +842,182 @@ async function syncInner(
   const onBytes = p
     ? (delta: number) => { sentBytes += delta; p.transfer(uploadLabel, sentBytes, totalUploadBytes); }
     : undefined;
-  let cursor = 0;
-  const workers: Array<Promise<void>> = [];
-  for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, uploadQueue.length); w++) {
-    workers.push((async () => {
-      while (true) {
-        const idx = cursor++;
-        if (idx >= uploadQueue.length) return;
-        const a = uploadQueue[idx];
-        let full: string;
-        try { full = resolveInRoot(root, a.path); }
-        catch (e) { errors.push((e as Error).message); continue; }
-        try {
-          const result = await uploadOneFile(config.projectGuid, full, a.path, {
-            expectedServerVersion: a.expectedServerVersion,
-            onBytes,
-          });
-          const stat = statSync(full);
-          const { sha256 } = await hashFile(full);
-          baseline.files[a.path] = {
-            size: stat.size, mtime: stat.mtime.toISOString(),
-            sha256, serverVersion: result.serverVersion,
+
+  // Conflict downgrade shared by init-time and complete-time CAS rejections:
+  // remote moved under us, so remote wins the canonical path - rename local,
+  // restore the server copy, re-upload the rename as a brand-new path.
+  const downgradeToConflict = async (
+    a: Action, full: string, currentServerVersion: number | null,
+  ): Promise<void> => {
+    const currentBytes = await fetchOne(config.projectGuid, a.path);
+    const renamedRel = conflictedCopyName(a.path);
+    let renamedFull: string;
+    try { renamedFull = resolveInRoot(root, renamedRel); }
+    catch (e) { errors.push((e as Error).message); return; }
+    try {
+      renameSync(full, renamedFull);
+    } catch (e) {
+      errors.push(`Rename failed for ${a.path}: ${(e as Error).message}`);
+      return;
+    }
+    if (currentBytes) {
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, currentBytes);
+      const stat = statSync(full);
+      baseline.files[a.path] = {
+        size: stat.size, mtime: stat.mtime.toISOString(),
+        sha256: '',  // will re-hash on next sync
+        serverVersion: currentServerVersion ?? 0,
+      };
+    }
+    try {
+      const result = await uploadOneFile(
+        config.projectGuid, renamedFull, renamedRel,
+        { expectedServerVersion: null },
+      );
+      const stat = statSync(renamedFull);
+      const { sha256 } = await hashFile(renamedFull);
+      baseline.files[renamedRel] = {
+        size: stat.size, mtime: stat.mtime.toISOString(),
+        sha256, serverVersion: result.serverVersion,
+      };
+    } catch (e) {
+      errors.push(`Conflict-copy upload failed for ${renamedRel}: ${(e as Error).message}`);
+    }
+    applied++;
+  };
+
+  interface PreparedUpload { a: Action; full: string; size: number; mtime: string; sha256: string }
+  for (let chunkStart = 0; chunkStart < uploadQueue.length; chunkStart += UPLOAD_INIT_BATCH_SIZE) {
+    const chunk = uploadQueue.slice(chunkStart, chunkStart + UPLOAD_INIT_BATCH_SIZE);
+
+    // Stat + hash once per file; the same numbers feed init, the baseline,
+    // and the bar. Files that vanished or escaped the root drop out here.
+    const prepared: PreparedUpload[] = [];
+    for (const a of chunk) {
+      if (a.path.length > UPLOAD_MAX_PATH_CHARS) {
+        errors.push(`Upload failed for ${a.path}: path exceeds ${UPLOAD_MAX_PATH_CHARS} characters`);
+        onBytes?.(a.localSize ?? 0);
+        continue;
+      }
+      let full: string;
+      try { full = resolveInRoot(root, a.path); }
+      catch (e) { errors.push((e as Error).message); onBytes?.(a.localSize ?? 0); continue; }
+      try {
+        const stat = statSync(full);
+        if (stat.size > UPLOAD_MAX_BYTES) {
+          errors.push(`Upload failed for ${a.path}: file exceeds the 30 GB upload limit`);
+          onBytes?.(a.localSize ?? 0);
+          continue;
+        }
+        const sha256 = local.get(a.path)?.sha256 ?? (await hashFile(full)).sha256;
+        prepared.push({ a, full, size: stat.size, mtime: stat.mtime.toISOString(), sha256 });
+      } catch (e) {
+        errors.push(`Upload failed for ${a.path}: ${(e as Error).message}`);
+        onBytes?.(a.localSize ?? 0);
+      }
+    }
+    if (!prepared.length) continue;
+
+    let initResults: BatchInitResult[];
+    try {
+      initResults = await uploadInitBatch(config.projectGuid, prepared.map(pr => ({
+        path: pr.a.path, size: pr.size, sha256: pr.sha256, mime: guessMime(pr.a.path),
+        ...(pr.a.expectedServerVersion !== undefined
+          ? { expected_server_version: pr.a.expectedServerVersion } : {}),
+      })));
+    } catch (e) {
+      errors.push(`Upload batch failed: ${(e as Error).message}`);
+      for (const pr of prepared) onBytes?.(pr.size);
+      continue;
+    }
+
+    const byPath = new Map(prepared.map(pr => [pr.a.path, pr]));
+    const conflicted: Array<{ pr: PreparedUpload; current: number | null }> = [];
+    const ready: Array<{ pr: PreparedUpload; init: Extract<BatchInitResult, { status: 'ready' }> }> = [];
+    for (const r of initResults) {
+      const pr = byPath.get(r.path);
+      if (!pr) continue;
+      switch (r.status) {
+        case 'already_current':
+          baseline.files[pr.a.path] = {
+            size: pr.size, mtime: pr.mtime, sha256: pr.sha256, serverVersion: r.server_version,
           };
+          onBytes?.(pr.size);
           applied++;
-        } catch (err) {
-          if (err instanceof UploadConflictError) {
-            // Remote moved under us. Fetch the current remote bytes and
-            // downgrade this path to a conflict: rename local, write remote,
-            // re-upload the rename.
-            const currentBytes = await fetchOne(config.projectGuid, a.path);
-            const renamedRel = conflictedCopyName(a.path);
-            let renamedFull: string;
-            try { renamedFull = resolveInRoot(root, renamedRel); }
-            catch (e) { errors.push((e as Error).message); continue; }
-            try {
-              renameSync(full, renamedFull);
-            } catch (e) {
-              errors.push(`Rename failed for ${a.path}: ${(e as Error).message}`);
-              continue;
-            }
-            if (currentBytes) {
-              mkdirSync(dirname(full), { recursive: true });
-              writeFileSync(full, currentBytes);
-              const stat = statSync(full);
-              baseline.files[a.path] = {
-                size: stat.size, mtime: stat.mtime.toISOString(),
-                sha256: '',  // will re-hash on next sync
-                serverVersion: err.currentServerVersion ?? 0,
-              };
-            }
-            try {
-              const result = await uploadOneFile(
-                config.projectGuid, renamedFull, renamedRel,
-                { expectedServerVersion: null },
-              );
-              const stat = statSync(renamedFull);
-              const { sha256 } = await hashFile(renamedFull);
-              baseline.files[renamedRel] = {
-                size: stat.size, mtime: stat.mtime.toISOString(),
-                sha256, serverVersion: result.serverVersion,
-              };
-            } catch (e) {
-              errors.push(`Conflict-copy upload failed for ${renamedRel}: ${(e as Error).message}`);
-            }
-            applied++;
-          } else {
-            errors.push(`Upload failed for ${a.path}: ${(err as Error).message}`);
+          break;
+        case 'conflict':
+          // No PUT happens for a file rejected at init - account its bytes now
+          // so the bar still reaches 100% (the conflict copy is extra work
+          // outside the byte budget). Complete-time conflicts differ: their PUT
+          // already reported the bytes, so that branch must NOT re-count.
+          onBytes?.(pr.size);
+          conflicted.push({ pr, current: r.current_server_version });
+          break;
+        case 'error':
+          errors.push(`Upload failed for ${r.path}: ${r.message}`);
+          onBytes?.(pr.size);
+          break;
+        default:
+          ready.push({ pr, init: r });
+      }
+    }
+
+    // S3 PUTs, UPLOAD_CONCURRENCY wide; collect upload-complete items as they land.
+    const toComplete: Array<{ pr: PreparedUpload; item: BatchCompleteItem }> = [];
+    let cursor = 0;
+    const workers: Array<Promise<void>> = [];
+    for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, ready.length); w++) {
+      workers.push((async () => {
+        while (true) {
+          const idx = cursor++;
+          if (idx >= ready.length) return;
+          const { pr, init } = ready[idx];
+          try {
+            const fields = await transferToS3(pr.full, pr.size, guessMime(pr.a.path), init, { onBytes });
+            toComplete.push({ pr, item: {
+              upload_guid: init.upload_guid, ...fields,
+              ...(pr.a.expectedServerVersion !== undefined
+                ? { expected_server_version: pr.a.expectedServerVersion } : {}),
+            } });
+          } catch (err) {
+            errors.push(`Upload failed for ${pr.a.path}: ${(err as Error).message}`);
           }
         }
+      })());
+    }
+    await Promise.all(workers);
+
+    if (toComplete.length) {
+      const byGuid = new Map(toComplete.map(c => [c.item.upload_guid, c.pr]));
+      try {
+        for (const r of await uploadCompleteBatch(config.projectGuid, toComplete.map(c => c.item))) {
+          const pr = byGuid.get(r.upload_guid);
+          if (!pr) continue;
+          switch (r.status) {
+            case 'completed':
+              baseline.files[pr.a.path] = {
+                size: pr.size, mtime: pr.mtime, sha256: pr.sha256, serverVersion: r.server_version,
+              };
+              applied++;
+              break;
+            case 'conflict':
+              conflicted.push({ pr, current: r.current_server_version });
+              break;
+            default:
+              errors.push(`Upload failed for ${pr.a.path}: ${r.message}`);
+          }
+        }
+      } catch (e) {
+        errors.push(`Upload batch failed: ${(e as Error).message}`);
       }
-    })());
+    }
+
+    // Conflict downgrades are rare - handle them one at a time.
+    for (const { pr, current } of conflicted) {
+      await downgradeToConflict(pr.a, pr.full, current);
+    }
   }
-  await Promise.all(workers);
 
   // ── Deletes pass ──
   for (const a of plannedToApply) {
