@@ -4,6 +4,10 @@ import { requireConfig } from '../config.js';
 import { success, error as clrError, warning, muted, bold, dim } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
 
+// Absolute poll ceiling - the server reaps stalled runs (~65 min) well before
+// this, so hitting it means even the reaper is unreachable.
+const POLL_HARD_CAP_MS = 75 * 60_000;
+
 function statusIcon(status: string): string {
   if (status === 'passed') return success('✓');
   if (status === 'failed') return clrError('✗');
@@ -24,6 +28,7 @@ interface TestStatusResponse {
     completedFiles: number;
     startedAt: string;
     updatedAt: string;
+    errorMessage?: string | null;
     finishedAt: string | null;
     results: Array<{
       path: string;
@@ -65,6 +70,9 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
   let longRunHintShown = false;
 
   while (true) {
+    if (Date.now() - startTime > POLL_HARD_CAP_MS) {
+      throw new Error(`Test run ${runGuid} still not finished after ${Math.round(POLL_HARD_CAP_MS / 60000)} minutes - giving up on the poll. Check it later with \`gipity test status ${runGuid}\` or re-run.`);
+    }
     const res = await get<TestStatusResponse>(`/projects/${projectGuid}/test/status/${runGuid}`);
     const data = res.data;
 
@@ -202,6 +210,11 @@ export const testCommand = new Command('test')
       if (filterPath && data.total === 0 && data.results.length === 0) {
         console.log(clrError(`No tests matched filter: ${filterPath}`));
         process.exit(1);
+      }
+
+      if (data.status === 'failed' && data.errorMessage) {
+        console.log(clrError(`Run failed: ${data.errorMessage}`));
+        console.log('');
       }
 
       // Summary
