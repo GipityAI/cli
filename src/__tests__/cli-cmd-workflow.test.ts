@@ -51,6 +51,46 @@ test('gipity workflow run <name> POSTs and prints triggered', async () => {
   assert.match(r.stdout, /Triggered "Daily"/);
 });
 
+test('gipity workflow run <name> --wait polls the new run to terminal and prints it', async () => {
+  mock.reset();
+  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('POST /workflows/wf_WflowAa0/run', { body: { data: { message: 'queued', workflow_guid: 'wf_WflowAa0' } } });
+  // The runs list (?limit=1, query-stripped to this key) returns the OLD run on
+  // the pre-trigger capture, then a NEW run once triggered.
+  let listCalls = 0;
+  mock.on('GET /workflows/wf_WflowAa0/runs', () => {
+    const guid = listCalls++ === 0 ? 'wr_Old00001' : 'wr_New00002';
+    return { body: { data: [{ short_guid: guid, status: guid === 'wr_New00002' ? 'completed' : 'completed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z', total_input_tokens: 30, total_output_tokens: 20 }] } };
+  });
+  mock.on('GET /workflows/wf_WflowAa0/runs/wr_New00002', { body: { data: {
+    short_guid: 'wr_New00002', status: 'completed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z', total_input_tokens: 30, total_output_tokens: 20, step_runs: [],
+  } } });
+  const r = await fresh(['workflow', 'run', 'Daily', '--wait']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /wr_New00002/);
+  assert.match(r.stdout, /completed/);
+  assert.doesNotMatch(r.stdout, /Triggered/); // --wait prints the run, not the fire-and-forget line
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity workflow run <name> --wait exits non-zero when the run fails', async () => {
+  mock.reset();
+  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('POST /workflows/wf_WflowAa0/run', { body: { data: { message: 'queued', workflow_guid: 'wf_WflowAa0' } } });
+  let listCalls = 0;
+  mock.on('GET /workflows/wf_WflowAa0/runs', () => {
+    const guid = listCalls++ === 0 ? 'wr_Old00001' : 'wr_Fail0002';
+    return { body: { data: [{ short_guid: guid, status: 'completed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z', total_input_tokens: 0, total_output_tokens: 0 }] } };
+  });
+  mock.on('GET /workflows/wf_WflowAa0/runs/wr_Fail0002', { body: { data: {
+    short_guid: 'wr_Fail0002', status: 'failed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z', total_input_tokens: 0, total_output_tokens: 0, error_message: 'step blew up', step_runs: [],
+  } } });
+  const r = await fresh(['workflow', 'run', 'Daily', '--wait']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /failed/);
+  assert.match(r.stdout, /step blew up/);
+});
+
 test('gipity workflow runs <name> lists recent runs', async () => {
   mock.reset();
   mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });

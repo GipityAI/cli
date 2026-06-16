@@ -53,3 +53,22 @@ test('gipity fn call <name> posts and prints JSON', async () => {
   assert.match(r.stdout, /Hello/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
+
+test('gipity fn delete <name> --yes DELETEs the function', async () => {
+  mock.reset();
+  mock.on('DELETE /projects/p_TestProj/functions/hello', { body: { data: { name: 'hello', deleted: true } } });
+  const r = await fresh(['fn', 'delete', 'hello', '--yes']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Deleted function 'hello'/);
+  const reqs = mock.requests();
+  assert.ok(reqs.some(q => q.method === 'DELETE' && q.url === '/projects/p_TestProj/functions/hello'), 'expected a DELETE request');
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity fn rm <name> --yes is an alias for delete', async () => {
+  mock.reset();
+  mock.on('DELETE /projects/p_TestProj/functions/hello', { body: { data: { name: 'hello', deleted: true } } });
+  const r = await fresh(['fn', 'rm', 'hello', '--yes']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Deleted function 'hello'/);
+});

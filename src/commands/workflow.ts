@@ -78,6 +78,34 @@ function formatRunLine(r: RunData): string {
   return `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${runTokens(r)} tokens  ${muted(fmtTime(r.started_at))}`;
 }
 
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/**
+ * Poll a workflow's runs until the run triggered after `prevGuid` reaches a
+ * terminal state, returning it. Throws on timeout so the `run()` wrapper reports
+ * it. Two phases: wait for the new run row to appear, then poll it to terminal.
+ */
+async function waitForRun(wfGuid: string, prevGuid: string | undefined, timeoutSec: number): Promise<RunData> {
+  const deadline = Date.now() + timeoutSec * 1000;
+
+  let runGuid: string | undefined;
+  while (!runGuid) {
+    if (Date.now() > deadline) throw new Error(`Timed out after ${timeoutSec}s waiting for the run to start.`);
+    const latest = await get<{ data: RunData[] }>(`/workflows/${wfGuid}/runs?limit=1`);
+    const g = latest.data[0]?.short_guid;
+    if (g && g !== prevGuid) runGuid = g;
+    else await sleep(1500);
+  }
+
+  while (true) {
+    const res = await get<{ data: RunData & { step_runs: StepRunData[] } }>(`/workflows/${wfGuid}/runs/${runGuid}`);
+    if (TERMINAL_RUN_STATUSES.has(res.data.status)) return res.data;
+    if (Date.now() > deadline) throw new Error(`Timed out after ${timeoutSec}s; run ${runGuid} is still ${res.data.status}. Check: gipity workflow runs ${wfGuid} ${runGuid}`);
+    await sleep(2000);
+  }
+}
+
 async function listWorkflows(opts: { json?: boolean }): Promise<void> {
   const res = await get<WorkflowListResponse>('/workflows');
 
@@ -140,13 +168,37 @@ workflowCommand
 
 workflowCommand
   .command('run <name>')
-  .description('Trigger a workflow')
+  .description('Trigger a workflow (add --wait to block until it finishes)')
   .option('--json', 'Output as JSON')
+  .option('--wait', 'Block until the triggered run reaches a terminal state, then print it')
+  .option('--timeout <s>', 'Max seconds to wait with --wait', '120')
   .action((name: string, _opts, cmd) => run('Run', async () => {
-    const opts = mergedOpts(cmd);
+    const opts = mergedOpts(cmd) as { json?: boolean; wait?: boolean; timeout?: string };
     const wf = await resolveWorkflow(name);
-    const res = await post<{ data: { message: string; workflow_guid: string } }>(`/workflows/${wf.short_guid}/run`, {});
-    printResult(`Triggered "${wf.name}".`, opts, res.data);
+
+    if (!opts.wait) {
+      const res = await post<{ data: { message: string; workflow_guid: string } }>(`/workflows/${wf.short_guid}/run`, {});
+      printResult(`Triggered "${wf.name}".`, opts, res.data);
+      return;
+    }
+
+    // The trigger endpoint is fire-and-forget — it returns the workflow guid,
+    // not a run guid (the run row is created asynchronously inside the executor).
+    // So capture the latest run guid BEFORE triggering, then wait for a newer one
+    // to appear and poll it to a terminal state. Avoids matching a concurrent run.
+    const before = await get<{ data: RunData[] }>(`/workflows/${wf.short_guid}/runs?limit=1`);
+    const prevGuid = before.data[0]?.short_guid;
+
+    await post(`/workflows/${wf.short_guid}/run`, {});
+
+    const r = await waitForRun(wf.short_guid, prevGuid, Number(opts.timeout) || 120);
+    if (opts.json) {
+      console.log(JSON.stringify(r));
+    } else {
+      console.log(formatRunLine(r));
+      if (r.error_message) console.log(`  ${clrError(r.error_message)}`);
+    }
+    if (r.status !== 'completed') process.exit(1);
   }));
 
 workflowCommand

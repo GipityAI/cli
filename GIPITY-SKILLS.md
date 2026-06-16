@@ -116,18 +116,15 @@ test('get-items returns items', async (ctx) => {
 - `ctx.fn.call(name, params)` - call a deployed function
 - `test()` and `assert` are provided as globals by the harness - do NOT `import` them
 - Write tests for every new function by default; use judgment for trivial glue code or throwaway experiments
-- The test *code* is sandboxed (no direct DB or filesystem access), but `ctx.fn.call` hits your **real deployed functions against the real project DB**. Writes persist after the run - there is no auto-rollback or teardown. Clean up rows you create in the same test (`try/finally`), and use a unique key per run so re-runs don't collide:
+- The test *code* is sandboxed (no direct DB or filesystem access), but `ctx.fn.call` hits your **real deployed functions against the real project DB**. Writes persist after the run - there is no auto-rollback. Register `ctx.cleanup(fn)` to delete rows a test creates; the harness runs every registered cleanup after the suite (reverse order, even if a test failed). Use a unique key per run so anything that slips through is easy to spot:
 
 ```js
 test('save + delete round-trips', async (ctx) => {
     const key = `test-${Date.now()}`;
     const saved = await ctx.fn.call('save-receipt', { title: key });
-    try {
-        const list = await ctx.fn.call('list-receipts', {});
-        assert.ok(list.receipts.some(r => r.title === key));
-    } finally {
-        await ctx.fn.call('delete-receipt', { short_guid: saved.short_guid });
-    }
+    ctx.cleanup(() => ctx.fn.call('delete-receipt', { short_guid: saved.short_guid }));
+    const list = await ctx.fn.call('list-receipts', {});
+    assert.ok(list.receipts.some(r => r.title === key));
 });
 ```
 

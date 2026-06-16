@@ -94,6 +94,8 @@ Run \`gipity --help\` for the full list. Use \`--help\` on any command for detai
 
 Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** — read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
 
+Tests write to your real DB: \`gipity test\` runs the test code sandboxed, but \`ctx.fn.call\`/\`callAs\` hit your actual deployed functions, which write to the same project database the app reads from — rows a test creates persist and surface on the live page. Register \`ctx.cleanup(fn)\` in any write-test to delete what it made; the harness runs every cleanup after the suite (even on failure).
+
 ## Tool output is complete and synchronous
 
 Every tool call returns its full output with that call. There is no output buffer to flush. Never run no-op commands (echo, date, sleep, repeated reads) to "retrieve" or "flush" lagged output - if a result looks empty or delayed, treat it as the actual result and move on, or re-run the real command once.
@@ -132,6 +134,7 @@ App development skills:
 
 Kit skills (reusable building blocks - \`gipity add <kit>\`):
 - \`audio-align\` - the audio-align kit: forced alignment of audio + lyrics into word-level timing JSON
+- \`chatbot\` - the chatbot kit: persona + scope guardrails + static knowledge, bubble widget or headless engine
 
 Other key skills:
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools

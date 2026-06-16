@@ -1,8 +1,9 @@
 import { Command } from 'commander';
-import { get, post } from '../api.js';
+import { get, post, del } from '../api.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, bold, muted, success } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
+import { confirm } from '../utils.js';
 
 export const fnCommand = new Command('fn')
   .description('Manage functions');
@@ -55,4 +56,28 @@ fnCommand
       body,
     );
     console.log(opts.json ? JSON.stringify(res.data) : JSON.stringify(res.data, null, 2));
+  }));
+
+fnCommand
+  .command('delete <name>')
+  .alias('rm')
+  .description('Delete a function')
+  .option('--yes', 'Skip confirmation')
+  .option('--json', 'Output as JSON')
+  .action((name: string, opts) => run('Delete', async () => {
+    const config = requireConfig();
+    if (!await confirm(`Delete function '${name}'? This cannot be undone.`, { skip: opts.yes })) {
+      console.log('Cancelled.');
+      return;
+    }
+
+    await del<{ data: { deleted: boolean } }>(
+      `/projects/${config.projectGuid}/functions/${encodeURIComponent(name)}`,
+    );
+
+    if (opts.json) {
+      console.log(JSON.stringify({ name, deleted: true }));
+    } else {
+      console.log(success(`Deleted function '${name}'.`));
+    }
   }));

@@ -20,6 +20,19 @@ function inProject(args: string[]) {
   return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: projectDir });
 }
 
+test('gipity db query --help renders the subcommand usage, not a skill doc', async () => {
+  mock.reset();
+  // If the skill-fetch short-circuit wrongly fires on `db query --help`, it would
+  // hit the skills endpoint and append doc prose. Make that loud if it happens.
+  mock.on('GET /skills', () => { throw new Error('skill fetch should NOT happen for a subcommand --help'); });
+  const r = await inProject(['db', 'query', '--help']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Usage:.*db query/s);
+  assert.match(r.stdout, /Run SQL/);
+  assert.doesNotMatch(r.stdout, /auto-loaded from server/);
+  assert.doesNotMatch(r.stdout, /Related Skills/);
+});
+
 test('gipity db list (project-scoped) prints friendly names', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/databases', { body: { data: [

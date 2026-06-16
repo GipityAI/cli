@@ -232,10 +232,18 @@ function enableHelpAfterError(cmd: Command): void {
 }
 enableHelpAfterError(program);
 
-// Auto-fetch related skill docs when --help is run on mapped commands
+// Auto-fetch related skill docs when --help is run on a doc-bearing TOP-LEVEL
+// command (e.g. `gipity fn --help`, `gipity db --help`). It must NOT fire for a
+// subcommand's help: `gipity db query --help` should render commander's own
+// usage for `db query`, not the parent's help plus a skill doc. So only trigger
+// when the first token is a mapped command and nothing after it is a subcommand
+// (every remaining token is a flag).
 const argv = process.argv.slice(2);
 const hasHelp = argv.includes('--help') || argv.includes('-h');
-const mappedCmd = hasHelp ? argv.find(a => a in HELP_SKILL_MAP) : undefined;
+const topCmd = argv[0];
+const targetsTopCmdOnly = argv.slice(1).every(a => a.startsWith('-'));
+const mappedCmd =
+  hasHelp && targetsTopCmdOnly && topCmd in HELP_SKILL_MAP ? topCmd : undefined;
 
 if (mappedCmd) {
   const cmdObj = program.commands.find(c => c.name() === mappedCmd);
