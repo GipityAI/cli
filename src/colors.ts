@@ -1,33 +1,133 @@
 // ── Gipity CLI Color System ─────────────────────────────────────────────
 // Centralized color definitions matching the Gipity platform palette.
 // All command files should import from here - no inline ANSI codes.
+//
+// Color depth is detected once at load. RGB colors automatically downgrade:
+//   level 3 → 24-bit truecolor   \x1b[38;2;R;G;Bm
+//   level 2 → 256-color          \x1b[38;5;Nm
+//   level 1 → 16-color           \x1b[3Xm / \x1b[9Xm
+//   level 0 → no color (plain text)
+// This avoids the failure mode where a terminal that does not understand the
+// 24-bit escape misparses it and renders garbage (e.g. the orange egg coming
+// out purple on consoles without truecolor support).
 
 type StyleFn = (s: string) => string;
 
 const ESC = '\x1b';
 
-// Detect whether colors should be suppressed
-const noColor = !!process.env['NO_COLOR'] || !process.stdout.isTTY;
+// ── Color-depth detection ───────────────────────────────────────────────
+// 0 = none, 1 = 16-color, 2 = 256-color, 3 = truecolor. Mirrors the common
+// supports-color / chalk heuristics, biased toward NOT emitting truecolor
+// unless the terminal advertises it, so unknown terminals get a safe 256 or
+// 16-color approximation instead of a misparsed 24-bit sequence.
+function detectColorLevel(): 0 | 1 | 2 | 3 {
+  if (process.env['NO_COLOR']) return 0;
+
+  // FORCE_COLOR overrides detection (matches Node / chalk semantics).
+  const force = process.env['FORCE_COLOR'];
+  if (force !== undefined) {
+    if (force === '0' || force === 'false') return 0;
+    if (force === '3') return 3;
+    if (force === '2') return 2;
+    // '1', 'true', '' → at least basic color
+    if (force === '1' || force === 'true' || force === '') return 1;
+  }
+
+  if (!process.stdout.isTTY) return 0;
+
+  const term = (process.env['TERM'] || '').toLowerCase();
+  if (term === 'dumb') return 0;
+
+  const colorterm = (process.env['COLORTERM'] || '').toLowerCase();
+  if (colorterm === 'truecolor' || colorterm === '24bit') return 3;
+
+  const termProgram = process.env['TERM_PROGRAM'] || '';
+  if (termProgram === 'iTerm.app' || termProgram === 'vscode') return 3;
+  if (termProgram === 'Apple_Terminal') return 2;
+
+  if (/-256(color)?$/.test(term) || term.includes('256')) return 2;
+
+  // Modern Windows consoles set COLORTERM (caught above). Older cmd.exe /
+  // conhost only do 16-color reliably.
+  if (process.platform === 'win32') return 1;
+
+  if (term) return 1;
+  return 0;
+}
+
+const COLOR_LEVEL = detectColorLevel();
 
 // Identity function for when colors are disabled
 const identity: StyleFn = (s: string) => s;
 
-// ── Low-level builders ──────────────────────────────────────────────────
+// ── RGB downgrade helpers ───────────────────────────────────────────────
 
-function makeFg(r: number, g: number, b: number): StyleFn {
-  if (noColor) return identity;
-  return (s: string) => `${ESC}[38;2;${r};${g};${b}m${s}${ESC}[39m`;
+// RGB → nearest xterm-256 palette index (6x6x6 cube + grayscale ramp).
+function rgbTo256(r: number, g: number, b: number): number {
+  if (r === g && g === b) {
+    if (r < 8) return 16;
+    if (r > 248) return 231;
+    return Math.round(((r - 8) / 247) * 24) + 232;
+  }
+  return (
+    16 +
+    36 * Math.round((r / 255) * 5) +
+    6 * Math.round((g / 255) * 5) +
+    Math.round((b / 255) * 5)
+  );
 }
 
-function makeBg(r: number, g: number, b: number): StyleFn {
-  if (noColor) return identity;
-  return (s: string) => `${ESC}[48;2;${r};${g};${b}m${s}${ESC}[49m`;
+// RGB → nearest 16-color SGR foreground code (30-37 / 90-97).
+function rgbTo16(r: number, g: number, b: number): number {
+  const value = Math.round((Math.max(r, g, b) / 255) * 3);
+  if (value === 0) return 30;
+  let code =
+    30 +
+    ((Math.round(b / 255) << 2) |
+      (Math.round(g / 255) << 1) |
+      Math.round(r / 255));
+  if (value === 3) code += 60; // bright variant
+  return code;
+}
+
+// ── Low-level builders ──────────────────────────────────────────────────
+
+export function makeFg(r: number, g: number, b: number): StyleFn {
+  if (COLOR_LEVEL === 0) return identity;
+  if (COLOR_LEVEL === 3) {
+    return (s: string) => `${ESC}[38;2;${r};${g};${b}m${s}${ESC}[39m`;
+  }
+  if (COLOR_LEVEL === 2) {
+    const n = rgbTo256(r, g, b);
+    return (s: string) => `${ESC}[38;5;${n}m${s}${ESC}[39m`;
+  }
+  const code = rgbTo16(r, g, b);
+  return (s: string) => `${ESC}[${code}m${s}${ESC}[39m`;
+}
+
+export function makeBg(r: number, g: number, b: number): StyleFn {
+  if (COLOR_LEVEL === 0) return identity;
+  if (COLOR_LEVEL === 3) {
+    return (s: string) => `${ESC}[48;2;${r};${g};${b}m${s}${ESC}[49m`;
+  }
+  if (COLOR_LEVEL === 2) {
+    const n = rgbTo256(r, g, b);
+    return (s: string) => `${ESC}[48;5;${n}m${s}${ESC}[49m`;
+  }
+  const code = rgbTo16(r, g, b) + 10; // fg 30-97 → bg 40-107
+  return (s: string) => `${ESC}[${code}m${s}${ESC}[49m`;
 }
 
 function makeStyle(open: number, close: number): StyleFn {
-  if (noColor) return identity;
+  if (COLOR_LEVEL === 0) return identity;
   return (s: string) => `${ESC}[${open}m${s}${ESC}[${close}m`;
 }
+
+// Convenience alias for callers that just want an RGB foreground (e.g. banner).
+export const fg = makeFg;
+
+// The detected level, exported for callers that want to branch on it.
+export const colorLevel = COLOR_LEVEL;
 
 // ── Text style helpers ──────────────────────────────────────────────────
 

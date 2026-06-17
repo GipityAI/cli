@@ -8,27 +8,33 @@ This CLI connects [Claude Code](https://claude.ai/claude-code) to Gipity's cloud
 
 ## Getting Started
 
-You need **Node.js 18+** (which includes npm) and **Claude Code**.
+One line installs everything. It sets up Node 18+ (if you don't already have it) and the Gipity CLI, with no sudo required:
 
 ```bash
-# 1. Install Node.js (if you don't have it)
+# macOS / Linux / WSL
+curl -fsSL https://gipity.ai/install.sh | bash
 
-# macOS
-brew install node
+# Windows (PowerShell)
+irm https://gipity.ai/install.ps1 | iex
+```
 
-# Windows - download the installer from https://nodejs.org
+Then launch your coding agent wired into Gipity:
 
-# Linux (Ubuntu/Debian)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs
-
-# 2. Install Gipity CLI and Claude Code
-npm install -g gipity @anthropic-ai/claude-code
-
-# 3. Go
+```bash
 gipity claude
 ```
 
-That's it. `claude` walks you through login, project setup, and launches Claude Code.
+`gipity claude` walks you through login, project setup, and launches Claude Code. Using Codex, Gemini, or Cursor instead? Run `gipity init`.
+
+### Prefer npm
+
+If you already have **Node.js 18+** you can install directly:
+
+```bash
+npm install -g gipity
+```
+
+If that fails with `EACCES`, your npm global prefix is root-owned. Don't reach for `sudo`: point npm at a user-owned prefix instead (`npm config set prefix ~/.npm-global` and add `~/.npm-global/bin` to your `PATH`), or just use the one-line installer above, which does this for you. See https://docs.npmjs.com/resolving-eacces-permissions-errors.
 
 ## Updates
 

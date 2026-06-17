@@ -1,7 +1,7 @@
 // ── Gipity CLI Startup Banner ──────────────────────────────────────────
 // Two-panel box showing all AI models, platform tools, and sandbox capabilities.
 
-import { brand, bold, faint, muted } from './colors.js';
+import { brand, bold, faint, muted, fg } from './colors.js';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -60,11 +60,13 @@ const INFRASTRUCTURE = [
 ];
 
 // ── Egg color palette (shared) - gradient built around #FEA60E ───────
-const _hi = (s: string) => `\x1b[38;2;255;215;80m${s}\x1b[39m`;  // golden highlight
-const _lt = (s: string) => `\x1b[38;2;254;190;45m${s}\x1b[39m`;  // light
-const _br = (s: string) => `\x1b[38;2;254;166;14m${s}\x1b[39m`;  // base - #FEA60E
-const _md = (s: string) => `\x1b[38;2;218;112;8m${s}\x1b[39m`;   // medium-dark
-const _sh = (s: string) => `\x1b[38;2;170;68;4m${s}\x1b[39m`;    // shadow
+// Colors route through fg() so they downgrade (256 / 16 / none) on terminals
+// without truecolor support instead of rendering as misparsed garbage.
+const _hi = fg(255, 215, 80);  // golden highlight
+const _lt = fg(254, 190, 45);  // light
+const _br = fg(254, 166, 14);  // base - #FEA60E
+const _md = fg(218, 112, 8);   // medium-dark
+const _sh = fg(170, 68, 4);    // shadow
 
 // Wobbly egg - asymmetric left/right, organic feel (8 rows)
 // Widths: 6 → 8 → 10 → 12 → 14 → 12 → 10 → 8  |  Widest at row 5/8 (62%)
@@ -101,8 +103,8 @@ function eggSym(): string[] {
 // Edge pairs: ▗/▖ cap → ▟/▙ expand → ▐/▌ straight → ▜/▛ contract → ▝/▘ cap
 function eggTall(): string[] {
   // Extra intermediate tones for a smoother gradient
-  const _m1 = (s: string) => `\x1b[38;2;238;138;10m${s}\x1b[39m`; // base → medium
-  const _dk = (s: string) => `\x1b[38;2;195;88;6m${s}\x1b[39m`;   // medium → shadow
+  const _m1 = fg(238, 138, 10); // base to medium
+  const _dk = fg(195, 88, 6);   // medium to shadow
 
   return [
     _lt('▗▄') + _br('██') + _md('▄▖'),                            //  6 - top cap
@@ -197,7 +199,7 @@ function buildLeftPanel(opts: BannerOptions, panelW: number): string[] {
   const nameDisplay = opts.email
     ? opts.email.split('@')[0].replace(/^./, c => c.toUpperCase())
     : null;
-  const white = (s: string) => `\x1b[38;2;255;255;255m${s}\x1b[39m`;
+  const white = fg(255, 255, 255);
   const welcome = nameDisplay
     ? white(bold(`Welcome back ${nameDisplay}!`))
     : white(bold('Welcome to Gipity'));
