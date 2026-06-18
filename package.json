@@ -1,6 +1,6 @@
 {
   "name": "gipity",
-  "version": "1.0.389",
+  "version": "1.0.390",
   "description": "The full-stack platform tuned for AI agents. Database, storage, auth, functions, deploy, and drop-in kits - all agent-tuned. Pair with Claude Code or use standalone.",
   "bin": {
     "gipity": "dist/updater/shim.js",
