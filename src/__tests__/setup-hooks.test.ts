@@ -19,7 +19,9 @@ import {
   ensureGipityPlugin,
   stripGipityHooks,
   isGipityManagedHookCommand,
+  userScopePluginCurrent,
   GIPITY_PLUGIN_ID,
+  GIPITY_PLUGIN_VERSION,
   GIPITY_MARKETPLACE_NAME,
   GIPITY_MARKETPLACE_REPO,
 } from '../setup.js';
@@ -211,5 +213,52 @@ test('plugin enablement is idempotent - no rewrite when already configured', () 
     setupClaudeHooks();
     assert.equal(readFileSync(path, 'utf-8'), first, 'identical content after second run');
     assert.ok(existsSync(path));
+  });
+});
+
+/** Write a fake Claude Code installed_plugins.json into the temp HOME. */
+function writeInstalledPlugins(home: string, entries: any[]): void {
+  const dir = join(home, '.claude', 'plugins');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'installed_plugins.json'),
+    JSON.stringify({ version: 2, plugins: { [GIPITY_PLUGIN_ID]: entries } }),
+  );
+}
+
+test('userScopePluginCurrent is false without a user-scope install at the required version', () => {
+  // No installed_plugins.json at all - the regression's starting state.
+  withTempDirs((_p, _home) => {
+    assert.equal(userScopePluginCurrent(), false, 'no install file -> false');
+  });
+
+  // Only a project-scoped install (the exact state that broke capture: enabled
+  // declaratively, but materialized only for one project, so it never loaded
+  // in GipRunner's run dirs).
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [
+      { scope: 'project', version: GIPITY_PLUGIN_VERSION, projectPath: '/somewhere/else' },
+    ]);
+    assert.equal(userScopePluginCurrent(), false, 'project scope only -> false');
+  });
+
+  // A user-scope install, but stale (older than this CLI needs).
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [{ scope: 'user', version: '0.1.0' }]);
+    assert.equal(userScopePluginCurrent(), false, 'older user version -> false');
+  });
+});
+
+test('userScopePluginCurrent is true for a current-or-newer user-scope install', () => {
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [{ scope: 'user', version: GIPITY_PLUGIN_VERSION }]);
+    assert.equal(userScopePluginCurrent(), true, 'exact version at user scope -> true');
+  });
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [
+      { scope: 'project', version: '0.1.0', projectPath: '/x' },
+      { scope: 'user', version: '9.9.9' },
+    ]);
+    assert.equal(userScopePluginCurrent(), true, 'newer user install wins past a stale project one');
   });
 });

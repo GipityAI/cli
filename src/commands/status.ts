@@ -5,11 +5,15 @@ import { homedir } from 'os';
 import { getAuth, sessionExpired } from '../auth.js';
 import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
-import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin } from '../setup.js';
+import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopePluginCurrent } from '../setup.js';
 
-/** Hooks ship in the Gipity Claude Code plugin now - "installed" means the
- *  user-scope settings register the marketplace and enable the plugin.
- *  Claude Code fetches/updates the plugin itself at launch. */
+/** Hooks ship in the Gipity Claude Code plugin now. "Installed" means three
+ *  things must all hold: the user-scope settings register the marketplace and
+ *  enable the plugin (declarative), AND Claude Code actually has a user-scope
+ *  install of the current version on disk. The last check matters because
+ *  CC >=2.1.x does not materialize a user-scope install from enablement alone -
+ *  without it the hooks never load and capture/file-sync silently die, so
+ *  reporting "ok" on the declarative keys alone would be a false green. */
 function checkGipityPlugin(): { missing: string[]; ok: boolean } {
   const path = join(homedir(), '.claude', 'settings.json');
   let settings: any = {};
@@ -19,6 +23,7 @@ function checkGipityPlugin(): { missing: string[]; ok: boolean } {
   const missing: string[] = [];
   if (!settings?.extraKnownMarketplaces?.[GIPITY_MARKETPLACE_NAME]) missing.push('marketplace');
   if (settings?.enabledPlugins?.[GIPITY_PLUGIN_ID] !== true) missing.push('plugin');
+  if (!userScopePluginCurrent()) missing.push('install');
   return { missing, ok: missing.length === 0 };
 }
 
@@ -78,6 +83,9 @@ export const statusCommand = new Command('status')
         // force: an explicit repair request overrides a previous disable.
         ensureGipityPlugin(true);
         setupClaudeHooks();
+        // Re-enabling the declarative keys isn't enough on CC >=2.1.x - also
+        // materialize the user-scope install so the hooks actually load.
+        ensureGipityPluginInstalled();
         console.log(`${muted('Hooks:')}   ${success('repaired - Gipity plugin re-enabled')}`);
       } else {
         console.log(`${muted('Hooks:')}   ${warning(`Gipity plugin not enabled (missing: ${hookCheck.missing.join(', ')})`)}`);

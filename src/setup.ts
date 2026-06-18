@@ -4,6 +4,7 @@
 import { resolve, join, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 
 export { SKILLS_CONTENT };
@@ -106,13 +107,28 @@ export const PERMISSIONS_SETTINGS = {
 // into each project's .claude/settings.json with absolute paths baked in -
 // that left orphaned entries behind on uninstall (the CLI keeps no inventory
 // of projects it touched) and could even land in the user-global settings
-// when a gipity command ran from $HOME. The plugin replaces all of it with
-// one declarative enablement entry: Claude Code resolves script paths via
-// ${CLAUDE_PLUGIN_ROOT}, fetches the marketplace non-interactively at launch
-// (headless included), and uninstall/disable removes every hook at once.
+// when a gipity command ran from $HOME. The plugin replaces all of it: Claude
+// Code resolves script paths via ${CLAUDE_PLUGIN_ROOT} and uninstall/disable
+// removes every hook at once.
+//
+// Two steps are needed to make it load, split by testability and cost:
+//   - ensureGipityPlugin()          - declarative: register the marketplace +
+//     enable the plugin in ~/.claude/settings.json. Pure file writes.
+//   - ensureGipityPluginInstalled() - imperative: actually install the plugin
+//     at USER scope via the `claude plugin` CLI. Required because CC >=2.1.x no
+//     longer materializes a user-scope install from enablement alone; without
+//     it the hooks load only inside whatever project happened to install the
+//     plugin (often nowhere), silently taking capture + file-sync down.
 export const GIPITY_PLUGIN_ID = 'gipity@gipity';
 export const GIPITY_MARKETPLACE_NAME = 'gipity';
 export const GIPITY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
+
+// The plugin version this CLI requires. Bump in lockstep with
+// claude-plugin/.claude-plugin/plugin.json: Claude Code does NOT auto-upgrade
+// an installed plugin when the marketplace advances - only an explicit
+// `plugin install`/`update` does - so this constant is how a CLI upgrade tells
+// ensureGipityPluginInstalled() to refresh a stale user-scope install.
+export const GIPITY_PLUGIN_VERSION = '0.4.0';
 
 /** True for hook commands the CLI itself wrote into settings.json in past
  *  versions. Matched by signature so migration strips exactly our own
@@ -198,6 +214,78 @@ export function ensureGipityPlugin(force = false): void {
   if (!changed) return;
   mkdirSync(claudeDir, { recursive: true });
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+}
+
+/** Dotted-numeric version compare: true when `have` >= `want` (e.g. "0.4.0"). */
+function versionGte(have: string, want: string): boolean {
+  const h = have.split('.').map((n) => parseInt(n, 10) || 0);
+  const w = want.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(h.length, w.length); i++) {
+    const a = h[i] ?? 0;
+    const b = w[i] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return true;
+}
+
+/** True when Claude Code already records a USER-scope install of the Gipity
+ *  plugin at >= the version this CLI needs - the common case, letting the
+ *  caller skip the (slow) reinstall. Reads installed_plugins.json directly so
+ *  the check costs no subprocess. Exported so `gipity status` can tell an
+ *  actually-loaded plugin apart from one that's merely enabled-but-uninstalled
+ *  (which would otherwise read as a false-green "hooks enabled"). */
+export function userScopePluginCurrent(): boolean {
+  try {
+    const p = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    const data = JSON.parse(readFileSync(p, 'utf-8'));
+    const entries = data?.plugins?.[GIPITY_PLUGIN_ID];
+    if (!Array.isArray(entries)) return false;
+    return entries.some(
+      (e: any) =>
+        e?.scope === 'user' &&
+        typeof e?.version === 'string' &&
+        versionGte(e.version, GIPITY_PLUGIN_VERSION),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function claudeOnPath(): boolean {
+  const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['claude'], {
+    encoding: 'utf-8',
+  });
+  return probe.status === 0 && !!probe.stdout?.trim();
+}
+
+/** Materialize the Gipity plugin at USER scope via Claude Code's own plugin
+ *  CLI, so its hooks (session capture + file sync) load in EVERY directory.
+ *
+ *  ensureGipityPlugin() only writes the declarative `enabledPlugins` /
+ *  `extraKnownMarketplaces` keys. That was enough on older Claude Code, but
+ *  CC >=2.1.x no longer materializes a user-scope install from an enablement
+ *  entry alone: without an actual user-scope install the plugin loads only in
+ *  whatever project happened to install it (often nowhere), so capture and
+ *  file-sync silently go dark everywhere else. We drive the supported
+ *  `claude plugin` commands rather than trust implicit resolution.
+ *
+ *  Best-effort and non-fatal - a missing `claude` or a failed install must
+ *  never break `gipity claude`. Skips entirely when the user-scope install is
+ *  already current, so it shells out at most once per plugin-version bump. */
+export function ensureGipityPluginInstalled(): void {
+  if (userScopePluginCurrent()) return;
+  if (!claudeOnPath()) return;
+  // Refresh the marketplace clone so `install` resolves the current version,
+  // then (re)install at user scope - idempotent, and upgrades an older or
+  // project-scoped install to the current one at user scope.
+  spawnSync('claude', ['plugin', 'marketplace', 'update', GIPITY_MARKETPLACE_NAME], {
+    stdio: 'ignore',
+    timeout: 120_000,
+  });
+  spawnSync('claude', ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'], {
+    stdio: 'ignore',
+    timeout: 120_000,
+  });
 }
 
 export function setupClaudeHooks(): void {

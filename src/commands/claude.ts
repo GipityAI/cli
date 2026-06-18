@@ -20,7 +20,7 @@ import { getAuth, saveAuth, clearAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
-import { slugify, setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
+import { slugify, setupClaudeHooks, ensureGipityPluginInstalled, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
   buildProjectContextBlock as buildProjectContextBlockText,
   buildNewProjectPrompt,
@@ -666,6 +666,11 @@ export const claudeCommand = new Command('claude')
         console.log(`  Then: cd ${process.cwd()} && claude`);
         return;
       }
+
+      // Ensure the Gipity plugin is actually installed at user scope (not just
+      // enabled declaratively) so its capture + file-sync hooks load in this
+      // run's cwd. No-ops once the current version is installed; best-effort.
+      ensureGipityPluginInstalled();
 
       // Resolve (or create) the backing Gipity conversation for this
       // Claude Code run. The conv_guid is handed to the child (and thus
