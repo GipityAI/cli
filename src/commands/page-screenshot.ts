@@ -265,3 +265,25 @@ export const pageScreenshotCommand = new Command('screenshot')
       console.log(`${label('Screenshot file')} ${success(savedFiles[i])}`);
     }
   }));
+
+// `screenshot` captures the page AS IT LOADS — there is no flag to scroll, click,
+// run a script, or wait for a selector before capture (agents reach for --eval/
+// --script/--scroll/--selector and get an unknown-option detour). State this
+// limitation and the two supported alternatives right here, so the help (rendered
+// on any bad flag, and this 'after' block survives `| tail`/`| grep`) ends the
+// hunt in one shot instead of sending the agent grepping `--help` for
+// scroll/script/before/action. The real per-element capture lives server-side and
+// isn't wired yet — until then, --full + crop or `page eval` cover the need.
+pageScreenshotCommand.addHelpText('after', `
+Examples:
+  gipity page screenshot "https://dev.gipity.ai/me/app/"
+  gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page
+  gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
+
+Capturing a specific state (a slide, an off-screen element, a post-scroll view)?
+  screenshot captures the page as it loads — it does NOT scroll, click, wait for a
+  selector, or run a script before capture. To get the part you want:
+    • --full captures the ENTIRE scrollable page (then crop to the region).
+    • 'gipity page eval <url> "<expr>"' reads any (even off-screen) element's
+      data/state/rect without a picture — e.g. read the chart's bar values
+      directly instead of screenshotting the slide.`);

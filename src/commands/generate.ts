@@ -1,8 +1,9 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { resolveProjectContext } from '../config.js';
+import { resolveProjectContext, getConfigPath } from '../config.js';
+import { pushFile } from '../sync.js';
 import { writeFileSync } from 'fs';
-import { resolve as resolvePath } from 'path';
+import { resolve as resolvePath, dirname, relative, isAbsolute } from 'path';
 import { error as clrError, success, muted, info } from '../colors.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
@@ -14,14 +15,40 @@ interface GenerateResult {
   size_bytes: number;
 }
 
-/** Download a URL and save to a local file. Returns the absolute path written,
- *  so callers can report exactly where the file landed. */
+/** Download a URL and save to a local file, then push it up to the project so
+ *  the cloud (and anything that mirrors it) immediately matches local disk.
+ *  Returns the absolute path written, so callers can report where it landed.
+ *
+ *  The push matters because generated media is written straight to disk with
+ *  writeFileSync, which does NOT trip the editor's file-sync hook the way an
+ *  agent's own file write does. Without it the file is local-only until the
+ *  next `gipity sync`, so `gipity sandbox run` - which mirrors the *server* -
+ *  can't see a just-generated image to convert/optimize it. Pushing here closes
+ *  that gap so the "sandbox auto-mirrors the project" contract holds right after
+ *  generation. Best-effort: the local save already succeeded, so a push failure
+ *  only warns and points at `gipity sync`. */
 async function downloadFile(url: string, filename: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
   writeFileSync(filename, buffer);
-  return resolvePath(filename);
+  const savedPath = resolvePath(filename);
+  await pushGenerated(savedPath);
+  return savedPath;
+}
+
+/** Sync a freshly generated file up to the linked project (no-op when there's
+ *  no local project, or the file was written outside the project tree). */
+async function pushGenerated(savedPath: string): Promise<void> {
+  const configPath = getConfigPath();
+  if (!configPath) return; // not linked to a project - nothing to sync into
+  const rel = relative(dirname(configPath), savedPath);
+  if (rel.startsWith('..') || isAbsolute(rel)) return; // outside the project tree
+  try {
+    await pushFile(savedPath);
+  } catch (err: any) {
+    console.error(muted(`Note: couldn't sync to the cloud automatically (${err.message}). Run \`gipity sync\` before referencing this file in \`gipity sandbox run\`.`));
+  }
 }
 
 // ── IMAGE ──────────────────────────────────────────────────────────────
