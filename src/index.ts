@@ -132,10 +132,14 @@ program
   .addOption(new Option('--api-base <url>', 'API base URL').hideHelp())
   .option('-y, --yes', 'Skip confirmation prompts');
 
-program.hook('preAction', () => {
+program.hook('preAction', (_thisCommand, actionCommand) => {
   const globalOpts = program.opts();
   if (globalOpts.apiBase) setApiBaseOverride(globalOpts.apiBase);
-  if (globalOpts.yes) setAutoConfirm(true);
+  // Honor `-y`/`--yes` whether it came before the subcommand (the global flag)
+  // or after it (the per-command flag registered by enableYesEverywhere below),
+  // so both `gipity -y records delete ...` and `gipity records delete ... --yes`
+  // skip confirmation identically.
+  if (globalOpts.yes || actionCommand.opts().yes) setAutoConfirm(true);
 });
 
 // Bracket non-JSON command output with leading/trailing blank lines centrally,
@@ -231,6 +235,24 @@ function enableHelpAfterError(cmd: Command): void {
   for (const sub of cmd.commands) enableHelpAfterError(sub);
 }
 enableHelpAfterError(program);
+
+// ── `-y`/`--yes` accepted AFTER any subcommand, not only before it ──────
+// The global `-y` lives on `program`, so Commander parses it only when it
+// precedes the subcommand (`gipity -y records delete ...`). Agents and humans
+// instinctively append it instead (`gipity records delete ... --yes`), which
+// Commander would reject as an unknown option and dump help for. Register the
+// flag on every leaf command so both positions work identically; the preAction
+// hook honors whichever one was set. Skip commands that already declare their
+// own `--yes` (e.g. `fn delete`, `db drop`, `remove`) to avoid a duplicate.
+function enableYesEverywhere(cmd: Command): void {
+  if (cmd.commands.length > 0) {
+    for (const sub of cmd.commands) enableYesEverywhere(sub);
+    return;
+  }
+  const hasYes = cmd.options.some(o => o.long === '--yes' || o.short === '-y');
+  if (!hasYes) cmd.addOption(new Option('-y, --yes', 'Skip confirmation prompts').hideHelp());
+}
+enableYesEverywhere(program);
 
 // Auto-fetch related skill docs when --help is run on a doc-bearing TOP-LEVEL
 // command (e.g. `gipity fn --help`, `gipity db --help`). It must NOT fire for a
