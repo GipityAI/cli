@@ -571,7 +571,9 @@ export const claudeCommand = new Command('claude')
           // .gipity.json into cwd (no projects-root materialization).
           const cwdBase = basename(process.cwd());
           const adoptSlug = slugify(cwdBase) || 'project';
-          const adoptName = cwdBase || adoptSlug;
+          // Server caps name at 100 chars; clamp so a very long dir name
+          // doesn't trip a "Too big" 400 (slugify already clamps the slug).
+          const adoptName = (cwdBase || adoptSlug).slice(0, 100);
           accountSlug = await getAccountSlug();
           const adopted = await adoptCurrentDir({
             cwd: process.cwd(),

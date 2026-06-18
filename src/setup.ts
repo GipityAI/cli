@@ -429,10 +429,22 @@ export function setupGitignore(): void {
   }
 }
 
+/** The server caps slugs at 50 (MAX_PROJECT_SLUG_LENGTH); we cap shorter for
+ *  readability, since the slug is also the on-disk folder and the URL path
+ *  segment. Keeps long-named directories from producing valid-but-ugly slugs. */
+export const MAX_SLUG_LENGTH = 40;
+
 export function slugify(name: string): string {
-  return name
+  const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+  if (slug.length <= MAX_SLUG_LENGTH) return slug;
+  // Cut at the last word (hyphen) boundary within the cap so we don't slice
+  // mid-word (e.g. "...call-no"). Fall back to a hard cut if the first word
+  // alone already exceeds the cap.
+  const cut = slug.slice(0, MAX_SLUG_LENGTH);
+  const lastHyphen = cut.lastIndexOf('-');
+  return (lastHyphen > 0 ? cut.slice(0, lastHyphen) : cut).replace(/-+$/, '');
 }

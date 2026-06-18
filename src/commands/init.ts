@@ -129,8 +129,9 @@ Working with an existing Gipity project:
         if (!ok) { console.log(muted('Aborted.')); process.exit(1); }
       }
 
-      // Resolve project name
-      const projectName = name || basename(cwd);
+      // Resolve project name. Server caps name at 100 chars; clamp so a very
+      // long dir name doesn't trip a "Too big" 400 (slugify clamps the slug).
+      const projectName = (name || basename(cwd)).slice(0, 100);
       const projectSlug = slugify(projectName);
 
       if (!projectSlug) {
