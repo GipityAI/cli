@@ -172,14 +172,14 @@ test('gipity page inspect re-probes on console errors and reports reproducible o
   assert.doesNotMatch(r.stdout, /Transient console errors/);
 });
 
-// A console error gone on the re-probe is a cold-load transient — demoted, not flagged.
+// A real console error gone on the re-probe is a cold-load transient — demoted, not flagged.
 test('gipity page inspect demotes a non-reproducible console error to transient', async () => {
   mock.reset();
   let calls = 0;
   mock.on('POST /tools/browser/inspect', () => {
     calls++;
     const console = calls === 1
-      ? ['error: (message-less error — details hidden by the browser\'s cross-origin policy)']
+      ? ['error: ReferenceError: foo is not defined']
       : [];
     return { body: { data: { ...baseBundle, console } } };
   });
@@ -190,19 +190,51 @@ test('gipity page inspect demotes a non-reproducible console error to transient'
   assert.match(r.stdout, /not reproduced on re-probe/);
 });
 
+// Message-less cross-origin errors are unactionable (no source/stack) and the
+// platform's own injected SDK is cross-origin — so they're broken out into their
+// own bucket, never reported as app console errors, and never re-probed.
+test('gipity page inspect breaks message-less cross-origin errors out of the console list', async () => {
+  mock.reset();
+  let calls = 0;
+  mock.on('POST /tools/browser/inspect', () => {
+    calls++;
+    return { body: { data: { ...baseBundle, console: [
+      'error: (message-less error — details hidden by the browser\'s cross-origin policy)',
+    ] } } };
+  });
+  const r = await run(['page', 'inspect', 'https://example.com']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(calls, 1, 'cross-origin-only console is not re-probed');
+  assert.match(r.stdout, /Cross-origin console errors/);
+  assert.match(r.stdout, /clean/, 'no real console errors remain');
+  assert.doesNotMatch(r.stdout, /THIRD-PARTY/);
+});
+
 test('gipity page inspect --json moves transient errors to transientConsole', async () => {
   mock.reset();
   let calls = 0;
   mock.on('POST /tools/browser/inspect', () => {
     calls++;
-    const console = calls === 1 ? ['error: (message-less error)'] : [];
+    const console = calls === 1 ? ['error: ReferenceError: x'] : [];
     return { body: { data: { ...baseBundle, console } } };
   });
   const r = await run(['page', 'inspect', 'https://example.com', '--json']);
   assert.equal(r.status, 0, r.stderr);
   const parsed = JSON.parse(r.stdout.trim());
   assert.deepEqual(parsed.console, []);
-  assert.deepEqual(parsed.transientConsole, ['error: (message-less error)']);
+  assert.deepEqual(parsed.transientConsole, ['error: ReferenceError: x']);
+});
+
+test('gipity page inspect --json moves cross-origin errors to crossOriginConsole', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: { ...baseBundle, console: [
+    'error: (message-less error — details hidden by the browser\'s cross-origin policy)',
+  ] } } });
+  const r = await run(['page', 'inspect', 'https://example.com', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.deepEqual(parsed.console, []);
+  assert.equal(parsed.crossOriginConsole.length, 1);
 });
 
 // Eval is async: POST returns a job id, the CLI polls GET until the job is
@@ -677,6 +709,26 @@ test('gipity page screenshot defaults to 1000ms when neither delay flag is given
   assert.equal(r.status, 0, r.stderr);
   const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
   assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 1000);
+});
+
+test('gipity page screenshot help points to --full and page eval for a specific state', async () => {
+  // screenshot has no scroll/script/selector flag (server-side capability not
+  // wired). The help — rendered on any bad flag, e.g. a guessed --eval — must
+  // name the supported alternatives so the agent doesn't grep --help in circles.
+  const r = await run(['page', 'screenshot', '--help']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /does NOT scroll, click, wait for a/);
+  assert.match(r.stdout, /page eval/);
+  assert.match(r.stdout, /--full captures the ENTIRE scrollable page/);
+});
+
+test('gipity page screenshot rejects a guessed --eval flag but still shows the state-capture guidance', async () => {
+  // The unknown-option error renders this command's help (with the 'after'
+  // block) so the very first guess lands on the answer.
+  const r = await run(['page', 'screenshot', 'https://example.com', '--eval', 'foo']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /unknown option/i);
+  assert.match(r.stderr, /page eval|--full captures the ENTIRE scrollable page/);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────

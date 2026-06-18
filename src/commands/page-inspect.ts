@@ -27,10 +27,20 @@ interface DebugBundle {
     culprits: { tag: string; cls: string; left: number; right: number; width: number }[];
   } | null;
   transientConsole?: string[];
+  crossOriginConsole?: string[];
 }
 
 /** A console line is an error-level entry (page error or console.error). */
 const isErrorLine = (line: string): boolean => /^error:/i.test(line);
+
+/** A message-less, cross-origin "Script error." The throwing <script> lacks
+ *  CORS, so the browser strips its message/stack and the source is unknowable
+ *  from the console alone — there is no own-code stack to chase. These can't be
+ *  attributed to app code, so we surface them apart from real console errors
+ *  rather than letting an unactionable (and sometimes growing) count read as a
+ *  regression in the app the agent just wrote. */
+const isMessagelessCrossOrigin = (line: string): boolean =>
+  isErrorLine(line) && /message-less|cross-origin|Script error\.?/i.test(line);
 
 function shortUrl(url: string, truncate = true, maxLen = 100): string {
   let result: string;
@@ -84,13 +94,22 @@ export const pageInspectCommand = new Command('inspect')
 
     const b = res.data;
 
-    // Self-verify console errors before flagging them. A freshly-deployed page's
-    // first hit can throw a one-time, non-reproducible error — typically a
-    // cross-origin "Script error." with no message/stack from a CDN asset still
-    // propagating — and reporting it as a real defect sends agents chasing a
-    // phantom. So when the first probe reports error-level console lines, re-probe
-    // once (the sticky session is now warm) and keep only the errors that recur;
-    // errors seen on a single probe are surfaced separately as transient noise.
+    // Pull message-less cross-origin "Script error." lines out first. They carry
+    // no source/stack, so they're never actionable as app-code defects, and on a
+    // Gipity-deployed page the platform's own injected SDK is itself a
+    // cross-origin script — so these are reported separately (not as app console
+    // errors, and not folded into the re-probe count) instead of misleading the
+    // agent into chasing its own code.
+    const crossOriginErrors = (b.console || []).filter(isMessagelessCrossOrigin);
+    b.console = (b.console || []).filter((l) => !isMessagelessCrossOrigin(l));
+
+    // Self-verify the remaining console errors before flagging them. A
+    // freshly-deployed page's first hit can throw a one-time, non-reproducible
+    // error from an asset still propagating — and reporting it as a real defect
+    // sends agents chasing a phantom. So when the first probe reports error-level
+    // console lines, re-probe once (the sticky session is now warm) and keep only
+    // the errors that recur; errors seen on a single probe are surfaced
+    // separately as transient noise.
     let transientErrors: string[] = [];
     if ((b.console || []).some(isErrorLine)) {
       try {
@@ -105,7 +124,11 @@ export const pageInspectCommand = new Command('inspect')
     }
 
     if (opts.json) {
-      console.log(JSON.stringify(transientErrors.length ? { ...b, transientConsole: transientErrors } : b));
+      console.log(JSON.stringify({
+        ...b,
+        ...(transientErrors.length ? { transientConsole: transientErrors } : {}),
+        ...(crossOriginErrors.length ? { crossOriginConsole: crossOriginErrors } : {}),
+      }));
       return;
     }
 
@@ -145,7 +168,13 @@ export const pageInspectCommand = new Command('inspect')
       for (const line of transientErrors) {
         console.log(muted(line));
       }
-      console.log(muted('One-time cold-load artifact (first hit of freshly-deployed assets, or a cross-origin script) — not reproducible, not in your app code. Ignore unless it recurs.'));
+      console.log(muted('One-time cold-load artifact (first hit of freshly-deployed assets) — not reproducible, not in your app code. Ignore unless it recurs.'));
+    }
+
+    // ── Cross-origin console errors (message-less; source hidden by the browser) ──
+    if (crossOriginErrors.length > 0) {
+      console.log(`\n${bold('Cross-origin console errors')} ${muted(`(${crossOriginErrors.length}, source hidden by the browser)`)}:`);
+      console.log(muted("Message-less — the throwing <script> lacks CORS, so the browser hides its source and there's no own-code stack to chase. Gipity's injected SDK is itself cross-origin, so if your app loads no third-party CDN scripts these are platform noise — ignore them. If your app DOES load a third-party <script>, add crossorigin=\"anonymous\" to that tag to surface the real error."));
     }
 
     // ── Failed Resources ──

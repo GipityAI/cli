@@ -50,6 +50,15 @@ let _autoConfirm = false;
 export function setAutoConfirm(val: boolean): void { _autoConfirm = val; }
 export function getAutoConfirm(): boolean { return _autoConfirm; }
 
+/** Reconstruct the current invocation with `--yes` appended, for self-correcting
+ *  non-interactive confirmation hints. Shell-quotes args that need it. */
+function rerunWithYes(): string {
+  const args = process.argv.slice(2);
+  if (!args.some(a => a === '--yes' || a === '-y')) args.push('--yes');
+  const quote = (a: string) => (/[^\w@%+=:,./-]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a);
+  return `gipity ${args.map(quote).join(' ')}`;
+}
+
 /** Ask for Y/n confirmation. Single-keypress - no Enter required.
  *
  *  - `opts.default` controls which answer Enter / unknown-key selects. Defaults to `'no'`.
@@ -64,7 +73,10 @@ export async function confirm(
   const defaultYes = opts.default === 'yes';
   if (opts.skip ?? _autoConfirm) return true;
   if (!process.stdin.isTTY) {
-    console.error('Confirmation required. Use --yes to skip prompts.');
+    // Headless/agent context: no one can answer the prompt. Don't just say
+    // "use --yes" - echo the exact command to re-run so the fix is copy-paste,
+    // not a second guessing trip.
+    console.error(`Confirmation required (non-interactive). Re-run with --yes:\n  ${rerunWithYes()}`);
     return false;
   }
   const hint = defaultYes ? dim('[Y/n]') : dim('[y/N]');
