@@ -47,7 +47,7 @@ Prefer the cheapest option that works - CLI and sandbox are instant and free, ap
 
 1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, and more. All commands support \`--json\`.
 2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
-3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|music>\` or \`gipity chat\`. \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) — pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it.
+3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|music>\` or \`gipity chat\`. \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) - pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it.
 4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
 
 You are the developer. Write files in this directory - the Gipity Claude Code plugin's hooks auto-sync them to Gipity. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
@@ -80,7 +80,7 @@ The full "when to add a template" rule and the definition of done are spelled ou
 
 Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page inspect <url>\` → fix any errors → repeat until the definition of done is met.
 
-\`add\` writes real files to disk — Read a scaffolded file before your first Write/Edit to it, or the call fails \`"File has not been read yet"\`. Don't rewrite from memory of the template.
+\`add\` writes real files to disk - Read a scaffolded file before your first Write/Edit to it, or the call fails \`"File has not been read yet"\`. Don't rewrite from memory of the template.
 
 Make your file changes and verify they landed, then run \`gipity deploy dev\` once. \`0 uploaded, N unchanged\` means nothing changed on disk - fix the files, don't re-run deploy or probe the environment.
 
@@ -92,9 +92,9 @@ Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity san
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
-Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** — read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
+Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** - read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
 
-Tests write to your real DB: \`gipity test\` runs the test code sandboxed, but \`ctx.fn.call\`/\`callAs\` hit your actual deployed functions, which write to the same project database the app reads from — rows a test creates persist and surface on the live page. Register \`ctx.cleanup(fn)\` in any write-test to delete what it made; the harness runs every cleanup after the suite (even on failure).
+Tests write to your real DB: \`gipity test\` runs the test code sandboxed, but \`ctx.fn.call\`/\`callAs\` hit your actual deployed functions, which write to the same project database the app reads from - rows a test creates persist and surface on the live page. Register \`ctx.cleanup(fn)\` in any write-test to delete what it made; the harness runs every cleanup after the suite (even on failure).
 
 ## Tool output is complete and synchronous
 
@@ -124,6 +124,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-video\` - Gipity Video: models, aspect, resolution
 
 App development skills:
+- \`agent-deploy\` - headless auth via agent API tokens (GIPITY_TOKEN) for unattended deploys
 - \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
