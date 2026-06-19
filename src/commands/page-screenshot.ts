@@ -1,5 +1,5 @@
 import { Command, Option } from 'commander';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { dirname, join, resolve as resolvePath } from 'path';
 import { postForTarEntries } from '../api.js';
 import { getProjectRoot } from '../config.js';
@@ -140,12 +140,24 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
+  // Pre-capture script: the canonical way to screenshot a view headless can't
+  // otherwise reach — an auth-gated UI or any state behind user action. The
+  // script runs in page context AFTER load/settle and BEFORE capture, in the
+  // SAME browser session as the shot, so whatever it sets up (seed mock data,
+  // inject sign-in tokens, call a render fn, navigate to a state) is what gets
+  // photographed. Replaces the old workaround of deploying a temporary
+  // `?demo`/mock branch into the live app just to inspect a signed-in view.
+  .option('--eval <js>', 'Run JS in page context after load, before capture, to seed the view (inject mock data / sign-in tokens, render a state). Same session as the shot; async body, return value ignored.')
+  .option('--eval-file <path>', 'Read the pre-capture --eval script from a file (mutually exclusive with --eval)')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
   // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
   // so agents reach for it by reflex. Accept it as a hidden alias for `--full`
   // rather than reject it as an unknown option and send them on a --help detour.
   .addOption(new Option('--full-page', 'Alias for --full').hideHelp())
+  // Agents reach for --script by reflex (Puppeteer/Playwright `evaluate`); accept
+  // it as a hidden alias for --eval rather than send them on a --help detour.
+  .addOption(new Option('--script <js>', 'Alias for --eval').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
     // --wait is a hidden alias for --post-load-delay (agents reach for it because
     // sibling `page inspect`/`eval` name the flag --wait). Canonical name wins if
@@ -167,6 +179,22 @@ export const pageScreenshotCommand = new Command('screenshot')
       throw new Error('--output can only be used with a single viewport');
     }
 
+    // Pre-capture script: --eval inline (or its --script alias) or --eval-file.
+    const evalInline = opts.eval ?? opts.script;
+    if (evalInline && opts.evalFile) {
+      throw new Error('Pass either --eval/--script or --eval-file, not both');
+    }
+    let setupScript: string | undefined;
+    if (opts.evalFile) {
+      try {
+        setupScript = readFileSync(opts.evalFile, 'utf8');
+      } catch {
+        throw new Error(`Cannot read --eval-file: ${opts.evalFile}`);
+      }
+    } else if (evalInline) {
+      setupScript = String(evalInline);
+    }
+
     // Server defaults to 1280×720 when viewports is omitted - don't send it in
     // the no-flag case so the filename stays unsuffixed (no viewport segment).
     const userSpecifiedViewports = customViewports.length > 0;
@@ -177,6 +205,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
       ...(opts.fakeMedia ? { fakeMedia: true } : {}),
+      ...(setupScript ? { script: setupScript } : {}),
     };
 
     const entries = await postForTarEntries('/tools/browser/screenshot', body);
@@ -266,24 +295,30 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
   }));
 
-// `screenshot` captures the page AS IT LOADS — there is no flag to scroll, click,
-// run a script, or wait for a selector before capture (agents reach for --eval/
-// --script/--scroll/--selector and get an unknown-option detour). State this
-// limitation and the two supported alternatives right here, so the help (rendered
-// on any bad flag, and this 'after' block survives `| tail`/`| grep`) ends the
-// hunt in one shot instead of sending the agent grepping `--help` for
-// scroll/script/before/action. The real per-element capture lives server-side and
-// isn't wired yet — until then, --full + crop or `page eval` cover the need.
+// `screenshot` captures the page after load. Use --eval/--eval-file to run a
+// script in page context BEFORE capture (same session) to seed a view headless
+// can't otherwise reach — an auth-gated UI or any state behind user action.
+// There is still no built-in scroll/click/wait-for-selector flag; agents reach
+// for --scroll/--selector too, so name what IS supported right here. This 'after'
+// block renders on any bad flag and survives `| tail`/`| grep`, so the help ends
+// the hunt in one shot.
 pageScreenshotCommand.addHelpText('after', `
 Examples:
   gipity page screenshot "https://dev.gipity.ai/me/app/"
   gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page
   gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
 
-Capturing a specific state (a slide, an off-screen element, a post-scroll view)?
-  screenshot captures the page as it loads — it does NOT scroll, click, wait for a
-  selector, or run a script before capture. To get the part you want:
-    • --full captures the ENTIRE scrollable page (then crop to the region).
-    • 'gipity page eval <url> "<expr>"' reads any (even off-screen) element's
-      data/state/rect without a picture — e.g. read the chart's bar values
-      directly instead of screenshotting the slide.`);
+Capturing a signed-in / stateful view (auth gate, a populated board, an open modal)?
+  Use --eval to seed the view in the SAME session before the shot — do NOT deploy a
+  temporary demo/mock branch into the live app just to inspect it. The script runs in
+  page context after load and before capture (async body, return value ignored):
+    • Auth-gated UI: inject a session token, then render —
+        --eval "localStorage.setItem('token', T); await window.App.boot()"
+    • Stateful UI: seed mock data via the app's own modules, then re-render —
+        --eval-file ./scripts/seed-board.js
+  Use --eval-file for a multi-line script.
+
+Reading data instead of a picture (off-screen element, computed style, rect)?
+  'gipity page eval <url> "<expr>"' returns serialized values without capturing —
+  e.g. read a chart's bar values directly. --full captures the ENTIRE scrollable
+  page (then crop to a region) when you do need the pixels.`);
