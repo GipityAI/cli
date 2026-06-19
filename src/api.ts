@@ -16,12 +16,22 @@ export class ApiError extends Error {
   }
 }
 
-async function getHeaders(): Promise<Record<string, string>> {
+/** Resolve the Bearer token value. A GIPITY_TOKEN env var (a long-lived agent
+ *  API token) takes precedence over the saved session — the persistent,
+ *  login-free path for headless agents and CI. Falls back to the refreshed
+ *  session access token. */
+async function bearerToken(): Promise<string> {
+  const envToken = process.env.GIPITY_TOKEN?.trim();
+  if (envToken) return envToken;
   await refreshTokenIfNeeded();
   const auth = getAuth();
   if (!auth) throw new Error('Not authenticated. Run: gipity login');
+  return auth.accessToken;
+}
+
+async function getHeaders(): Promise<Record<string, string>> {
   return {
-    'Authorization': `Bearer ${auth.accessToken}`,
+    'Authorization': `Bearer ${await bearerToken()}`,
     'Content-Type': 'application/json',
   };
 }
@@ -150,13 +160,9 @@ export async function sendMessage(message: string): Promise<string> {
 
 /** Download a file as raw bytes (no JSON parsing) */
 export async function download(path: string): Promise<Buffer> {
-  await refreshTokenIfNeeded();
-  const auth = getAuth();
-  if (!auth) throw new Error('Not authenticated. Run: gipity login');
-
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${auth.accessToken}` },
+    headers: { 'Authorization': `Bearer ${await bearerToken()}` },
   });
 
   if (!res.ok) {
@@ -169,13 +175,9 @@ export async function download(path: string): Promise<Buffer> {
 /** Download a response as a Node.js Readable stream */
 export async function downloadStream(path: string): Promise<import('stream').Readable> {
   const { Readable } = await import('stream');
-  await refreshTokenIfNeeded();
-  const auth = getAuth();
-  if (!auth) throw new Error('Not authenticated. Run: gipity login');
-
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${auth.accessToken}` },
+    headers: { 'Authorization': `Bearer ${await bearerToken()}` },
   });
 
   if (!res.ok) {

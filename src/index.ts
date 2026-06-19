@@ -10,6 +10,7 @@ import { GIPITY_TAGLINE } from './knowledge.js';
 import { getAuth, sessionExpired } from './auth.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
+import { tokenCommand } from './commands/token.js';
 import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { syncCommand } from './commands/sync.js';
@@ -112,7 +113,7 @@ const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];
 const appBuildingGroup = [testCommand, fnCommand, serviceCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
 const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand, textCommand];
 const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
-const setupGroup       = [loginCommand, logoutCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
+const setupGroup       = [loginCommand, logoutCommand, tokenCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Common',       cmds: commonGroup },
