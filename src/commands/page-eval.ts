@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
@@ -140,6 +140,14 @@ export function evalExecTimeoutMessage(result: string): string | null {
   );
 }
 
+// Agents instinctively reach for a flag to pass the script (`--js`, `--script`,
+// `--code`, …); the JS is actually the positional <expr> (or --file for a saved
+// script). Without these, commander answers `--js` with "did you mean --json?" —
+// a trap, since --json is a real flag that changes output but still leaves the
+// script unset, sending the agent in a loop. Capture the common guesses as
+// hidden decoy options so the action can redirect to the positional arg exactly.
+const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', '--eval', '--exec'];
+
 // The long-tail escape hatch alongside `page inspect`'s fixed bundle: when the
 // curated metrics don't cover what you need (computed styles, element rects,
 // visibility, z-index stacks), eval an expression in page context and get the
@@ -166,6 +174,15 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
+    // A JS-intent flag guess (captured as a hidden decoy below): redirect to the
+    // positional <expr> precisely, before the inline/--file shape checks fire.
+    const decoy = JS_DECOY_FLAGS.find((f) => opts[f.slice(2)] !== undefined);
+    if (decoy) {
+      pageEvalCommand.error(
+        `error: ${decoy} is not a flag — pass the JavaScript as the positional <expr> argument ` +
+        `(or --file <path> for a saved script), e.g. gipity page eval "<url>" 'document.title'`,
+      );
+    }
     // Arg-shape errors go through commander's error() so the enableHelpAfterError
     // hook renders this command's help inline with the one-line error LAST
     // (survives `| tail`), same as commander-detected errors like a missing url.
@@ -246,6 +263,11 @@ export const pageEvalCommand = new Command('eval')
       }
     }
   }));
+
+// Register the JS-intent flag guesses as hidden decoys (take a value so they
+// swallow the script the agent passed) — the action turns any of them into the
+// precise "JS is the positional arg" redirect above.
+for (const f of JS_DECOY_FLAGS) pageEvalCommand.addOption(new Option(`${f} <value>`).hideHelp());
 
 // Each `page eval` call runs to completion before the next starts, so two evals
 // fired back-to-back never coexist in time - they CANNOT test whether two live

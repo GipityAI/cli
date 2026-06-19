@@ -94,6 +94,40 @@ export const pageInspectCommand = new Command('inspect')
 
     const b = res.data;
 
+    // ── Strip the platform's own instrumentation noise first ──
+    // Every deployed page loads Gipity's injected analytics SDK, which POSTs to
+    // Gipity's traffic/error log endpoints (`/api/<guid>/log/traffic|error`).
+    // Those are platform infrastructure, not the app's resources, so when one
+    // fails it surfaces as a failed resource on the Gipity host PLUS a generic,
+    // URL-less "Failed to load resource" console error — identical noise on
+    // essentially every deployed app. Drop both so an agent inspecting the app
+    // it just built sees only its own code's resources, not the platform's.
+    const isPlatformLog = (entry: string): boolean => {
+      const urlPart = entry.replace(/\s*\([^)]*\)\s*$/, '');
+      try {
+        const u = new URL(urlPart);
+        return /(^|\.)gipity\.ai$/.test(u.hostname) && /\/log\/(traffic|error)$/.test(u.pathname);
+      } catch {
+        return false;
+      }
+    };
+    const platformFailures = (b.failedResources || []).filter(isPlatformLog);
+    b.failedResources = (b.failedResources || []).filter((r) => !isPlatformLog(r));
+    // Each failed platform POST also emits exactly one generic, URL-less
+    // "Failed to load resource" console error. Drop one per platform failure —
+    // the text is identical, so removing by count is exact and any genuine app
+    // 404 keeps its own (indistinguishable) line.
+    let platformConsoleToDrop = platformFailures.length;
+    if (platformConsoleToDrop > 0) {
+      b.console = (b.console || []).filter((l) => {
+        if (platformConsoleToDrop > 0 && /^error:\s*Failed to load resource:/i.test(l)) {
+          platformConsoleToDrop--;
+          return false;
+        }
+        return true;
+      });
+    }
+
     // Pull message-less cross-origin "Script error." lines out first. They carry
     // no source/stack, so they're never actionable as app-code defects, and on a
     // Gipity-deployed page the platform's own injected SDK is itself a

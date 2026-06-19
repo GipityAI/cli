@@ -92,6 +92,54 @@ test('gipity page inspect still flags real failed resources alongside the favico
   assert.match(r.stdout, /No root \/favicon\.ico/);
 });
 
+test("gipity page inspect drops the platform's own traffic/error-log 404 noise from console and failed resources", async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: {
+    ...baseBundle,
+    console: ['error: Failed to load resource: the server responded with a status of 404 ()'],
+    failedResources: ['https://a.gipity.ai/api/abc123/log/traffic (404)'],
+  } } });
+  const r = await run(['page', 'inspect', 'https://dev.gipity.ai/steve/app/']);
+  assert.equal(r.status, 0, r.stderr);
+  // The injected analytics SDK's log POST is platform infra, not an app defect:
+  // neither the failed resource nor its generic console error should surface.
+  assert.match(r.stdout, /Console:\s*\(clean\)/);
+  assert.doesNotMatch(r.stdout, /Failed resources/);
+  assert.doesNotMatch(r.stdout, /Failed to load resource/);
+});
+
+test('gipity page inspect keeps a real app 404 while dropping the platform log-endpoint noise', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: {
+    ...baseBundle,
+    console: [
+      'error: Failed to load resource: the server responded with a status of 404 ()',
+      'error: Failed to load resource: the server responded with a status of 404 ()',
+    ],
+    failedResources: [
+      'https://a.gipity.ai/api/abc123/log/traffic (404)',
+      'https://dev.gipity.ai/steve/app/missing.js (404)',
+    ],
+  } } });
+  const r = await run(['page', 'inspect', 'https://dev.gipity.ai/steve/app/']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Failed resources \(1\)/);
+  assert.match(r.stdout, /missing\.js \(404\)/);
+  assert.doesNotMatch(r.stdout, /log\/traffic/);
+  // One generic console line stays (for the real 404); the platform one is gone.
+  assert.match(r.stdout, /Console \(1\)/);
+});
+
+test('gipity page eval redirects a JS-intent flag guess to the positional <expr> arg', async () => {
+  mock.reset();
+  const r = await run(['page', 'eval', 'https://example.com', '--js', 'document.title']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--js is not a flag/);
+  assert.match(r.stderr, /positional <expr>/);
+  // It must NOT have actually run an eval against the server.
+  assert.equal(mock.requests().some(q => q.url === '/tools/browser/eval'), false);
+});
+
 test('gipity page inspect --fake-media forwards fakeMedia in the request body', async () => {
   mock.reset();
   mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
