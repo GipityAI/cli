@@ -10,7 +10,11 @@ export interface AuthData {
   expiresAt: string; // ISO timestamp
 }
 
-const AUTH_DIR = join(homedir(), '.gipity');
+// GIPITY_DIR lets a caller keep a SEPARATE auth context (its own auth.json) from
+// the default ~/.gipity — e.g. GipRunner logging into a local dev server without
+// clobbering your real (prod) login. Only the auth dir moves; HOME is untouched,
+// so the `claude` subprocess and git/npm still use the real home.
+const AUTH_DIR = process.env.GIPITY_DIR || join(homedir(), '.gipity');
 const AUTH_FILE = join(AUTH_DIR, 'auth.json');
 
 let cached: AuthData | null = null;

@@ -66,6 +66,11 @@ const warnedHosts = new Set<string>();
 export function resolveApiBase(): string {
   const override = getApiBaseOverride();
   if (override) return override;
+  // GIPITY_API_BASE env is a trusted override (any host, like --api-base) so a
+  // caller can point the CLI at a local dev server without passing the flag on
+  // every command — e.g. GipRunner running builds against http://localhost:7201.
+  const fromEnv = process.env.GIPITY_API_BASE;
+  if (fromEnv) return fromEnv;
   const fromConfig = getConfig()?.apiBase;
   if (fromConfig) {
     if (isAllowedApiHost(fromConfig)) return fromConfig;
