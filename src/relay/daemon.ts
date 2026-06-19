@@ -778,7 +778,13 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // Future cleanup: see docs/feature-backlog/future-generate-to-vfs.md
   // - server-side /generate/* should write directly to VFS and make
   // this sync redundant for that case.
-  if (!spawnErr) {
+  //
+  // Skip on `killed`: a kill-on-new-message replacement is already starting for
+  // this conv, and a bidirectional reconcile over the half-finished tree of the
+  // cancelled run is exactly the WS-00172 stale-state trap - it pushes/pulls a
+  // partial state that the resuming run then fights. The replacement dispatch
+  // runs its own sync; let it own the tree.
+  if (!spawnErr && !killed) {
     try {
       await spawnSync(cwd, PROJECT_SYNC_TIMEOUT_MS);
     } catch (err: any) {

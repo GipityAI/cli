@@ -1129,9 +1129,18 @@ export async function pushFile(filePath: string): Promise<void> {
   const rel = relative(root, filePath).replace(/\\/g, '/');
   if (shouldIgnore(rel, effectiveIgnore(root, config.ignore))) return;
 
-  const baseline = readBaseline(config.projectGuid);
-  const baseEntry = baseline.files[rel];
+  // Serialize against `gipity sync` and other concurrent pushes by holding the
+  // same per-project lock `sync()` uses. Both paths read-modify-write the shared
+  // baseline; without a common lock, a burst of PostToolUse pushes (each a
+  // detached `gipity push`) racing the UserPromptSubmit/post-dispatch reconciles
+  // drops baseline updates, and the 3-way merge then misreads our own just-pushed
+  // edits as `modified×modified` conflicts (or pulls stale bytes over a live
+  // edit). Read the baseline AFTER acquiring the lock so earlier pushes' writes
+  // are visible. (WS-00172)
+  const releaseLock = await acquireLock();
   try {
+    const baseline = readBaseline(config.projectGuid);
+    const baseEntry = baseline.files[rel];
     const result = await uploadOneFile(config.projectGuid, filePath, rel, {
       expectedServerVersion: baseEntry ? baseEntry.serverVersion : null,
     });
@@ -1150,5 +1159,7 @@ export async function pushFile(filePath: string): Promise<void> {
       );
     }
     throw err;
+  } finally {
+    releaseLock();
   }
 }

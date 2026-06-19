@@ -149,4 +149,58 @@ describe('pushFile CAS', () => {
     assert.ok(bl.files['greet.txt'], 'greet.txt should be in baseline');
     assert.equal(bl.files['greet.txt'].serverVersion, 4, 'baseline should reflect bumped server version');
   });
+
+  // WS-00172: pushFile must serialize against `gipity sync` and other pushes by
+  // holding the per-project lock for its whole read-baseline → upload →
+  // write-baseline window. Without it, concurrent PostToolUse pushes racing the
+  // reconcile drop baseline updates and the merge invents conflicts.
+  it('holds the per-project sync lock for the duration of the upload', async () => {
+    const { existsSync } = await import('fs');
+    const lockFile = join(projectDir, '.gipity', 'sync.lock');
+
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_test',
+      files: {},
+      lastFullSync: null,
+    }));
+    writeFileSync(join(projectDir, 'locked.txt'), 'data');
+
+    // Gate the upload mid-flight: upload-init blocks until we release it, so we
+    // can observe the lock is held while the network call is outstanding.
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((r) => { releaseUpload = r; });
+    let uploadInitSeen!: () => void;
+    const uploadInitHit = new Promise<void>((r) => { uploadInitSeen = r; });
+
+    stubFetch(async (url) => {
+      if (url.includes('/files/upload-init')) {
+        uploadInitSeen();
+        await uploadGate;
+        return new Response(JSON.stringify({
+          data: { upload_guid: 'fl_x', method: 'PUT', url: 'https://s3.example/stage', expires_in: 3600 },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.startsWith('https://s3.example')) {
+        return new Response('', { status: 200, headers: { etag: '"e"' } });
+      }
+      if (url.includes('/files/upload-complete')) {
+        return new Response(JSON.stringify({
+          data: { size: 4, guid: 'fl_n', version: 1, server_version: 1 },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { pushFile } = await import('../sync.js');
+
+    const p = pushFile(join(projectDir, 'locked.txt'));
+    await uploadInitHit;
+    assert.ok(existsSync(lockFile), 'lock must be held while the upload is in flight');
+
+    releaseUpload();
+    await p;
+    assert.ok(!existsSync(lockFile), 'lock must be released after pushFile completes');
+  });
 });
