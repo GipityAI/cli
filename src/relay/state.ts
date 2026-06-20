@@ -1,7 +1,7 @@
 /**
  * Local state for `gipity relay`.
  *
- * One file, `~/.gipity/relay.json`, mode 0600:
+ * One file, `$GIPITY_DIR/relay.json` (default `~/.gipity/relay.json`), mode 0600:
  *   {
  *     device: { guid, name, platform, token, paired_at },
  *     // (no allowlist - daemon materializes any of the user's projects on demand)
@@ -38,7 +38,13 @@ export interface RelayState {
   onboard_shown?: boolean;
 }
 
-const RELAY_DIR = join(homedir(), '.gipity');
+// GIPITY_DIR scopes the relay/device state the same way it scopes auth.json (see
+// auth.ts). Without this, a separate auth context (e.g. GIPITY_DIR=~/.giprunner-prod
+// logged in as ec-giprunner@914-6.com) would still read the DEFAULT ~/.gipity device —
+// which is paired to a DIFFERENT account — and project/chat creation fails with
+// "deviceGuid does not match a paired device". Scoping it lets each auth context pair
+// and own its own device. Unset GIPITY_DIR → ~/.gipity, unchanged for normal users.
+const RELAY_DIR = process.env.GIPITY_DIR || join(homedir(), '.gipity');
 const RELAY_FILE = join(RELAY_DIR, 'relay.json');
 const FILE_MODE = 0o600;
 

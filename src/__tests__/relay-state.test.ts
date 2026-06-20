@@ -14,6 +14,9 @@ import { spawn } from 'node:child_process';
 async function fresh(): Promise<{ state: typeof import('../relay/state.js'); home: string }> {
   const home = mkdtempSync(join(tmpdir(), 'gipity-relay-state-'));
   process.env.HOME = home;
+  // RELAY_DIR honors GIPITY_DIR (see state.ts); clear it so these tests assert the
+  // default ~/.gipity path under the sandboxed HOME regardless of the ambient env.
+  delete process.env.GIPITY_DIR;
   // `os.homedir()` reads $HOME on POSIX lazily, so a bare require/import gives
   // the fresh value. Import dynamically so the module's top-level constants
   // are re-evaluated against our temp HOME.
