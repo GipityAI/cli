@@ -21,6 +21,7 @@ Templates:
     - \`3d-world\` - Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)
     - \`api\` - Backend service, webhook, data pipeline, chatbot, cron job - no frontend
     - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
+    - \`outreach-agent\` - AI outreach / drip-email funnel - reach a list of people with personalized, human-approved emails that auto-send on a schedule and a self-improving agent that learns from your edits
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
 Only skip this on a build request if the user explicitly says not to.
 
