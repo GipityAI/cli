@@ -759,15 +759,35 @@ test('gipity page screenshot defaults to 1000ms when neither delay flag is given
   assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 1000);
 });
 
-test('gipity page screenshot help points to --full and page eval for a specific state', async () => {
-  // screenshot has no scroll/script/selector flag (server-side capability not
-  // wired). The help — rendered on any bad flag, e.g. a guessed --eval — must
-  // name the supported alternatives so the agent doesn't grep --help in circles.
+test('gipity page screenshot help points to --action, --full, and page eval for a specific state', async () => {
+  // For a state behind an interaction the help must name --action (the supported
+  // lever) and warn off the base64-via-eval anti-pattern; for off-screen regions
+  // it points at --full / page eval. Rendered on any bad flag too, so a guessed
+  // flag lands on the answer instead of grepping --help in circles.
   const r = await run(['page', 'screenshot', '--help']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /does NOT scroll, click, wait for a/);
+  assert.match(r.stdout, /Use --action to run JS in the page/);
   assert.match(r.stdout, /page eval/);
   assert.match(r.stdout, /--full captures the ENTIRE scrollable page/);
+});
+
+test('gipity page screenshot forwards --action to the server request body', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const action = "document.getElementById('play').click()";
+  const r = await run(['page', 'screenshot', 'https://example.com', '--action', action, '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { action?: string }).action, action, '--action must reach the server so it runs before capture');
+});
+
+test('gipity page screenshot omits action from the body when --action is absent', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { action?: string }).action, undefined);
 });
 
 test('gipity page screenshot rejects a guessed --eval flag but still shows the state-capture guidance', async () => {

@@ -134,6 +134,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   // so the `?? opts.wait` merge below would never see the --wait alias. Default
   // is applied in the merge instead.
   .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms (default: 1000)')
+  .option('--action <js>', 'Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs after the post-load delay, then settles again before the shot.')
   .option('--full', 'Capture the full scrollable page (default: viewport only)')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
@@ -177,6 +178,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
       ...(opts.fakeMedia ? { fakeMedia: true } : {}),
+      ...(opts.action ? { action: opts.action } : {}),
     };
 
     const entries = await postForTarEntries('/tools/browser/screenshot', body);
@@ -266,23 +268,26 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
   }));
 
-// `screenshot` captures the page AS IT LOADS — there is no flag to scroll, click,
-// run a script, or wait for a selector before capture (agents reach for --eval/
-// --script/--scroll/--selector and get an unknown-option detour). State this
-// limitation and the two supported alternatives right here, so the help (rendered
-// on any bad flag, and this 'after' block survives `| tail`/`| grep`) ends the
-// hunt in one shot instead of sending the agent grepping `--help` for
-// scroll/script/before/action. The real per-element capture lives server-side and
-// isn't wired yet — until then, --full + crop or `page eval` cover the need.
+// `screenshot` captures the page AFTER load + settle (+ optional --action). It does
+// NOT scroll or wait for a selector before capture (agents reach for --scroll/
+// --selector and get an unknown-option detour). State the supported levers right
+// here, so the help (rendered on any bad flag, and this 'after' block survives
+// `| tail`/`| grep`) ends the hunt in one shot. --action covers "click, then shoot";
+// --full + crop covers off-screen regions; `page eval` reads data without a picture.
 pageScreenshotCommand.addHelpText('after', `
 Examples:
   gipity page screenshot "https://dev.gipity.ai/me/app/"
   gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page
   gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
+  gipity page screenshot "https://dev.gipity.ai/me/app/" \\
+    --action "document.getElementById('play').click()"                   # capture an in-game frame
 
-Capturing a specific state (a slide, an off-screen element, a post-scroll view)?
-  screenshot captures the page as it loads — it does NOT scroll, click, wait for a
-  selector, or run a script before capture. To get the part you want:
+Capturing a state that needs an interaction (start a game, open a menu, dismiss a modal)?
+  Use --action to run JS in the page before the shot — it fires after the post-load
+  delay, then settles again so the result has painted. Do NOT hand-roll a 'page eval'
+  that returns a base64 image: the eval result is capped (~16KB) and truncates the PNG.
+
+Capturing an off-screen region or reading element data?
     • --full captures the ENTIRE scrollable page (then crop to the region).
     • 'gipity page eval <url> "<expr>"' reads any (even off-screen) element's
       data/state/rect without a picture — e.g. read the chart's bar values
