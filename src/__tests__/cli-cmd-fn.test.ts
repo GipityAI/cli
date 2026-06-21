@@ -54,6 +54,22 @@ test('gipity fn call <name> posts and prints JSON', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity fn call --field plucks one nested value (no node -e needed)', async () => {
+  mock.reset();
+  mock.on('POST /api/p_TestProj/fn/review', { body: { data: { items: [{ short_guid: 'msg_123' }, { short_guid: 'msg_456' }] } } });
+  const r = await fresh(['fn', 'call', 'review', '{"op":"queue"}', '--field', 'items.0.short_guid']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'msg_123');
+});
+
+test('gipity fn call --field exits 1 on a missing path', async () => {
+  mock.reset();
+  mock.on('POST /api/p_TestProj/fn/review', { body: { data: { items: [] } } });
+  const r = await fresh(['fn', 'call', 'review', '{}', '--field', 'items.0.short_guid']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Field not found/);
+});
+
 test('gipity fn delete <name> --yes DELETEs the function', async () => {
   mock.reset();
   mock.on('DELETE /projects/p_TestProj/functions/hello', { body: { data: { name: 'hello', deleted: true } } });

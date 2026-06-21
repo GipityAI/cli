@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, post, del } from '../api.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, bold, muted, success } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, emitField } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 export const fnCommand = new Command('fn')
@@ -46,6 +46,7 @@ fnCommand
   .command('call <name> [body]')
   .description('Call a function')
   .option('--data <json>', 'JSON request body')
+  .option('--field <path>', 'Print only this field of the result (dot path, e.g. items.0.short_guid)')
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Call', async () => {
     const config = requireConfig();
@@ -55,6 +56,7 @@ fnCommand
       `/api/${config.projectGuid}/fn/${encodeURIComponent(name)}`,
       body,
     );
+    if (opts.field) { emitField(res.data, opts.field); return; }
     console.log(opts.json ? JSON.stringify(res.data) : JSON.stringify(res.data, null, 2));
   }));
 

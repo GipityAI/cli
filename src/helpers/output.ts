@@ -67,6 +67,34 @@ export function printResult(text: string, opts: { json?: boolean }, jsonData?: u
 }
 
 /**
+ * Pluck a nested value out of a result by dot-path. Numeric segments index into
+ * arrays, so `items.0.short_guid` reaches the first item's guid. Returns
+ * `undefined` if any segment along the way is missing. This is what lets
+ * `--field` replace the `... | node -e "JSON.parse(...)"` extraction dance.
+ */
+export function pluckField(data: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>(
+    (acc, key) => (acc == null ? undefined : (acc as Record<string, unknown>)[key]),
+    data,
+  );
+}
+
+/**
+ * Emit a single plucked field for `--field`. Scalars print raw (no quotes) so
+ * the output drops straight into `$(...)` / pipes; objects/arrays print as
+ * compact JSON. A missing path is an error (exit 1) so scripts fail loudly
+ * instead of silently consuming an empty string.
+ */
+export function emitField(data: unknown, path: string): void {
+  const value = pluckField(data, path);
+  if (value === undefined) {
+    console.error(`Field not found: ${path}`);
+    process.exit(1);
+  }
+  console.log(typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value));
+}
+
+/**
  * Print a list with JSON mode, empty state, and per-item formatting.
  * Replaces the most common output pattern across all commands.
  */

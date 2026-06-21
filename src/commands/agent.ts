@@ -80,12 +80,117 @@ agentCommand
     if (field === 'model') body.modelPreference = value;
     else if (field === 'temp' || field === 'temperature') body.temperature = parseFloat(value);
     else {
-      console.error(clrError(`Unknown field: ${field}. Use: model, temp`));
+      console.error(clrError(`Unknown field: ${field}. Use: model, temp (for soul/goal use \`gipity agent soul|goal\`)`));
       process.exit(1);
     }
 
     await put(`/agents/${config.agentGuid}`, body);
     printResult(`Set ${field} = ${value}`, opts, { success: true, field, value });
+  }));
+
+/** The active agent's guid, or a clear error - the brain commands all need one. */
+function requireAgentGuid(): string {
+  const config = requireConfig();
+  if (!config.agentGuid) {
+    console.error(clrError('No active agent. Switch to one with: gipity agent <name>'));
+    process.exit(1);
+  }
+  return config.agentGuid;
+}
+
+// --- Brain: soul / goal / rules / learn ---
+// These hit the account-scoped /account/agents surface (the same dual-auth,
+// app-callable routes a deployed app uses), so the CLI, the web terminal, and an
+// app all drive the agent's brain through one set of endpoints. No more
+// hand-rolled `curl -X PUT a.gipity.ai/agents/:guid/soul` with a scraped token.
+
+agentCommand
+  .command('soul [text...]')
+  .description("Show the current agent's soul, or set it (its voice/personality)")
+  .option('--json', 'Output as JSON')
+  .action((text: string[] | undefined, opts) => run('Soul', async () => {
+    const guid = requireAgentGuid();
+    if (text && text.length) {
+      const content = text.join(' ');
+      const res = await put<{ data: { content: string } }>(`/account/agents/${guid}/soul`, { content });
+      printResult('Soul updated.', opts, res.data);
+    } else {
+      const res = await get<{ data: { content: string } }>(`/account/agents/${guid}/soul`);
+      printResult(res.data.content || '(no soul set)', opts, res.data);
+    }
+  }));
+
+agentCommand
+  .command('goal [text...]')
+  .description("Show the current agent's goal, or set it")
+  .option('--clear', 'Clear the goal (back to a plain assistant)')
+  .option('--json', 'Output as JSON')
+  .action((text: string[] | undefined, opts) => run('Goal', async () => {
+    const guid = requireAgentGuid();
+    if (opts.clear) {
+      const res = await put<{ data: { goal: string | null } }>(`/account/agents/${guid}/goal`, { goal: null });
+      printResult('Goal cleared.', opts, res.data);
+    } else if (text && text.length) {
+      const goal = text.join(' ');
+      const res = await put<{ data: { goal: string | null } }>(`/account/agents/${guid}/goal`, { goal });
+      printResult('Goal updated.', opts, res.data);
+    } else {
+      const res = await get<{ data: { goal: string | null } }>(`/account/agents/${guid}/goal`);
+      printResult(res.data.goal || '(no goal set)', opts, res.data);
+    }
+  }));
+
+interface RuleData { short_guid: string; text: string; source: 'manual' | 'learned'; active: boolean; }
+
+const rulesCommand = agentCommand
+  .command('rules')
+  .description("Show the agent's rules playbook (manual + learned)")
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Rules', async () => {
+    const guid = requireAgentGuid();
+    const res = await get<{ data: RuleData[] }>(`/account/agents/${guid}/rules`);
+    printList(res.data, opts, 'No rules yet.', r =>
+      `[${r.source}]  ${r.short_guid}  ${r.text}`);
+  }));
+
+rulesCommand
+  .command('add <text...>')
+  .description('Add a manual rule')
+  .option('--json', 'Output as JSON')
+  .action((text: string[], opts) => run('Add', async () => {
+    const guid = requireAgentGuid();
+    const res = await post<{ data: RuleData[] }>(`/account/agents/${guid}/rules`, { text: text.join(' ') });
+    printResult(`Added rule ${res.data[0].short_guid}.`, opts, res.data[0]);
+  }));
+
+rulesCommand
+  .command('rm <rule-guid>')
+  .alias('delete')
+  .description('Deactivate a rule by its guid')
+  .option('--json', 'Output as JSON')
+  .action((ruleGuid: string, opts) => run('Remove', async () => {
+    const guid = requireAgentGuid();
+    await del(`/account/agents/${guid}/rules/${ruleGuid}`);
+    printResult(`Removed rule ${ruleGuid}.`, opts, { removed: ruleGuid });
+  }));
+
+agentCommand
+  .command('learn')
+  .description("Teach the agent from one correction (distills a durable learned rule)")
+  .requiredOption('--original <text>', 'What the agent originally produced')
+  .requiredOption('--comment <text>', "Your correction / why it was wrong")
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Learn', async () => {
+    const guid = requireAgentGuid();
+    const res = await post<{ data: { saved: boolean; rule: RuleData | null; reason: string } }>(
+      `/account/agents/${guid}/learn`,
+      { original: opts.original, comment: opts.comment },
+    );
+    const d = res.data;
+    printResult(
+      d.saved ? `Learned: ${d.rule!.text}` : `No rule saved (${d.reason || 'too idiosyncratic to generalize'}).`,
+      opts, d,
+    );
   }));
 
 agentCommand

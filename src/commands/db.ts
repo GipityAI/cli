@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, post, sendMessage } from '../api.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, success } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, emitField } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 interface DatabaseEntry {
@@ -31,6 +31,7 @@ dbCommand
   .command('query <sql>')
   .description('Run SQL')
   .option('--database <name>', 'Database name')
+  .option('--field <path>', 'Print only this field of the result (dot path, e.g. rows.0.status)')
   .option('--json', 'Output as JSON')
   .action((sql: string, opts) => run('Query', async () => {
     const config = requireConfig();
@@ -50,7 +51,9 @@ dbCommand
       data: { rows?: any[]; results?: any[]; affectedRows?: number };
     }>(`/projects/${config.projectGuid}/db/query`, { sql, database: dbName });
 
-    if (opts.json) {
+    if (opts.field) {
+      emitField(res.data, opts.field);
+    } else if (opts.json) {
       console.log(JSON.stringify(res.data));
     } else {
       if (res.data.rows !== undefined) {
