@@ -87,9 +87,20 @@ Make your file changes and verify they landed, then run \`gipity deploy dev\` on
 
 Before telling the user the app is online, verify the source tree is consistent: no files named like \`* (conflict from *)*\`, and every package directory has its expected canonical entry file. If a conflict artifact exists, resolve it (keep one copy), re-deploy, and re-inspect before reporting done.
 
+## Work on an existing project that isn't local yet
+
+If you're pointed at a project that already exists on Gipity but has no local copy - e.g. the user gives a live URL \`https://dev.gipity.ai/<account>/<slug>/\` (or \`app.gipity.ai\` for prod) and you need its files to edit them - the last path segment is the project **slug**. Pull it down by adopting it into a directory named for the slug:
+
+\`\`\`
+mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>
+\`\`\`
+
+\`init\` matches the existing remote project by slug, links this directory to it, and syncs its files down (you'll see \`Found existing project ...\` and \`Synced N changes\`). There's no separate \`clone\`/\`pull\` - \`init\` against a matching slug *is* the pull. After it finishes, the files are in cwd; edit and \`gipity deploy dev\` as usual. (Already linked to a different project in this dir? Switch and pull instead: \`gipity project <slug>\` then \`gipity sync\`. List your projects with \`gipity project --json\`.)
+
 ## CLI quick reference
 
 Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
+Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
