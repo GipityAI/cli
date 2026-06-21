@@ -17,8 +17,17 @@ function fresh(args: string[]) {
   return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: d });
 }
 
-test('gipity sandbox run prints stdout from the server', async () => {
+// `sandbox run` now syncs the local tree up before every run so inputs staged
+// outside an editor (a Bash `cp`/`ffmpeg`, etc.) are mirrored into the sandbox.
+// That sync fetches the remote tree, so every test needs the route stubbed;
+// default it to an empty tree. Tests that track the fetch override this after.
+function resetMock() {
   mock.reset();
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: [] } }));
+}
+
+test('gipity sandbox run prints stdout from the server', async () => {
+  resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 0, stdout: 'hello from sandbox', stderr: '', durationMs: 100, timedOut: false,
   } } });
@@ -29,7 +38,7 @@ test('gipity sandbox run prints stdout from the server', async () => {
 });
 
 test('gipity sandbox run with --language python posts language=python', async () => {
-  mock.reset();
+  resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
     const body = req.body as { language: string };
     assert.equal(body.language, 'python');
@@ -41,13 +50,15 @@ test('gipity sandbox run with --language python posts language=python', async ()
 });
 
 test('gipity sandbox run auto-pulls output files to the local cwd', async () => {
-  mock.reset();
+  resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 0, stdout: '', stderr: '', durationMs: 100, timedOut: false,
     outputFiles: ['out/result.txt', 'out/chart.png'],
   } } });
-  // When the run reports output files, the command must invoke sync to pull
-  // them down - proven here by the sync's remote-tree fetch being hit.
+  // When the run reports output files, the command pulls them down - proven by
+  // the "synced to this directory" message and the filename in stdout below.
+  // (A remote-tree fetch alone no longer distinguishes pull from the pre-run
+  // push, which always fetches the tree too.)
   let treeFetched = false;
   mock.on('GET /projects/p_TestProj/files/tree', () => {
     treeFetched = true;
@@ -61,7 +72,7 @@ test('gipity sandbox run auto-pulls output files to the local cwd', async () => 
 });
 
 test('gipity sandbox run --file reads the body and infers language from the extension', async () => {
-  mock.reset();
+  resetMock();
   let posted: { code: string; language: string } | undefined;
   mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
     posted = req.body as { code: string; language: string };
@@ -76,7 +87,7 @@ test('gipity sandbox run --file reads the body and infers language from the exte
 });
 
 test('gipity sandbox run <interpreter> <file> shorthand reads the file and pins the language', async () => {
-  mock.reset();
+  resetMock();
   let posted: { code: string; language: string } | undefined;
   mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
     posted = req.body as { code: string; language: string };
@@ -91,7 +102,7 @@ test('gipity sandbox run <interpreter> <file> shorthand reads the file and pins 
 });
 
 test('gipity sandbox run node <file> shorthand maps node to javascript', async () => {
-  mock.reset();
+  resetMock();
   let posted: { language: string } | undefined;
   mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
     posted = req.body as { language: string };
@@ -105,7 +116,7 @@ test('gipity sandbox run node <file> shorthand maps node to javascript', async (
 });
 
 test('gipity sandbox run <interpreter> <inline-code> pins the language for a non-file body', async () => {
-  mock.reset();
+  resetMock();
   let posted: { code: string; language: string } | undefined;
   mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
     posted = req.body as { code: string; language: string };
@@ -118,7 +129,7 @@ test('gipity sandbox run <interpreter> <inline-code> pins the language for a non
 });
 
 test('gipity sandbox run hints at the JS default when a shell snippet fails as JavaScript', async () => {
-  mock.reset();
+  resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 1, stdout: '', stderr: "/work/_run.js:1\necho hi\n^^^^\nSyntaxError: Unexpected identifier 'hi'\n    at wrapSafe (node:internal/modules/cjs/loader:1464:18)",
     durationMs: 10, timedOut: false,
@@ -130,7 +141,7 @@ test('gipity sandbox run hints at the JS default when a shell snippet fails as J
 });
 
 test('gipity sandbox run does NOT hint at the JS default when the language was explicit', async () => {
-  mock.reset();
+  resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 1, stdout: '', stderr: 'SyntaxError: bad', durationMs: 10, timedOut: false,
   } } });
@@ -140,7 +151,7 @@ test('gipity sandbox run does NOT hint at the JS default when the language was e
 });
 
 test('gipity sandbox run rejects passing both inline code and --file', async () => {
-  mock.reset();
+  resetMock();
   const d = makeProjectDir({ apiBase: mock.apiBase });
   writeFileSync(join(d, 'x.js'), 'console.log(1)\n');
   const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', '--file', 'x.js', 'console.log(2)'], { env: { HOME: home }, cwd: d });
@@ -148,13 +159,15 @@ test('gipity sandbox run rejects passing both inline code and --file', async () 
   assert.match(r.stderr, /not both/);
 });
 
-test('gipity sandbox run does NOT sync when there are no output files', async () => {
-  mock.reset();
+test('gipity sandbox run pushes local inputs up before running, even with no output files', async () => {
+  resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 0, stdout: 'done', stderr: '', durationMs: 100, timedOut: false,
   } } });
-  // No outputFiles => no sync. The files/tree route is intentionally left
-  // unmocked; if the command synced anyway it would hit it and fail.
+  // The sandbox mirrors server state, so the CLI syncs the local tree up before
+  // executing - otherwise a Bash-staged input would be invisible to the run.
+  // Proven by the remote-tree fetch being hit even though this run produced no
+  // output files (so no post-run pull happened - only the pre-run push).
   let treeFetched = false;
   mock.on('GET /projects/p_TestProj/files/tree', () => {
     treeFetched = true;
@@ -162,5 +175,22 @@ test('gipity sandbox run does NOT sync when there are no output files', async ()
   });
   const r = await fresh(['sandbox', 'run', 'console.log("done")']);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(treeFetched, false, 'expected no sync when the run produced no output files');
+  assert.ok(treeFetched, 'expected sandbox run to push local inputs up before executing');
+});
+
+test('gipity sandbox run syncs local inputs up before the execute call', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  const r = await fresh(['sandbox', 'run', 'bash', 'identify foo.png']);
+  assert.equal(r.status, 0, r.stderr);
+  // Order matters: the input push (files/tree fetch) must land before execute,
+  // or the run mirrors stale server state and misses freshly-staged inputs.
+  const reqs = mock.requests();
+  const treeIdx = reqs.findIndex(q => q.method === 'GET' && q.url.startsWith('/projects/p_TestProj/files/tree'));
+  const execIdx = reqs.findIndex(q => q.method === 'POST' && q.url === '/projects/p_TestProj/sandbox/execute');
+  assert.ok(treeIdx >= 0, 'expected a pre-run sync (files/tree fetch)');
+  assert.ok(execIdx >= 0, 'expected the execute call');
+  assert.ok(treeIdx < execIdx, 'expected the input sync to happen before execute');
 });

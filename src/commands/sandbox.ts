@@ -160,6 +160,18 @@ GCC/Rust).
     const timeout = parseInt(opts.timeout, 10);
     const cwd = resolveRelativeCwd();
 
+    // Push local working-tree changes up before executing. The sandbox mirrors
+    // the *server* (VFS), not the local cwd, so any input staged outside Claude's
+    // Write/Edit auto-push hook - a Bash `cp`/`ffmpeg`/redirect, or any external
+    // process - would otherwise be invisible to the run and the first invocation
+    // would silently miss its inputs. Syncing first makes the auto-mirror reflect
+    // local state regardless of how files got there ("no manual copy needed").
+    // Bidirectional + CAS, so it's a cheap manifest check when nothing changed.
+    // Symmetric with the post-run pull below. Skip in one-off mode (no project).
+    if (getConfigPath()) {
+      await sync({ interactive: false });
+    }
+
     const res = await post<{
       data: {
         exitCode: number;
