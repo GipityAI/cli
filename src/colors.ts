@@ -47,9 +47,13 @@ function detectColorLevel(): 0 | 1 | 2 | 3 {
 
   if (/-256(color)?$/.test(term) || term.includes('256')) return 2;
 
-  // Modern Windows consoles set COLORTERM (caught above). Older cmd.exe /
-  // conhost only do 16-color reliably.
-  if (process.platform === 'win32') return 1;
+  // Windows Terminal / VS Code set COLORTERM=truecolor (caught above). The
+  // classic console host (conhost, the standalone PowerShell window) advertises
+  // nothing, but every still-supported Windows build (10 v1703+, 2017) handles
+  // 256-color VT sequences reliably - so 256 is the safe floor. Orange then
+  // downscales to xterm-214 (a real orange) instead of the bright-yellow the
+  // 16-color palette is forced into (it has no orange slot at all).
+  if (process.platform === 'win32') return 2;
 
   if (term) return 1;
   return 0;
@@ -63,7 +67,8 @@ const identity: StyleFn = (s: string) => s;
 // ── RGB downgrade helpers ───────────────────────────────────────────────
 
 // RGB → nearest xterm-256 palette index (6x6x6 cube + grayscale ramp).
-function rgbTo256(r: number, g: number, b: number): number {
+// Exported for unit tests that pin the documented downscale (orange → 214).
+export function rgbTo256(r: number, g: number, b: number): number {
   if (r === g && g === b) {
     if (r < 8) return 16;
     if (r > 248) return 231;
@@ -78,7 +83,9 @@ function rgbTo256(r: number, g: number, b: number): number {
 }
 
 // RGB → nearest 16-color SGR foreground code (30-37 / 90-97).
-function rgbTo16(r: number, g: number, b: number): number {
+// Exported for unit tests that pin the documented downscale (orange → bright
+// yellow, i.e. the palette has no orange slot).
+export function rgbTo16(r: number, g: number, b: number): number {
   const value = Math.round((Math.max(r, g, b) / 255) * 3);
   if (value === 0) return 30;
   let code =
@@ -92,7 +99,18 @@ function rgbTo16(r: number, g: number, b: number): number {
 
 // ── Low-level builders ──────────────────────────────────────────────────
 
-export function makeFg(r: number, g: number, b: number): StyleFn {
+// `lowColorFallback` controls the 16-color (level 1) tier. The ANSI 16-color
+// palette has no orange and only crude approximations of off-palette hues, so a
+// color that can't be represented reads as a bug (brand orange → bright yellow).
+// Off-palette brand colors pass a monochrome fallback (e.g. `bold`) to convey
+// emphasis without a wrong hue; semantic colors that map cleanly (red, green,
+// blue) omit it and keep their nearest-16 approximation.
+export function makeFg(
+  r: number,
+  g: number,
+  b: number,
+  lowColorFallback?: StyleFn,
+): StyleFn {
   if (COLOR_LEVEL === 0) return identity;
   if (COLOR_LEVEL === 3) {
     return (s: string) => `${ESC}[38;2;${r};${g};${b}m${s}${ESC}[39m`;
@@ -101,6 +119,7 @@ export function makeFg(r: number, g: number, b: number): StyleFn {
     const n = rgbTo256(r, g, b);
     return (s: string) => `${ESC}[38;5;${n}m${s}${ESC}[39m`;
   }
+  if (lowColorFallback) return lowColorFallback;
   const code = rgbTo16(r, g, b);
   return (s: string) => `${ESC}[${code}m${s}${ESC}[39m`;
 }
@@ -140,7 +159,7 @@ export const underline: StyleFn = makeStyle(4, 24);
 // Colors sourced from platform/client/src/css/styles.css and
 // platform/apps/gipitsm/src/css/tokens.css
 
-export const brand: StyleFn   = makeFg(254, 166, 14);   // Gipity orange #fea60e
+export const brand: StyleFn   = makeFg(254, 166, 14, bold); // Gipity orange #fea60e (→ bold on 16-color; no orange in palette)
 export const error: StyleFn   = makeFg(239, 68, 68);    // #ef4444
 export const warning: StyleFn = makeFg(245, 158, 11);   // #f59e0b
 export const success: StyleFn = makeFg(34, 197, 94);    // #22c55e
