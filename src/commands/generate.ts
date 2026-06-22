@@ -13,6 +13,7 @@ interface GenerateResult {
   model: string;
   provider: string;
   size_bytes: number;
+  seed?: number;
 }
 
 /** Download a URL and save to a local file, then push it up to the project so
@@ -74,6 +75,7 @@ Examples:
   .option('--quality <quality>', 'Quality: low|medium|high|auto (gpt-image-2)')
   .option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only): 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 4:5, 5:4, 21:9')
   .option('--image-size <size>', 'Output resolution (Gemini only): 512, 1K, 2K, 4K')
+  .option('--seed <n>', 'Deterministic seed (BFL only): reuse one seed to keep a set of images visually coherent', (v) => parseInt(v, 10))
   .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
@@ -87,6 +89,7 @@ Examples:
         quality: opts.quality,
         aspect_ratio: opts.aspectRatio,
         image_size: opts.imageSize,
+        seed: Number.isFinite(opts.seed) ? opts.seed : undefined,
       });
 
       const ext = result.content_type.includes('png') ? 'png' : 'jpg';
@@ -100,6 +103,9 @@ Examples:
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
         console.log(success(`Saved to ${savedPath}`));
+        if (result.seed !== undefined) {
+          console.log(muted(`Seed ${result.seed} — pass --seed ${result.seed} to keep the next image coherent`));
+        }
       }
     } catch (err: any) {
       console.error(clrError(`Image generation failed: ${err.message}`));
