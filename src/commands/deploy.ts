@@ -23,7 +23,8 @@ export const deployCommand = new Command('deploy')
   .option('--only <phases>', 'Run only specific phases (comma-separated)')
   .option('--force', 'Re-run all phases (ignore checksums) and bypass the sync bulk-deletion guard')
   .option('--no-sync', 'Skip sync-up before deploy')
-  .option('--optimize', 'Run build optimization')
+  .option('--optimize', 'Force Vite build optimization on (default for prod; use this to optimize a dev deploy too)')
+  .option('--no-optimize', 'Skip build optimization and upload files as-is - the escape hatch for plain-HTML apps whose <script src> tags are not type="module"')
   .option('--json', 'Output as JSON')
   .action((target: string, opts) => run('Deploy', async () => {
       if (target !== 'dev' && target !== 'prod') {
