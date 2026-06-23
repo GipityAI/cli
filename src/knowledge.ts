@@ -47,7 +47,7 @@ Gipity is the cloud platform your project runs on - hosting, databases, deployme
 
 Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
 
-1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, and more. All commands support \`--json\`.
+1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, email, and more. All commands support \`--json\`. You can send email yourself - \`gipity email send\` goes out as the agent from \`gipity@gipity.ai\` with no setup or API keys (\`gipity skill read email\`); don't build a \`mailto:\` workaround or reach for an SMTP library.
 2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
 3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location. Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|music>\` or \`gipity chat\`. \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) - pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it.
 4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
@@ -56,7 +56,7 @@ You are the developer. Write files in this directory - the Gipity Claude Code pl
 
 ## Use first-party services before reaching outside
 
-Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime. Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
+Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, and email (send as the agent via \`gipity email send\`, or from a deployed app via a workflow \`notify\` step - no SMTP/SendGrid/Nodemailer). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
 
 ## Don't guess Gipity facts - look them up
 
@@ -100,7 +100,7 @@ mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <s
 
 ## CLI quick reference
 
-Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity skill read <name>\`.
+Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity email send --to <addr> --subject <s> --body <b>\` (sends as \`gipity@gipity.ai\`; omit \`--to\` to self-send), \`gipity skill read <name>\`.
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
@@ -151,6 +151,7 @@ Kit skills (reusable building blocks - \`gipity add <kit>\`):
 - \`chatbot\` - the chatbot kit: persona + scope guardrails + static knowledge, bubble widget or headless engine
 
 Other key skills:
+- \`email\` - sending email as the agent from gipity@gipity.ai (no setup/keys) — plus Gmail-thread replies, HTML formatting, images
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
 - \`tts\` - agent-side speech tools (different from the \`app-tts\` HTTP service)`;
 
