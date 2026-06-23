@@ -16,7 +16,7 @@ function resolveCommand(cmd: string): string {
     return `${cmd}.cmd`;
   }
 }
-import { getAuth, saveAuth, clearAuth, type AuthData } from '../auth.js';
+import { getAuth, saveAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
@@ -392,7 +392,9 @@ export const claudeCommand = new Command('claude')
           projects = res.data;
         } catch (err: any) {
           if (err instanceof ApiError && err.statusCode === 401) {
-            clearAuth();
+            // Don't clearAuth() — the file is shared with concurrent gipity
+            // processes (sync hook, relay); deleting it logs them all out. A
+            // re-login overwrites it anyway. Leave it and just point the user.
             console.error(`  ${clrError('Your session expired.')} ${muted('Run: gipity login')}`);
           } else {
             console.error(`  ${clrError(`Could not load projects: ${err?.message || err}`)}`);
@@ -535,7 +537,9 @@ export const claudeCommand = new Command('claude')
               process.exit(1);
             }
             if (err instanceof ApiError && err.statusCode === 401 && !reauthed && !nonInteractive) {
-              clearAuth();
+              // No clearAuth(): interactiveLogin() saves fresh tokens over the
+              // file. Deleting it first would log out any sibling process (sync
+              // hook, relay) sharing this ~/.gipity/auth.json mid-run.
               console.log(`  ${muted('Your session expired. Let\'s sign you back in.')}\n`);
               auth = await interactiveLogin();
               console.log('');
@@ -543,7 +547,7 @@ export const claudeCommand = new Command('claude')
               continue;
             }
             if (err instanceof ApiError && err.statusCode === 401) {
-              clearAuth();
+              // Leave the shared auth.json in place (see above) — just message.
               console.error(`  ${clrError('Your session expired.')}`);
               console.error(`  ${muted('Run: gipity login')}`);
               process.exit(1);
