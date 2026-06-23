@@ -119,6 +119,14 @@ export interface SyncOptions {
   prune?: boolean;
   /** Allow interactive prompts (guard confirmation). Defaults to TTY-detected. */
   interactive?: boolean;
+  /** Opt in to the uncertain-merge confirmation: when opening a project INTO a
+   *  directory that already holds files we've never synced for it (empty
+   *  baseline + local content that would upload or collide), show the merge
+   *  shape and ask before moving anything. Only the interactive open flow sets
+   *  this - background syncs (deploy/test/sandbox/relay) and deliberate
+   *  directory adoption (`gipity init`) merge without asking, as they always
+   *  have. The check still no-ops unless there's a real first-time merge. */
+  confirmMerge?: boolean;
   /** Optional progress reporter. Drives phase lines at each major step (scan,
    *  remote check, hashing, download) and a determinate byte bar during upload,
    *  so a long sync of a large tree doesn't read as a hang. Omit for silence. */
@@ -135,6 +143,10 @@ export interface SyncResult {
    *  Non-interactive callers (deploy/test/sandbox) defer silently; surface this
    *  where it's useful (e.g. `gipity sync` hints at `--prune`). */
   deferredDeletes: number;
+  /** True when the user declined the uncertain-merge confirmation: nothing was
+   *  applied, the directory is left exactly as it was. Callers should not treat
+   *  this as a normal "synced" result. */
+  aborted?: boolean;
 }
 
 // ─── Paths ─────────────────────────────────────────────────────
@@ -353,6 +365,11 @@ async function downloadAll(
     });
     extract.on('finish', () => resolve(files));
     extract.on('error', reject);
+    // pipe() does NOT forward source-stream errors to the destination, so a
+    // truncated/aborted HTTP body would otherwise surface as a clean tar
+    // 'finish' with a partial file set. Reject explicitly so a short download is
+    // an error the caller can recover from, never a silent partial.
+    stream.on('error', reject);
     stream.pipe(extract);
   });
 }
@@ -711,6 +728,58 @@ async function syncInner(
     };
   }
 
+  // Uncertain-merge guard (armed via confirmMerge): syncing INTO a populated
+  // directory we've never synced for this project (empty baseline + local files
+  // that would upload or collide). Local-only files get pushed UP into the
+  // project and same-path differences fork into conflict copies - a two-way
+  // merge that may be unintended. Nothing here can delete.
+  //
+  // Three ways to resolve it, so both outcomes are scriptable:
+  //   --yes / autoConfirm → proceed (merge confirmed)
+  //   interactive TTY      → prompt the user
+  //   non-interactive      → fail safe: ABORT rather than merge blindly
+  if (
+    opts.confirmMerge &&
+    remote.size > 0 &&                              // project already has files - a real merge target
+    Object.keys(baseline.files).length === 0 &&    // we've never synced this folder for it
+    (planned.uploads > 0 || planned.conflicts > 0) // and local content would push up or collide
+  ) {
+    const f = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
+    const shape: string[] = [`    Server: ${f(remote.size)}   ·   Local: ${f(local.size)}`];
+    if (planned.downloads > 0) shape.push(`    ↓ download ${f(planned.downloads)} from the project into this folder`);
+    if (planned.uploads > 0)   shape.push(`    ↑ upload ${f(planned.uploads)} from this folder INTO the project (they become part of it)`);
+    if (planned.conflicts > 0) shape.push(`    ! ${f(planned.conflicts)} differ on both sides — both kept (your copy is renamed)`);
+
+    const abort = (): SyncResult => ({
+      plan: planned, applied: 0, skipped: planned.actions.length, errors: [],
+      summary: [
+        `This folder has files that haven't been synced with this project yet — merge not confirmed.`,
+        ...shape,
+        `Re-run with --yes to merge, or sync into an empty folder.`,
+      ].join('\n'),
+      deferredDeletes: 0, aborted: true,
+    });
+
+    if (getAutoConfirm()) {
+      // --yes: proceed with the merge; the caller reports the applied counts.
+    } else if (interactive) {
+      const answer = await prompt([
+        '',
+        `  This folder has files that haven't been synced with this project yet.`,
+        `  Syncing here MERGES the two — nothing is deleted:`,
+        '',
+        ...shape,
+        '',
+        `  Continue? [y/N]: `,
+      ].join('\n'));
+      if (!/^(y|yes|continue)$/i.test(answer.trim())) return abort();
+    } else {
+      // Non-interactive and not confirmed: don't silently merge a folder we
+      // weren't told to. `--yes` opts in.
+      return abort();
+    }
+  }
+
   // Bulk-delete guard over the *planned* deletes.
   const knownFiles = local.size + remote.size;
   const deletesOk = await bulkDeleteGuard(planned, knownFiles, { ...opts, interactive });
@@ -727,8 +796,14 @@ async function syncInner(
   // ── Pre-fetch remote bytes once for all downloads (conflict-originating
   //    remote versions are fetched on demand after 409). ──
   const downloadedBytes = new Map<string, Buffer>();
-  const needsBulkDownload = plannedToApply.some(a => a.kind === 'download' || a.kind === 'conflict');
-  if (needsBulkDownload) {
+  // Set when the download phase could not retrieve every byte the plan needs.
+  // A delete is only safe against a complete, authoritative view, so an
+  // incomplete download disarms the deletes pass below - this is what breaks
+  // the "truncated pull → files missing locally → next sync deletes them"
+  // amplification loop.
+  let downloadIncomplete = false;
+  const wantedDownloads = plannedToApply.filter(a => a.kind === 'download' || a.kind === 'conflict');
+  if (wantedDownloads.length) {
     // The tree endpoint streams the *whole* remote tree as one tar (the caller
     // then picks out only the paths it planned to apply), so the bytes that
     // actually move = the sum of every remote file's size. That's the honest
@@ -746,19 +821,43 @@ async function syncInner(
       : undefined;
     try {
       const all = await downloadAll(config.projectGuid, onBytes);
-      for (const a of plannedToApply) {
-        if (a.kind === 'download' || a.kind === 'conflict') {
-          const buf = all.get(a.path);
-          if (buf) downloadedBytes.set(a.path, buf);
-        }
+      for (const a of wantedDownloads) {
+        const buf = all.get(a.path);
+        if (buf) downloadedBytes.set(a.path, buf);
       }
     } catch (err) {
-      errors.push(`Download batch failed: ${(err as Error).message}`);
+      // The bulk tar can truncate mid-stream on a large project (transport or
+      // proxy timeout) and either reject here or "finish" with a partial set.
+      // Either way we fall through to the single-file recovery below rather than
+      // proceeding on a half-empty tree - a partial download must never be
+      // mistaken for a complete one.
+      errors.push(`Bulk download incomplete (${(err as Error).message}); recovering files individually…`);
     } finally {
       // Settle the bar even if the extracted-byte tally fell short of the
       // estimate (the live line stays open until something hits 100% or finish()).
       p?.finish();
     }
+
+    // Recover whatever the bulk tar dropped over the reliable single-file
+    // endpoint. This is what lets a project whose tar keeps truncating still
+    // sync to completion - and what recovers a checkout left half-downloaded by
+    // an earlier truncated pull.
+    const missing = wantedDownloads.filter(a => !downloadedBytes.has(a.path));
+    if (missing.length) {
+      p?.phase(`Recovering ${missing.length} file${missing.length === 1 ? '' : 's'} the bulk download dropped…`);
+      for (const a of missing) {
+        let buf: Buffer | null = null;
+        for (let attempt = 0; attempt < 3 && !buf; attempt++) {
+          buf = await fetchOne(config.projectGuid, a.path);
+        }
+        if (buf) downloadedBytes.set(a.path, buf);
+      }
+    }
+
+    // Anything still missing is a hard failure: the plan needs bytes we could
+    // not retrieve. Mark the download incomplete so the deletes pass is skipped;
+    // the per-path "Download missing" errors below carry the detail.
+    if (wantedDownloads.some(a => !downloadedBytes.has(a.path))) downloadIncomplete = true;
   }
 
   // ── Writes pass: uploads, downloads, conflicts (rename + download + upload copy) ──
@@ -1031,7 +1130,17 @@ async function syncInner(
   }
 
   // ── Deletes pass ──
+  // A delete is only safe against a complete, authoritative view. If the
+  // download phase couldn't retrieve everything it planned, the local tree is
+  // not a trustworthy deletion signal - this is exactly how a truncated pull
+  // turns "files we failed to fetch" into "delete those files." Skip ALL deletes
+  // this run and let a clean sync replan them once the pull succeeds.
+  let deletesSkippedIncomplete = 0;
   for (const a of plannedToApply) {
+    if (downloadIncomplete && (a.kind === 'delete-local' || a.kind === 'delete-remote')) {
+      deletesSkippedIncomplete++;
+      continue;
+    }
     if (a.kind === 'delete-local') {
       try {
         unlinkSync(resolveInRoot(root, a.path));
@@ -1089,6 +1198,13 @@ async function syncInner(
         }
       }
     }
+  }
+
+  if (deletesSkippedIncomplete > 0) {
+    errors.push(
+      `Skipped ${deletesSkippedIncomplete} deletion${deletesSkippedIncomplete === 1 ? '' : 's'} because the download was incomplete - ` +
+      `nothing was deleted. Re-run \`gipity sync\` once the pull finishes to apply any real deletions.`,
+    );
   }
 
   // Clean up empty local directories after delete-local actions.

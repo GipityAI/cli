@@ -78,6 +78,24 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
   globalThis.fetch = handler as unknown as typeof globalThis.fetch;
 }
 
+/** Run `fn` with process.stdin swapped for a fake TTY that answers any prompt()
+ *  with `answer`. Lets us drive the interactive confirmation guards in a test. */
+async function withStdinAnswer<T>(answer: string, fn: () => Promise<T>): Promise<T> {
+  const { PassThrough } = await import('stream');
+  const fake = new PassThrough();
+  (fake as unknown as { isTTY?: boolean }).isTTY = true;
+  const orig = Object.getOwnPropertyDescriptor(process, 'stdin');
+  Object.defineProperty(process, 'stdin', { value: fake, configurable: true });
+  try {
+    const p = fn();
+    // Buffered into the PassThrough; readline consumes it whenever it attaches.
+    fake.write(answer + '\n');
+    return await p;
+  } finally {
+    if (orig) Object.defineProperty(process, 'stdin', orig);
+  }
+}
+
 // ─── Baseline I/O ────────────────────────────────────────────────
 
 describe('readBaseline', () => {
@@ -506,6 +524,138 @@ describe('sync() - fetch-intercepted', () => {
     assert.equal(readFileSync(join(projectDir, copy!), 'utf-8'), 'local-edit');
     // Both server paths were uploaded (only the renamed copy, since original just downloaded)
     assert.ok(completeCalls.length >= 1, 'at least one upload-complete for the conflict copy');
+  });
+
+  it('does NOT delete when the bulk download is incomplete (truncated tar + failed refetch)', async () => {
+    // WS-00253 regression. A truncated bulk tar leaves planned downloads missing.
+    // The CLI must recover them over the single-file endpoint; if it still can't,
+    // the pull is incomplete and the deletes pass MUST be disarmed - otherwise a
+    // half-downloaded checkout amplifies into "delete the files we failed to
+    // fetch" (or, here, files that are simply absent locally for any reason).
+    const { createHash } = await import('crypto');
+    const oldSha = createHash('sha256').update('old-content').digest('hex');
+    const newSha = createHash('sha256').update('new-content').digest('hex');
+
+    // Baseline knows old.txt (so locally-absent old.txt → delete-remote), but
+    // old.txt is NOT on disk. new.txt is remote-only → a planned download.
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_apply',
+      files: { 'old.txt': { size: 'old-content'.length, mtime: '2024', sha256: oldSha, serverVersion: 1 } },
+      lastFullSync: null,
+    }));
+
+    const delCalls: string[] = [];
+    stubFetch(async (url, init) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [
+          { path: 'old.txt', size: 11, modified: '2024', type: 'file', guid: 'fl_old', contentHash: oldSha, serverVersion: 1 },
+          { path: 'new.txt', size: 11, modified: '2024', type: 'file', guid: 'fl_new', contentHash: newSha, serverVersion: 1 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/files/tree?content=tar')) {
+        // Truncated/empty archive - new.txt never arrives (and the single-file
+        // tar recovery path also lands here and finds nothing).
+        const tar = await import('tar-stream');
+        const pack = tar.pack();
+        pack.finalize();
+        const chunks: Buffer[] = [];
+        for await (const c of pack as any) chunks.push(c);
+        return new Response(Buffer.concat(chunks), { status: 200 });
+      }
+      if (url.includes('/files/read')) {
+        // Single-file text recovery also fails, so new.txt stays unrecovered.
+        return new Response('not found', { status: 404 });
+      }
+      if (init?.method === 'DELETE' || url.includes('/files?path=')) {
+        delCalls.push(url);
+        return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+    const result = await sync({ interactive: false });
+
+    // The plan wanted to delete old.txt remotely...
+    assert.equal(result.plan.deletesRemote, 1, 'plan classifies old.txt as delete-remote');
+    // ...but the incomplete download must have disarmed it: no DELETE was sent.
+    assert.equal(delCalls.length, 0, 'no delete issued while the download is incomplete');
+    // old.txt stays in baseline (not dropped), so a later clean sync replans it.
+    const baseline = JSON.parse(readFileSync(join(projectDir, '.gipity', 'sync-state.json'), 'utf-8'));
+    assert.ok(baseline.files['old.txt'], 'delete-target stays in baseline');
+    // The failure is surfaced, not swallowed.
+    assert.ok(result.errors.length > 0, 'incomplete download is reported as an error');
+  });
+
+  it('confirmMerge: prompts before merging a populated dir and aborts on "no" (nothing moves)', async () => {
+    // Open a project INTO a folder that has an unrelated local file, with no
+    // baseline. The plan wants to upload mine.txt and download server.txt - a
+    // two-way merge. With confirmMerge + a "no" answer, NOTHING should move.
+    const { createHash } = await import('crypto');
+    const remoteSha = createHash('sha256').update('server-bytes').digest('hex');
+    writeFileSync(join(projectDir, 'mine.txt'), 'local-only');
+
+    let uploadInits = 0;
+    let tarFetched = false;
+    stubFetch(async (url) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [
+          { path: 'server.txt', size: 12, modified: '2024', type: 'file', guid: 'fl_s', contentHash: remoteSha, serverVersion: 1 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/files/tree?content=tar')) { tarFetched = true; return new Response(Buffer.from(''), { status: 200 }); }
+      if (url.includes('/files/upload-init')) { uploadInits++; return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'content-type': 'application/json' } }); }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+
+    const result = await withStdinAnswer('n', () => sync({ interactive: true, confirmMerge: true }));
+
+    assert.equal(result.aborted, true, 'declining the merge aborts');
+    assert.equal(result.applied, 0, 'nothing applied');
+    assert.equal(uploadInits, 0, 'no upload attempted');
+    assert.equal(tarFetched, false, 'no download attempted');
+    assert.ok(!existsSync(join(projectDir, 'server.txt')), 'server file not pulled in');
+    assert.equal(readFileSync(join(projectDir, 'mine.txt'), 'utf-8'), 'local-only', 'local file untouched');
+  });
+
+  it('confirmMerge: non-interactive without --yes ABORTS instead of merging silently', async () => {
+    // Fail-safe path: armed guard, no TTY, no autoConfirm. A script must not
+    // silently merge an unexpected folder into the project - it aborts so the
+    // exit code tells the caller nothing was applied.
+    const { createHash } = await import('crypto');
+    const remoteSha = createHash('sha256').update('server-bytes').digest('hex');
+    writeFileSync(join(projectDir, 'mine.txt'), 'local-only');
+
+    let uploadInits = 0;
+    let tarFetched = false;
+    stubFetch(async (url) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({ data: [
+          { path: 'server.txt', size: 12, modified: '2024', type: 'file', guid: 'fl_s', contentHash: remoteSha, serverVersion: 1 },
+        ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/files/tree?content=tar')) { tarFetched = true; return new Response(Buffer.from(''), { status: 200 }); }
+      if (url.includes('/files/upload')) { uploadInits++; return new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'content-type': 'application/json' } }); }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+
+    // interactive:false, no setAutoConfirm → the fail-safe branch.
+    const result = await sync({ interactive: false, confirmMerge: true });
+
+    assert.equal(result.aborted, true, 'non-interactive armed merge aborts');
+    assert.equal(uploadInits, 0, 'no upload attempted');
+    assert.equal(tarFetched, false, 'no download attempted');
+    assert.ok(!existsSync(join(projectDir, 'server.txt')), 'server file not pulled in');
   });
 
   it('downloads a Storage/job file listed with a leading slash; no "Download missing", and a re-sync is a noop', async () => {

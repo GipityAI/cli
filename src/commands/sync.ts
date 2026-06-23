@@ -13,7 +13,11 @@ export const syncCommand = new Command('sync')
     try {
       // JSON mode stays machine-clean; otherwise show live progress on a TTY.
       const progress = opts.json ? undefined : createProgressReporter();
-      const result = await sync({ plan: opts.plan, force: opts.force, prune: opts.prune, progress });
+      // confirmMerge arms the uncertain-merge guard: a first-time sync into a
+      // folder that has its own files prompts on a TTY, proceeds with --yes, and
+      // fail-safe ABORTS when non-interactive without --yes - so a script never
+      // merges an unexpected folder into the project silently.
+      const result = await sync({ plan: opts.plan, force: opts.force, prune: opts.prune, confirmMerge: true, progress });
       if (opts.json) {
         console.log(JSON.stringify(result));
       } else {
@@ -34,7 +38,9 @@ export const syncCommand = new Command('sync')
         }
         for (const e of result.errors) console.error(clrError(e));
       }
-      if (result.errors.length > 0) process.exit(1);
+      // A refused merge or any sync error is a non-zero exit so scripts/CI can
+      // detect that nothing was applied.
+      if (result.aborted || result.errors.length > 0) process.exit(1);
     } catch (err: any) {
       console.error(clrError(`Sync failed: ${err.message}`));
       process.exit(1);

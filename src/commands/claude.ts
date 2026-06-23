@@ -8,7 +8,7 @@ import { resolveCommand } from '../platform.js';
 import { getAuth, saveAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
-import { sync } from '../sync.js';
+import { sync, type SyncResult } from '../sync.js';
 import { slugify, setupClaudeHooks, ensureGipityPluginInstalled, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
   buildProjectContextBlock as buildProjectContextBlockText,
@@ -19,7 +19,7 @@ import {
 import * as relayState from '../relay/state.js';
 import { maybeOfferRelayOn, ensureDaemonRunning } from '../relay/onboarding.js';
 import { prompt, promptBoxed, pickOne, decodeJwtExp, confirm } from '../utils.js';
-import { brand, bold, faint, info, success, error as clrError, muted } from '../colors.js';
+import { brand, bold, faint, info, success, warning, error as clrError, muted } from '../colors.js';
 import { createProgressReporter } from '../progress.js';
 import { printBanner } from '../banner.js';
 import {
@@ -34,6 +34,28 @@ import {
 
 const __clDir = dirname(fileURLToPath(import.meta.url));
 const __clPkg = JSON.parse(readFileSync(resolve(__clDir, '../../package.json'), 'utf-8'));
+
+/** Report a sync run to the user. Beyond the applied-changes line, this SURFACES
+ *  sync.errors - a download that came back incomplete (truncated bulk tar, a file
+ *  that couldn't be refetched) lands here, so we never print "ready" over a
+ *  half-synced project as if nothing went wrong. Deletions are disarmed on an
+ *  incomplete pull, so we can tell the user plainly that nothing was deleted. */
+function reportSyncResult(result: SyncResult): void {
+  if (result.aborted) {
+    console.log(`  ${warning('Merge cancelled — this folder was NOT synced with the project.')}`);
+    console.log(`  ${muted('For a clean copy, quit and open the project in an empty folder. To merge anyway, run `gipity sync`.')}`);
+    return;
+  }
+  if (result.applied > 0) {
+    console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
+  }
+  if (result.errors.length) {
+    console.log(`  ${warning(`Sync finished with ${result.errors.length} problem${result.errors.length === 1 ? '' : 's'} — your local copy may be incomplete:`)}`);
+    for (const e of result.errors.slice(0, 8)) console.log(`    - ${e}`);
+    if (result.errors.length > 8) console.log(`    …and ${result.errors.length - 8} more.`);
+    console.log(`  ${muted('Nothing was deleted. Re-run `gipity sync` to finish the pull.')}`);
+  }
+}
 
 import { getProjectsRoot } from '../relay/paths.js';
 
@@ -439,12 +461,10 @@ export const claudeCommand = new Command('claude')
 
         console.log(`\n  Using ${projectDir}`);
         try {
-          const result = await sync({ interactive: !nonInteractive, progress: syncProgress });
-          if (result.applied > 0) {
-            console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
-          }
-        } catch {
-          console.log('  Could not sync files (will retry on next prompt).');
+          const result = await sync({ interactive: !nonInteractive, confirmMerge: !nonInteractive, progress: syncProgress });
+          reportSyncResult(result);
+        } catch (err) {
+          console.log(`  ${warning('Could not sync files (will retry on next prompt):')} ${(err as Error).message}`);
         }
 
         setupClaudeHooks();
@@ -491,12 +511,10 @@ export const claudeCommand = new Command('claude')
 
         if (doSync) {
           try {
-            const result = await sync({ interactive: !nonInteractive, progress: syncProgress });
-            if (result.applied > 0) {
-              console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
-            }
-          } catch {
-            console.log('  Could not sync files (will retry on next prompt).');
+            const result = await sync({ interactive: !nonInteractive, confirmMerge: !nonInteractive, progress: syncProgress });
+            reportSyncResult(result);
+          } catch (err) {
+            console.log(`  ${warning('Could not sync files (will retry on next prompt):')} ${(err as Error).message}`);
           }
         }
 
@@ -621,12 +639,10 @@ export const claudeCommand = new Command('claude')
 
           // Unified sync - push and pull resolved via three-way merge (non-fatal)
           try {
-            const result = await sync({ interactive: !nonInteractive, progress: syncProgress });
-            if (result.applied > 0) {
-              console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
-            }
-          } catch {
-            console.log('  Could not sync files (will retry on next prompt).');
+            const result = await sync({ interactive: !nonInteractive, confirmMerge: !nonInteractive, progress: syncProgress });
+            reportSyncResult(result);
+          } catch (err) {
+            console.log(`  ${warning('Could not sync files (will retry on next prompt):')} ${(err as Error).message}`);
           }
         }
 
