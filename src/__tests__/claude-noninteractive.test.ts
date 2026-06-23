@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { runCli } from './helpers/spawn-cli.js';
+import { runCli, runCliAsync } from './helpers/spawn-cli.js';
+import { startMockServer } from './helpers/mock-server.js';
 
 function freshHome(): string {
   return mkdtempSync(`${tmpdir()}/gipity-cli-claude-test-`);
@@ -85,19 +86,32 @@ describe('gipity claude --new-project / --project', () => {
     assert.equal(r.stdout, '');
   });
 
-  it('--new-project lifts the "no project in cwd" guard (proceeds to resolve a project)', () => {
+  it('--new-project lifts the "no project in cwd" guard (proceeds to resolve a project)', async () => {
     // Logged in but cwd has no .gipity.json. Without --new-project this errors
     // with "No Gipity project in cwd". With it, the command proceeds past that
-    // guard to fetch projects - here pointed at a dead port so it fails fast.
+    // guard to fetch projects - here an in-process mock 500s so the fetch fails
+    // deterministically. (A dead port doesn't reliably refuse fast on every
+    // host - some hang until the spawn timeout - so we use a real server that
+    // accepts the connection and errors.)
     const home = freshHome();
     writeFakeAuth(home);
-    const r = runCli(
-      ['claude', '--new-project', '-p', 'build a thing', '--api-base', 'http://127.0.0.1:1'],
-      { env: { HOME: home }, cwd: home },
-    );
-    assert.notEqual(r.status, 0);
-    assert.doesNotMatch(r.stderr, /No Gipity project in cwd/);
-    assert.match(r.stderr, /Could not load projects|session expired/);
-    assert.equal(r.stdout, '');
+    const mock = await startMockServer();
+    mock.on('GET /projects', { status: 500, body: { error: { code: 'BOOM', message: 'nope' } } });
+    try {
+      // Point the CLI at the mock via GIPITY_API_BASE (a trusted env override
+      // read directly by resolveApiBase) rather than the root --api-base flag,
+      // which commander drops when it trails the subcommand - so the request
+      // would otherwise escape to the real backend.
+      const r = await runCliAsync(
+        ['claude', '--new-project', '-p', 'build a thing'],
+        { env: { HOME: home, GIPITY_API_BASE: mock.apiBase }, cwd: home },
+      );
+      assert.notEqual(r.status, 0);
+      assert.doesNotMatch(r.stderr, /No Gipity project in cwd/);
+      assert.match(r.stderr, /Could not load projects|session expired/);
+      assert.equal(r.stdout, '');
+    } finally {
+      await mock.stop();
+    }
   });
 });

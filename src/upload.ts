@@ -1,4 +1,5 @@
 import { createReadStream } from 'fs';
+import { Transform } from 'stream';
 import { extname } from 'path';
 import { createHash } from 'crypto';
 import { post, putToPresignedUrl, ApiError } from './api.js';
@@ -241,14 +242,34 @@ export async function transferToS3(
 ): Promise<{ etag: string } | { parts: Array<{ part_number: number; etag: string }> }> {
   // Single-part (covers fresh + resumed PUT - single PUT is idempotent on the staging key).
   if (data.method === 'PUT') {
+    // Report bytes as they flow to S3 so the progress bar moves during the
+    // transfer instead of sitting at 0% until the whole file lands (a large
+    // file - e.g. a 674 MB video - otherwise looks hung for minutes). A
+    // pass-through Transform counts each chunk as fetch pulls it; we don't
+    // attach a 'data' listener, which would drain the stream before fetch
+    // reads it.
+    let reported = 0;
     const etag = await withRetry('PUT', async () => {
+      // A retried attempt re-streams from the top, so back out whatever the
+      // failed attempt already counted to keep the shared total accurate.
+      if (reported) { opts.onBytes?.(-reported); reported = 0; }
       const stream = createReadStream(localPath);
+      let body: NodeJS.ReadableStream = stream;
+      if (opts.onBytes) {
+        const counter = new Transform({
+          transform(chunk, _enc, cb) { reported += chunk.length; opts.onBytes!(chunk.length); cb(null, chunk); },
+        });
+        stream.on('error', err => counter.destroy(err));
+        body = stream.pipe(counter);
+      }
       return putToPresignedUrl(
-        data.url, stream, size,
+        data.url, body, size,
         data.headers?.['Content-Type'] ?? mime,
       );
     });
-    opts.onBytes?.(size);
+    // True up to exactly `size`: a dedup/no-op PUT streams nothing, and chunk
+    // sums can fall a hair short of the stat size on the final read.
+    if (reported !== size) opts.onBytes?.(size - reported);
     return { etag };
   }
 

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { hashFile, guessMime } from '../upload.js';
+import { createServer, type Server } from 'http';
+import { hashFile, guessMime, transferToS3 } from '../upload.js';
 
 describe('guessMime', () => {
   it('detects common types from extension', () => {
@@ -89,6 +90,47 @@ describe('hashFile', () => {
       const { createHash } = await import('crypto');
       assert.equal(r.sha256, createHash('sha256').update(buf).digest('hex'));
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('transferToS3 single-part progress', () => {
+  // A presigned-URL stand-in that drains the PUT body and returns an ETag.
+  const startSink = (): Promise<{ server: Server; url: string }> =>
+    new Promise(resolve => {
+      const server = createServer((req, res) => {
+        req.on('data', () => { /* drain so the upload stream keeps flowing */ });
+        req.on('end', () => { res.setHeader('etag', '"abc123"'); res.end(); });
+      });
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as { port: number };
+        resolve({ server, url: `http://127.0.0.1:${addr.port}/put` });
+      });
+    });
+
+  it('reports bytes incrementally during the PUT, summing to the file size', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'gip-put-'));
+    const { server, url } = await startSink();
+    try {
+      // Several read-stream chunks (highWaterMark is 64 KB) so progress is not
+      // a single end-of-transfer jump.
+      const size = 256 * 1024;
+      const file = join(tmp, 'video.bin');
+      writeFileSync(file, Buffer.alloc(size, 7));
+
+      const deltas: number[] = [];
+      const result = await transferToS3(
+        file, size, 'application/octet-stream',
+        { upload_guid: 'g', method: 'PUT', url, expires_in: 60 },
+        { onBytes: d => deltas.push(d) },
+      );
+
+      assert.ok('etag' in result && result.etag === 'abc123');
+      assert.ok(deltas.length > 1, `expected incremental progress, got ${deltas.length} call(s)`);
+      assert.equal(deltas.reduce((a, b) => a + b, 0), size);
+    } finally {
+      server.close();
       rmSync(tmp, { recursive: true, force: true });
     }
   });

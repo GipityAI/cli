@@ -5,7 +5,7 @@ import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { resolveCommand } from '../platform.js';
-import { getAuth, saveAuth, type AuthData } from '../auth.js';
+import { getAuth, saveAuth, sessionExpired, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync, type SyncResult } from '../sync.js';
@@ -338,7 +338,14 @@ export const claudeCommand = new Command('claude')
         printBanner({ version: __clPkg.version, email: auth?.email, cwd: process.cwd() });
       }
 
-      if (auth) {
+      if (auth && sessionExpired()) {
+        // The cached auth.json exists but its refresh token has lapsed, so the
+        // first API call below would 401 anyway. Re-login up front instead of
+        // printing "Logged in" and immediately contradicting it with "session
+        // expired" once the projects fetch fails.
+        console.log(`  ${muted('Your session expired. Let\'s sign you back in.')}\n`);
+        auth = await interactiveLogin();
+      } else if (auth) {
         console.log(`  Logged in (${auth.email}).`);
       } else {
         console.log('  Let\'s get you logged in.\n');
