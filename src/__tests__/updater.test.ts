@@ -4,6 +4,16 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { compareSemver } from '../updater/check.js';
+import { resolveCommand } from '../platform.js';
+
+describe('resolveCommand', () => {
+  it('passes the bare command through on non-Windows', { skip: process.platform === 'win32' }, () => {
+    // The updater spawns npm without shell:true; on POSIX the bare name must be
+    // returned unchanged so spawn's PATH lookup finds it. On Windows it would be
+    // resolved to an .exe/.cmd path instead (see platform.ts).
+    assert.equal(resolveCommand('npm'), 'npm');
+  });
+});
 
 describe('compareSemver', () => {
   it('treats equal versions as 0', () => {

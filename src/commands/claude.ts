@@ -4,18 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdir
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-
-/** On Windows, spawn without shell:true needs an explicit extension (.exe or .cmd) */
-function resolveCommand(cmd: string): string {
-  if (process.platform !== 'win32') return cmd;
-  try {
-    const lines = execSync(`where ${cmd}`, { encoding: 'utf-8' }).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    // Prefer .exe (native) over .cmd (npm shim)
-    return lines.find(l => l.endsWith('.exe')) || lines.find(l => l.endsWith('.cmd')) || cmd;
-  } catch {
-    return `${cmd}.cmd`;
-  }
-}
+import { resolveCommand } from '../platform.js';
 import { getAuth, saveAuth, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';

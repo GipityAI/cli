@@ -5,6 +5,7 @@ import { resolve, join, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
+import { resolveCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 
 export { SKILLS_CONTENT };
@@ -278,11 +279,15 @@ export function ensureGipityPluginInstalled(): void {
   // Refresh the marketplace clone so `install` resolves the current version,
   // then (re)install at user scope - idempotent, and upgrades an older or
   // project-scoped install to the current one at user scope.
-  spawnSync('claude', ['plugin', 'marketplace', 'update', GIPITY_MARKETPLACE_NAME], {
+  // resolveCommand: on Windows `claude` is a .cmd shim that spawn can't launch
+  // without an explicit path, so resolve it (otherwise the install silently
+  // ENOENTs and the plugin's hooks never land at user scope).
+  const claudeCmd = resolveCommand('claude');
+  spawnSync(claudeCmd, ['plugin', 'marketplace', 'update', GIPITY_MARKETPLACE_NAME], {
     stdio: 'ignore',
     timeout: 120_000,
   });
-  spawnSync('claude', ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'], {
+  spawnSync(claudeCmd, ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'], {
     stdio: 'ignore',
     timeout: 120_000,
   });
@@ -506,7 +511,10 @@ export function setupGitignore(): void {
 
   if (existsSync(gitignorePath)) {
     let content = readFileSync(gitignorePath, 'utf-8');
-    const lines = content.split('\n');
+    // Split on \r?\n so a CRLF .gitignore (the Windows default) doesn't leave a
+    // trailing \r on each entry - otherwise `lines.includes('.gipity/')` never
+    // matches '.gipity/\r' and every run re-appends the entries as duplicates.
+    const lines = content.split(/\r?\n/);
     const toAdd = entries.filter(e => !lines.includes(e));
     if (toAdd.length > 0) {
       content = content.trimEnd() + '\n' + toAdd.join('\n') + '\n';

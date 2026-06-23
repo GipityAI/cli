@@ -4,6 +4,7 @@
 import { spawnSync } from 'child_process';
 import { appendFileSync, existsSync } from 'fs';
 import { LOCAL_DIR, LOCAL_ENTRY, UPDATE_LOG, readState, writeState, updatesDisabled } from './state.js';
+import { resolveCommand } from '../platform.js';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -38,10 +39,11 @@ function installVersion(version: string): boolean {
   // --ignore-scripts: this runs unattended in the background, so don't let a
   // compromised package's install lifecycle hooks execute. gipity ships
   // precompiled (dist/) and its deps need no build step, so nothing is lost.
-  const res = spawnSync('npm', ['install', '--silent', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
+  const res = spawnSync(resolveCommand('npm'), ['install', '--silent', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: 'ignore',
   });
+  if (res.error) log(`npm spawn failed: ${res.error.message}`);
   return res.status === 0 && existsSync(LOCAL_ENTRY);
 }
 

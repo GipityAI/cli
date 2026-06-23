@@ -11,7 +11,7 @@
  *      `.gipity.json`, sync, and install hooks/skills/gitignore.
  */
 import { readdirSync, statSync } from 'fs';
-import { join, resolve, sep } from 'path';
+import { join, resolve, sep, parse as parsePath } from 'path';
 import { homedir } from 'os';
 import { get, post, ApiError } from './api.js';
 import { isSyncIgnored, SUPPORTED_TOOLS } from './setup.js';
@@ -110,6 +110,13 @@ export function canAdoptCwd(cwd: string): boolean {
     '/tmp', '/var', '/etc', '/usr', '/opt',
     '/mnt', '/mnt/c', '/mnt/d', '/mnt/wsl',
   ]);
+  // Filesystem root (POSIX `/` already covered by `sep`, but on Windows this
+  // catches drive roots like `C:\`). Plus the common Windows system dirs.
+  if (norm === parsePath(norm).root) return false;
+  for (const envVar of ['windir', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)']) {
+    const v = process.env[envVar];
+    if (v && norm === resolve(v)) return false;
+  }
   if (blocked.has(norm)) return false;
 
   // Workspace-parent heuristic: a directory at depth ≤1 below $HOME that

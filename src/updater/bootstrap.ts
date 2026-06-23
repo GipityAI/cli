@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { LOCAL_DIR, LOCAL_ENTRY, LOCAL_PKG_DIR, writeState, readState } from './state.js';
+import { resolveCommand } from '../platform.js';
 
 export function isBootstrapped(): boolean {
   return existsSync(LOCAL_ENTRY);
@@ -28,7 +29,7 @@ export function bootstrap(version: string, quiet = false): boolean {
   // --ignore-scripts: don't run install lifecycle hooks (gipity ships
   // precompiled, deps need no build), so a compromised package can't execute
   // code during this self-managed install.
-  const res = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
+  const res = spawnSync(resolveCommand('npm'), ['install', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',
@@ -41,7 +42,10 @@ export function bootstrap(version: string, quiet = false): boolean {
       if (notPublished) {
         process.stderr.write(`gipity v${version} is not yet published to npm - using the currently installed build.\n`);
       } else {
-        const firstLine = stderr.split('\n').map(l => l.trim()).find(l => l.length > 0) || `npm exit ${res.status}`;
+        // res.error (e.g. ENOENT when npm can't be launched) carries the real
+        // cause; res.status is null in that case, so prefer the error message.
+        const firstLine = stderr.split('\n').map(l => l.trim()).find(l => l.length > 0)
+          || (res.error ? res.error.message : `npm exit ${res.status}`);
         const reason = firstLine.length > 160 ? firstLine.slice(0, 157) + '...' : firstLine;
         process.stderr.write(`gipity: could not set up local install (${reason}). Using the currently installed build.\n`);
       }

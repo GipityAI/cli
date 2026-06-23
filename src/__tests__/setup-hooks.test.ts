@@ -16,6 +16,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   setupClaudeHooks,
+  setupGitignore,
   ensureGipityPlugin,
   stripGipityHooks,
   isGipityManagedHookCommand,
@@ -260,5 +261,20 @@ test('userScopePluginCurrent is true for a current-or-newer user-scope install',
       { scope: 'user', version: '9.9.9' },
     ]);
     assert.equal(userScopePluginCurrent(), true, 'newer user install wins past a stale project one');
+  });
+});
+
+test('setupGitignore does not duplicate entries on a CRLF .gitignore (Windows)', () => {
+  withTempDirs((project) => {
+    const gi = join(project, '.gitignore');
+    // A .gitignore with Windows CRLF line endings that already lists both entries.
+    writeFileSync(gi, 'node_modules/\r\n.gipity/\r\n.gipity.json\r\n');
+    setupGitignore();
+    const out = readFileSync(gi, 'utf-8');
+    const count = (s: string, sub: string) => s.split(sub).length - 1;
+    // Splitting on \n previously left a trailing \r so the includes() check
+    // missed, re-appending both entries. Each must appear exactly once.
+    assert.equal(count(out, '.gipity/'), 1, '.gipity/ should not be duplicated');
+    assert.equal(count(out, '.gipity.json'), 1, '.gipity.json should not be duplicated');
   });
 });

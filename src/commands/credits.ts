@@ -7,12 +7,15 @@ import { run, printList } from '../helpers/index.js';
 const PRICING_URL = 'https://prompt.gipity.ai/pricing';
 
 function openInBrowser(url: string): void {
-  const cmd =
-    process.platform === 'darwin' ? 'open' :
-    process.platform === 'win32' ? 'start' :
-    'xdg-open';
+  // Windows `start` is a cmd.exe builtin, not an executable - spawn can't
+  // launch it directly, so go through `cmd /c start`. The empty "" is the
+  // window-title arg; without it a quoted URL would be swallowed as the title.
+  const [cmd, args] =
+    process.platform === 'darwin' ? ['open', [url]] as const :
+    process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] as const :
+    ['xdg-open', [url]] as const;
   try {
-    spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+    spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
   } catch {
     // Spawn failed (no xdg-open on minimal Linux, etc.) - caller prints the URL.
   }

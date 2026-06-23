@@ -31,10 +31,13 @@ function resolveCliPath(): string {
 export function ensureDaemonRunning(): void {
   if (state.isDaemonRunning()) return;
   try {
-    const child = spawn(resolveCliPath(), ['relay', 'run'], {
+    // Launch via the current Node binary + the CLI entry script. The previous
+    // `shell: true` on Windows ran the .js path through the shell, where the
+    // file association (Windows Script Host, not Node) would mis-handle it.
+    // process.execPath is cross-platform and needs no shell.
+    const child = spawn(process.execPath, [resolveCliPath(), 'relay', 'run'], {
       detached: true,
       stdio: 'ignore',
-      shell: process.platform === 'win32',
     });
     child.unref();
   } catch { /* best-effort */ }

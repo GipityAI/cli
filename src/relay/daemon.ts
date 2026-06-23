@@ -21,6 +21,7 @@
  * See docs/feature-backlog/gipity-relay-phases.md (Phase A Step 7).
  */
 import { spawn, ChildProcess } from 'child_process';
+import { resolveCommand } from '../platform.js';
 import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, closeSync, openSync, unlinkSync } from 'fs';
 import { stat, readFile } from 'fs/promises';
 import { createInterface } from 'readline';
@@ -929,7 +930,10 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
  *  resolution (the daemon itself doesn't chdir into projects).
  *  Non-blocking on failure - caller catches and logs. */
 async function spawnSync(cwd: string, timeoutMs?: number): Promise<void> {
-  const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || 'gipity';
+  // resolveCommand: on Windows the bare `gipity` is a .cmd shim that spawn
+  // can't launch without an explicit path. An explicit env override is used
+  // verbatim (it may be a full path); only the default name is resolved.
+  const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || resolveCommand('gipity');
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, ['sync', '--json'], {
       cwd,
@@ -971,7 +975,10 @@ export async function spawnGipityClaude(
   cwd: string,
   d: ClaimedDispatch,
 ): Promise<{ exitCode: number; killed: boolean }> {
-  const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || 'gipity';
+  // resolveCommand: on Windows the bare `gipity` is a .cmd shim that spawn
+  // can't launch without an explicit path. An explicit env override is used
+  // verbatim (it may be a full path); only the default name is resolved.
+  const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || resolveCommand('gipity');
   // Inject stream-json flags here rather than at the call site so every
   // relay spawn path gets the same protocol. `--verbose` is required by
   // Claude Code when combining `-p` with `--output-format stream-json`.
