@@ -2,6 +2,7 @@ import { Readable } from 'stream';
 import * as tar from 'tar-stream';
 import { getAuth, refreshTokenIfNeeded } from './auth.js';
 import { resolveApiBase, requireConfig, saveConfig } from './config.js';
+import { clientHeaders } from './client-context.js';
 
 export class ApiError extends Error {
   constructor(
@@ -31,6 +32,7 @@ async function bearerToken(): Promise<string> {
 
 async function getHeaders(): Promise<Record<string, string>> {
   return {
+    ...clientHeaders(),
     'Authorization': `Bearer ${await bearerToken()}`,
     'Content-Type': 'application/json',
   };
@@ -162,7 +164,7 @@ export async function sendMessage(message: string): Promise<string> {
 export async function download(path: string): Promise<Buffer> {
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${await bearerToken()}` },
+    headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
   });
 
   if (!res.ok) {
@@ -177,7 +179,7 @@ export async function downloadStream(path: string): Promise<import('stream').Rea
   const { Readable } = await import('stream');
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${await bearerToken()}` },
+    headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
   });
 
   if (!res.ok) {
@@ -236,7 +238,7 @@ export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...clientHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
