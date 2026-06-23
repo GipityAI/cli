@@ -326,6 +326,46 @@ describe('sync() - fetch-intercepted', () => {
     assert.equal(result.plan.deletesRemote, 20);
     assert.equal(result.applied, 0, 'no deletes executed under guard');
     assert.equal(result.skipped, 20, 'all 20 actions skipped by guard');
+    // Deferred (not refused): the count rides out so callers can surface a
+    // `gipity sync --prune` hint instead of printing a scary error every run.
+    assert.equal(result.deferredDeletes, 20, 'deferred deletes reported');
+  });
+
+  it('prune:true applies the deferred bulk deletes', async () => {
+    const files: Record<string, any> = {};
+    for (let i = 0; i < 20; i++) {
+      files[`f${i}.txt`] = { size: 1, mtime: '2024', sha256: `sha${i}`, serverVersion: 1 };
+    }
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_apply', files, lastFullSync: null,
+    }));
+
+    let deleteCount = 0;
+    stubFetch(async (url, init) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        const data = Object.entries(files).map(([path, e]: [string, any]) => ({
+          path, size: 1, modified: '2024', type: 'file',
+          guid: `fl_${path}`, contentHash: e.sha256, serverVersion: e.serverVersion,
+        }));
+        return new Response(JSON.stringify({ data }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (init?.method === 'DELETE') {
+        deleteCount++;
+        return new Response(JSON.stringify({ success: true }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+    const result = await sync({ interactive: false, prune: true });
+
+    assert.equal(deleteCount, 20, 'prune applies all the deferred deletes');
+    assert.equal(result.applied, 20);
+    assert.equal(result.deferredDeletes, 0);
   });
 
   it('force:true bypasses the bulk-delete guard', async () => {

@@ -113,6 +113,10 @@ export interface SyncOptions {
   plan?: boolean;
   /** Bypass the bulk-delete guard. */
   force?: boolean;
+  /** Apply the bulk deletes the guard would otherwise defer (the deliberate
+   *  cleanup path: `gipity sync --prune`). Same effect as `force` for deletes,
+   *  named so the intent reads clearly at the call site. */
+  prune?: boolean;
   /** Allow interactive prompts (guard confirmation). Defaults to TTY-detected. */
   interactive?: boolean;
   /** Optional progress reporter. Drives phase lines at each major step (scan,
@@ -127,6 +131,10 @@ export interface SyncResult {
   skipped: number;
   errors: string[];
   summary: string;
+  /** Count of delete actions the bulk-delete guard deferred (skipped) this run.
+   *  Non-interactive callers (deploy/test/sandbox) defer silently; surface this
+   *  where it's useful (e.g. `gipity sync` hints at `--prune`). */
+  deferredDeletes: number;
 }
 
 // ─── Paths ─────────────────────────────────────────────────────
@@ -594,17 +602,19 @@ async function bulkDeleteGuard(
 ): Promise<boolean> {
   const totalDeletes = p.deletesLocal + p.deletesRemote;
   if (totalDeletes === 0) return true;
-  if (opts.force) return true;
+  if (opts.force || opts.prune) return true;
   const denom = Math.max(knownFiles, 1);
   const fraction = totalDeletes / denom;
   if (totalDeletes < BULK_DELETE_COUNT || fraction < BULK_DELETE_FRACTION) return true;
 
   if (!opts.interactive || getAutoConfirm()) {
-    console.error(
-      `Refusing to delete ${totalDeletes} file${totalDeletes > 1 ? 's' : ''} ` +
-      `(${Math.round(fraction * 100)}% of tree) non-interactively. ` +
-      `Re-run with --force or interactively to confirm.`,
-    );
+    // Non-interactive (deploy/test/sandbox auto-mirror): there's no human to
+    // confirm, so defer the bulk deletes SILENTLY and carry them forward. This
+    // is the safe default - uploads/downloads still apply, nothing is deleted -
+    // and it avoids spamming a "Refusing to delete N files" error on every
+    // command when a project legitimately has server-only files (e.g. runtime
+    // uploads, or sandbox outputs not kept locally). The deferred count rides
+    // out in SyncResult.deferredDeletes; `gipity sync --prune` applies them.
     return false;
   }
   const answer = await prompt(
@@ -697,6 +707,7 @@ async function syncInner(
     return {
       plan: planned, applied: 0, skipped: 0, errors: [],
       summary: formatPlan(planned),
+      deferredDeletes: 0,
     };
   }
 
@@ -1094,6 +1105,7 @@ async function syncInner(
     skipped: skippedByGuard,
     errors,
     summary: formatPlan(planned),
+    deferredDeletes: skippedByGuard,
   };
 }
 
