@@ -5,6 +5,7 @@ import { pushFile } from '../sync.js';
 import { writeFileSync } from 'fs';
 import { resolve as resolvePath, dirname, relative, isAbsolute } from 'path';
 import { error as clrError, success, muted, info } from '../colors.js';
+import { printCommandError } from '../helpers/command.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
 interface GenerateResult {
@@ -108,7 +109,7 @@ Examples:
         }
       }
     } catch (err: any) {
-      console.error(clrError(`Image generation failed: ${err.message}`));
+      printCommandError('Image generation', err);
       process.exit(1);
     }
   });
@@ -162,7 +163,7 @@ Examples:
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
-      console.error(clrError(`Video generation failed: ${err.message}`));
+      printCommandError('Video generation', err);
       process.exit(1);
     }
   });
@@ -220,7 +221,7 @@ Examples:
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
-      console.error(clrError(`Speech generation failed: ${err.message}`));
+      printCommandError('Speech generation', err);
       process.exit(1);
     }
   });
@@ -272,7 +273,7 @@ Examples:
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
-      console.error(clrError(`Music generation failed: ${err.message}`));
+      printCommandError('Music generation', err);
       process.exit(1);
     }
   });

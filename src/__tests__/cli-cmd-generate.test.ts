@@ -37,6 +37,20 @@ test('gipity generate image POSTs and downloads from the returned URL', async ()
   assert.match(r.stdout, /Saved to \/.*\/generated\.png/);
 });
 
+test('gipity generate surfaces an out-of-credits 402 with the buy link', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/generate/image', {
+    status: 402,
+    body: { error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits. Buy more at https://prompt.gipity.ai/pricing' } },
+  });
+  const r = await fresh(['generate', 'image', 'a cat with a hat']);
+  assert.notEqual(r.status, 0);
+  // Plainly flagged so an agent reading the output knows it's a credits issue...
+  assert.match(r.stderr, /out of Gipity credits/i);
+  // ...and the buy link from the server message is preserved.
+  assert.match(r.stderr, /https:\/\/prompt\.gipity\.ai\/pricing/);
+});
+
 test('gipity generate speech --provider POSTs and writes the audio file', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/generate/speech', { body: {

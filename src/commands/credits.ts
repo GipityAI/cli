@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
 import { get } from '../api.js';
-import { brand, muted } from '../colors.js';
+import { brand, muted, success, error as clrError } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
 const PRICING_URL = 'https://prompt.gipity.ai/pricing';
@@ -27,6 +27,23 @@ interface BalanceData {
   balances: Array<{ source: string; creditsRemaining: number; expiresAt: string }>;
 }
 
+interface SubscriptionData {
+  tier: string;
+  status: string;
+}
+
+interface BillingStatus {
+  mode: string;
+  secretKeyConfigured: boolean;
+  webhookSecretConfigured: boolean;
+  webhookPath: string;
+  packsConfigured: boolean;
+  packsError: string | null;
+  testPackConfigured: boolean;
+  packs: Array<{ name: string; priceId: string; amountUsd: number; credits: number; hidden: boolean }>;
+  subscriptionPlans: Array<{ tier: string; name: string; priceIdConfigured: boolean }>;
+}
+
 interface UsageEntry {
   operation: string;
   creditsDeducted: number;
@@ -39,16 +56,23 @@ export const creditsCommand = new Command('credits')
   .description('View credits')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Credits', async () => {
-    const res = await get<{ data: BalanceData }>('/credits/balance');
     if (opts.json) {
+      const res = await get<{ data: BalanceData }>('/credits/balance');
       console.log(JSON.stringify(res.data));
-    } else {
-      console.log(`Credits: ${brand(res.data.available.toLocaleString())}`);
-      if (res.data.balances.length > 0) {
-        for (const b of res.data.balances) {
-          const exp = new Date(b.expiresAt).toLocaleDateString();
-          console.log(`${b.source}: ${b.creditsRemaining.toLocaleString()}  ${muted(`expires ${exp}`)}`);
-        }
+      return;
+    }
+    const [balRes, subRes] = await Promise.all([
+      get<{ data: BalanceData }>('/credits/balance'),
+      get<{ data: SubscriptionData }>('/credits/subscription'),
+    ]);
+    const sub = subRes.data;
+    const tierLabel = sub.tier === 'pro' ? 'Gipity Pro' : 'Free';
+    console.log(`Plan: ${brand(tierLabel)} ${muted(`(${sub.status})`)}`);
+    console.log(`Credits: ${brand(balRes.data.available.toLocaleString())}`);
+    if (balRes.data.balances.length > 0) {
+      for (const b of balRes.data.balances) {
+        const exp = new Date(b.expiresAt).toLocaleDateString();
+        console.log(`${b.source}: ${b.creditsRemaining.toLocaleString()}  ${muted(`expires ${exp}`)}`);
       }
     }
   }));
@@ -63,11 +87,42 @@ creditsCommand
   }));
 
 creditsCommand
+  .command('status')
+  .description('Show billing/Stripe configuration health (admin only)')
+  .option('--json', 'Output as JSON')
+  // optsWithGlobals(): the parent `credits` command also declares --json, which
+  // commander binds to the parent - so read merged opts to see the flag here.
+  .action((_opts, cmd: Command) => run('Billing status', async () => {
+    const opts = cmd.optsWithGlobals();
+    const res = await get<{ data: BillingStatus }>('/admin/billing-status');
+    const s = res.data;
+    if (opts.json) {
+      console.log(JSON.stringify(s));
+      return;
+    }
+    const mark = (ok: boolean) => (ok ? success('✓') : clrError('✗'));
+    console.log(`Stripe mode:     ${brand(s.mode)}`);
+    console.log(`Secret key:      ${mark(s.secretKeyConfigured)}`);
+    console.log(`Webhook secret:  ${mark(s.webhookSecretConfigured)}  ${muted(`endpoint ${s.webhookPath}`)}`);
+    console.log(`Credit packs:    ${mark(s.packsConfigured)}${s.packsError ? `  ${clrError(s.packsError)}` : ''}`);
+    for (const p of s.packs) {
+      console.log(`  ${p.name}  ${muted(p.priceId)}${p.hidden ? muted(' [hidden]') : ''}`);
+    }
+    console.log(`Test pack ($1):  ${mark(s.testPackConfigured)}  ${muted('set STRIPE_PACK_TEST_PRICE_ID to enable a cheap purchase smoke test')}`);
+    console.log('Subscription plans:');
+    for (const pl of s.subscriptionPlans) {
+      console.log(`  ${pl.name} (${pl.tier})  ${mark(pl.priceIdConfigured)}`);
+    }
+  }));
+
+creditsCommand
   .command('usage')
   .description('Show recent usage')
   .option('--limit <n>', 'Number of entries', '20')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('Usage', async () => {
+  // optsWithGlobals(): parent `credits` also declares --json (see status above).
+  .action((_opts, cmd: Command) => run('Usage', async () => {
+    const opts = cmd.optsWithGlobals();
     const limit = parseInt(opts.limit, 10) || 20;
     const res = await get<{ data: UsageEntry[] }>(`/credits/usage?limit=${limit}`);
 
