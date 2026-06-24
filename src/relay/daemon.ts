@@ -365,6 +365,10 @@ interface ClaimedDispatch {
    *  would double-post every event. See claude.ts childEnv gate. */
   conversation_guid: string;
   agent_guid: string | null;
+  /** Concrete model id the user picked for this chat via `/model`, or null to
+   *  use the local agent's own default. Forwarded to the spawned agent as
+   *  `--model`. Resolved server-side at claim time, so the latest choice wins. */
+  model: string | null;
 }
 
 async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
@@ -691,6 +695,12 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // prompt is correct (same authority as running `claude -p` in a local
   // terminal yourself).
   const args = ['claude', '-p', d.message, '--permission-mode', 'bypassPermissions'];
+  // Per-chat model: the user picked it with `/model` in the web CLI. `gipity
+  // claude` forwards --model straight through to the `claude` binary, which
+  // honors it on both a fresh session and a --resume. null => agent default.
+  if (d.model) {
+    args.push('--model', d.model);
+  }
   if (d.kind === 'resume' && d.remote_session_id) {
     args.push('--resume', d.remote_session_id);
   }
