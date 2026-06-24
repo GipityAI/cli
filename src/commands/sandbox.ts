@@ -6,6 +6,7 @@ import { resolveProjectContext, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
 import { error as clrError, dim } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { createProgressReporter, withSpinner } from '../progress.js';
 
 const LANG_MAP: Record<string, string> = {
   js: 'javascript',
@@ -169,10 +170,10 @@ GCC/Rust).
     // Bidirectional + CAS, so it's a cheap manifest check when nothing changed.
     // Symmetric with the post-run pull below. Skip in one-off mode (no project).
     if (getConfigPath()) {
-      await sync({ interactive: false });
+      await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });
     }
 
-    const res = await post<{
+    type SandboxResponse = {
       data: {
         exitCode: number;
         stdout: string;
@@ -183,13 +184,19 @@ GCC/Rust).
         mirroredCount?: number;
         autoMirrorSkipped?: { reason: string; totalBytes: number };
       };
-    }>(`/projects/${config.projectGuid}/sandbox/execute`, {
+    };
+    // The run blocks until the sandbox finishes (up to the timeout); animate the
+    // wait, then clear the spinner so stdout/stderr is the result. JSON skips it.
+    const doRun = () => post<SandboxResponse>(`/projects/${config.projectGuid}/sandbox/execute`, {
       code: source,
       language,
       timeout: isNaN(timeout) ? 30 : timeout,
       input_files: opts.input,
       cwd,
     });
+    const res = opts.json
+      ? await doRun()
+      : await withSpinner('Running in sandbox…', doRun, { done: null });
 
     // Pull sandbox-written outputs down to the local cwd automatically. The
     // server has already mirrored them into the project (VFS) and handed back
@@ -198,7 +205,7 @@ GCC/Rust).
     // `filesChanged` flag. Skip in one-off mode (no local project to sync into).
     const pulledLocal = !!(res.data.outputFiles?.length && getConfigPath());
     if (pulledLocal) {
-      await sync({ interactive: false });
+      await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });
     }
 
     if (opts.json) {

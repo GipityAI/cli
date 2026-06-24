@@ -295,6 +295,7 @@ describe('sync() - fetch-intercepted', () => {
     const progress = {
       phase() {},
       transfer(_label: string, done: number, total: number) { transfers.push([done, total]); },
+      spinner() { return { succeed() {}, fail() {}, stop() {} }; },
       finish() {},
     };
 
@@ -787,6 +788,7 @@ describe('sync() - fetch-intercepted', () => {
     const progress = {
       phase() {},
       transfer(_l: string, done: number, total: number) { transfers.push([done, total]); },
+      spinner() { return { succeed() {}, fail() {}, stop() {} }; },
       finish() {},
     };
     const result = await sync({ interactive: false, progress });

@@ -4,8 +4,9 @@ import { resolveProjectContext, getConfigPath } from '../config.js';
 import { pushFile } from '../sync.js';
 import { writeFileSync } from 'fs';
 import { resolve as resolvePath, dirname, relative, isAbsolute } from 'path';
-import { error as clrError, success, muted, info } from '../colors.js';
+import { error as clrError, success, muted } from '../colors.js';
 import { printCommandError } from '../helpers/command.js';
+import { withSpinner } from '../progress.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
 interface GenerateResult {
@@ -82,7 +83,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
-      const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
+      const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
         prompt,
         provider: opts.provider,
         model: opts.model,
@@ -92,6 +93,9 @@ Examples:
         image_size: opts.imageSize,
         seed: Number.isFinite(opts.seed) ? opts.seed : undefined,
       });
+      const result = opts.json
+        ? await doGenerate()
+        : await withSpinner('Generating image…', doGenerate, { done: null });
 
       const ext = result.content_type.includes('png') ? 'png' : 'jpg';
       const filename = opts.output || `generated.${ext}`;
@@ -143,14 +147,16 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
-      if (!opts.json) console.log(info('Generating video (this may take 30-120 seconds)...')); // keep --json stdout pure JSON
-
-      const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/video`, {
+      const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/video`, {
         prompt,
         model: opts.model,
         aspect_ratio: opts.aspect,
         resolution: opts.resolution,
       });
+      // Veo runs 30-120s; the bouncing bar + timer keeps the wait honest.
+      const result = opts.json
+        ? await doGenerate()
+        : await withSpinner('Generating video…', doGenerate, { done: null });
 
       const filename = opts.output || 'generated.mp4';
       const savedPath = await downloadFile(result.url, filename);
@@ -196,19 +202,22 @@ Examples:
     try {
       const { config } = await resolveProjectContext();
 
-      let speakers;
+      let speakers: unknown;
       if (opts.speakers) {
         try { speakers = JSON.parse(opts.speakers); }
         catch { console.error(clrError('Invalid --speakers JSON')); process.exit(1); }
       }
 
-      const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/speech`, {
+      const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/speech`, {
         text,
         provider: opts.provider,
         voice: opts.voice,
         language: opts.language,
         speakers,
       });
+      const result = opts.json
+        ? await doGenerate()
+        : await withSpinner('Generating speech…', doGenerate, { done: null });
 
       const filename = opts.output || 'speech.mp3';
       const savedPath = await downloadFile(result.url, filename);
@@ -253,14 +262,15 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
-      if (!opts.json) console.log(info('Generating music...')); // keep --json stdout pure JSON
-
-      const result = await post<GenerateResult>(`/projects/${config.projectGuid}/generate/music`, {
+      const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/music`, {
         prompt,
         duration_seconds: opts.duration,
         model: opts.model,
         instrumental: !opts.vocals,
       });
+      const result = opts.json
+        ? await doGenerate()
+        : await withSpinner('Generating music…', doGenerate, { done: null });
 
       const filename = opts.output || 'music.mp3';
       const savedPath = await downloadFile(result.url, filename);

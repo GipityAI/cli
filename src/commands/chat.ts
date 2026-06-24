@@ -4,6 +4,7 @@ import { resolveProjectContext, saveConfig } from '../config.js';
 import { sync } from '../sync.js';
 import { error as clrError, muted, success } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
+import { createProgressReporter, withSpinner } from '../progress.js';
 
 interface ChatSummary {
   short_guid: string;
@@ -30,7 +31,7 @@ export const chatCommand = new Command('chat')
         ? { content: message, projectGuid: config.projectGuid }
         : { agentGuid: config.agentGuid, content: message, projectGuid: config.projectGuid };
 
-      const res = await post<{
+      type ChatResponse = {
         data: {
           content: string;
           conversationGuid: string;
@@ -48,7 +49,13 @@ export const chatCommand = new Command('chat')
             outputPreview?: string;
           }[];
         };
-      }>(endpoint, body);
+      };
+      // The agent can think for many seconds; animate the wait, then clear the
+      // spinner (done:null) so the reply itself is the result. JSON mode skips it.
+      const doChat = () => post<ChatResponse>(endpoint, body);
+      const res = opts.json
+        ? await doChat()
+        : await withSpinner('Thinking…', doChat, { done: null });
 
       // Save conversation guid for continuity. Skipped in one-off mode: the
       // config was resolved from the server's Home project and there is no
@@ -63,7 +70,10 @@ export const chatCommand = new Command('chat')
       let syncChanges: { path: string; type: string; size?: number }[] = [];
 
       if (res.data.filesChanged) {
-        const syncResult = await sync({ interactive: false });
+        const syncResult = await sync({
+          interactive: false,
+          progress: opts.json ? undefined : createProgressReporter(),
+        });
         if (syncResult.applied > 0) {
           syncSummary = `\nSynced ${syncResult.applied} change${syncResult.applied > 1 ? 's' : ''}:\n${syncResult.summary}`;
         }

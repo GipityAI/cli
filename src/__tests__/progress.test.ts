@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createProgressReporter, type ProgressReporter } from '../progress.js';
+import { createProgressReporter, withSpinner, type ProgressReporter } from '../progress.js';
 
 /** Run `fn` with stdout's TTY flag forced and every write captured. */
 function capture(isTTY: boolean, fn: (r: ProgressReporter) => void): string {
@@ -93,5 +93,52 @@ describe('createProgressReporter', () => {
     assert.match(out, /Downloading/);
     assert.match(out, /Uploading/);
     assert.match(out, /30%/);
+  });
+});
+
+describe('spinner (indeterminate)', () => {
+  it('is a silent no-op off a TTY', () => {
+    const out = capture(false, (r) => { r.spinner('Working…').stop(); });
+    assert.equal(out, '');
+  });
+
+  it('draws the bouncing block on the same track as the bar, then a ✓ line', () => {
+    const out = capture(true, (r) => r.spinner('Deploying to dev…').succeed('Deployed to dev'));
+    assert.match(out, /Deploying to dev…/); // animated label
+    assert.match(out, /[█░]/);              // SAME track glyphs as transfer()
+    assert.match(out, /0s/);                // elapsed timer fights "looks hung"
+    assert.match(out, /✓/);                 // settles to success icon
+    assert.match(out, /Deployed to dev/);   // settle message
+    assert.match(out, /\n$/);               // line committed
+  });
+
+  it('settles to a ✗ line on fail()', () => {
+    const out = capture(true, (r) => r.spinner('Deploying…').fail('Deploy failed'));
+    assert.match(out, /✗/);
+    assert.match(out, /Deploy failed/);
+    assert.match(out, /\n$/);
+  });
+
+  it('stop() clears the row with no icon and no trailing newline', () => {
+    // The cleared row is left for the command's own result to overwrite, so it
+    // must NOT advance to a new line (which would strand a blank line).
+    const out = capture(true, (r) => r.spinner('Thinking…').stop());
+    assert.doesNotMatch(out, /[✓✗]/);
+    assert.match(out, /\x1b\[K$/);   // ends by clearing the row…
+    assert.doesNotMatch(out, /\n$/); // …not by advancing past it
+  });
+});
+
+describe('withSpinner', () => {
+  it('returns the operation result (silent pass-through off a TTY)', async () => {
+    const v = await withSpinner('Working…', async () => 42);
+    assert.equal(v, 42);
+  });
+
+  it('re-throws on failure so the caller still handles the error', async () => {
+    await assert.rejects(
+      withSpinner('Working…', async () => { throw new Error('boom'); }),
+      /boom/,
+    );
   });
 });

@@ -4,6 +4,7 @@ import { requireConfig } from '../config.js';
 import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
+import { withSpinner } from '../progress.js';
 
 // ── Status icons ───────────────────────────────────────────────────────
 
@@ -35,28 +36,32 @@ export const deployCommand = new Command('deploy')
       const config = requireConfig();
       await syncBeforeAction(opts);
 
-      // Call server - pipeline runs entirely server-side
-      const res = await post<{
-        data: {
-          fileCount: number;
-          totalBytes: number;
-          url: string;
-          target: string;
-          elapsedMs: number;
-          batch?: number;
-          phases?: Array<{ name: string; status: string; summary: string }>;
-          warning?: string;
-          customDomains?: string[];
-          skippedFiles?: string[];
-          examples?: string[];
-        };
-      }>(`/projects/${config.projectGuid}/deploy`, {
+      // Call server - the multi-phase pipeline runs entirely server-side, so
+      // this single POST can block for many seconds. Animate the spinner while
+      // we wait so it never reads as hung. JSON mode skips it (shares stdout).
+      type DeployData = {
+        fileCount: number;
+        totalBytes: number;
+        url: string;
+        target: string;
+        elapsedMs: number;
+        batch?: number;
+        phases?: Array<{ name: string; status: string; summary: string }>;
+        warning?: string;
+        customDomains?: string[];
+        skippedFiles?: string[];
+        examples?: string[];
+      };
+      const doDeploy = () => post<{ data: DeployData }>(`/projects/${config.projectGuid}/deploy`, {
         target,
         sourceDir: opts.sourceDir,
         optimize: opts.optimize,
         force: opts.force,
         only: opts.only?.split(',').map((s: string) => s.trim()),
       });
+      const res = opts.json
+        ? await doDeploy()
+        : await withSpinner(`Deploying to ${target}…`, doDeploy, { done: null });
 
       const d = res.data;
 

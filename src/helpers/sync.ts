@@ -4,6 +4,7 @@
 
 import { sync } from '../sync.js';
 import { muted, error as clrError } from '../colors.js';
+import { createProgressReporter } from '../progress.js';
 
 /**
  * Sync local files with the server before an action (deploy, test, scaffold).
@@ -15,7 +16,14 @@ import { muted, error as clrError } from '../colors.js';
  */
 export async function syncBeforeAction(opts: { sync?: boolean; json?: boolean; force?: boolean }): Promise<void> {
   if (opts.sync === false) return;
-  const result = await sync({ interactive: false, force: opts.force });
+  // Pass a progress reporter so a large pre-action upload shows the transfer
+  // bar instead of a silent pause (the reporter is a no-op on non-TTY / when
+  // piped, so JSON and headless output stay clean).
+  const result = await sync({
+    interactive: false,
+    force: opts.force,
+    progress: opts.json ? undefined : createProgressReporter(),
+  });
   if (result.applied > 0 && !opts.json) {
     console.log(muted(`Synced ${result.applied} change${result.applied > 1 ? 's' : ''}`));
   }

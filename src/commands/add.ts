@@ -7,6 +7,7 @@ import { requireConfig } from '../config.js';
 import { sync } from '../sync.js';
 import { success, muted, bold } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { createProgressReporter, withSpinner } from '../progress.js';
 
 // Catalog mirrored from platform/packages/shared (TEMPLATES + KITS) -
 // the CLI ships as a standalone npm package and can't depend on the private
@@ -223,10 +224,15 @@ export const addCommand = new Command('add')
       };
     }
 
-    const res = await post<{ data: AddResponse }>(`/projects/${config.projectGuid}/add`, body);
+    // The server runs the whole install pipeline before responding; animate the
+    // wait, then clear the spinner so the installed-files list is the result.
+    const doAdd = () => post<{ data: AddResponse }>(`/projects/${config.projectGuid}/add`, body);
+    const res = opts.json
+      ? await doAdd()
+      : await withSpinner('Installing…', doAdd, { done: null });
 
     // Pull the created/installed files down to local.
-    const syncResult = await sync({ interactive: false });
+    const syncResult = await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });
     const data = res.data;
 
     if (opts.json) {

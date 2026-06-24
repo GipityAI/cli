@@ -5,6 +5,7 @@ import { sync } from '../sync.js';
 import { success, muted } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { confirm } from '../utils.js';
+import { createProgressReporter, withSpinner } from '../progress.js';
 
 interface RemoveResponse {
   kind: 'kit';
@@ -28,10 +29,13 @@ export const removeCommand = new Command('remove')
       }
     }
 
-    const res = await post<{ data: RemoveResponse }>(`/projects/${config.projectGuid}/remove`, { name: kit });
+    const doRemove = () => post<{ data: RemoveResponse }>(`/projects/${config.projectGuid}/remove`, { name: kit });
+    const res = opts.json
+      ? await doRemove()
+      : await withSpinner('Removing…', doRemove, { done: null });
     // Force the pull so the kit's deletions land locally without tripping the
     // bulk-deletion guard - the removal is an explicit, user-invoked action.
-    const syncResult = await sync({ interactive: false, force: true });
+    const syncResult = await sync({ interactive: false, force: true, progress: opts.json ? undefined : createProgressReporter() });
     const data = res.data;
 
     if (opts.json) {

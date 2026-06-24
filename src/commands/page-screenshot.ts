@@ -6,6 +6,7 @@ import { getProjectRoot } from '../config.js';
 import { brand, bold, muted, success } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
+import { withSpinner } from '../progress.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number };
 
@@ -181,7 +182,13 @@ export const pageScreenshotCommand = new Command('screenshot')
       ...(opts.action ? { action: opts.action } : {}),
     };
 
-    const entries = await postForTarEntries('/tools/browser/screenshot', body);
+    // Load + render across viewports runs server-side and can take many
+    // seconds; animate the wait, then clear so the saved-files summary is the
+    // result. JSON mode skips the spinner (shares stdout).
+    const doShoot = () => postForTarEntries('/tools/browser/screenshot', body);
+    const entries = opts.json
+      ? await doShoot()
+      : await withSpinner('Capturing…', doShoot, { done: null });
 
     const metaEntry = entries.find((e) => e.name === 'meta.json');
     if (!metaEntry) throw new Error('Server response missing meta.json');
