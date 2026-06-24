@@ -13,7 +13,10 @@ sync-docs:
 
 # Build CLI (sync docs, compile TypeScript). No version bump — versions advance
 # at publish time only, so local builds/links don't dirty package.json with
-# numbers npm has never seen.
+# numbers npm has never seen. The npm `postbuild` hook stamps the git SHA into
+# the gitignored dist/build-info.json instead, so `gipity -v` shows a
+# `(dev <sha>)` marker telling you whether your linked binary is current —
+# without touching package.json or shipping in the published tarball.
 cli-build:
     just sync-docs && npm run build
 

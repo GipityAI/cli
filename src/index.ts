@@ -59,6 +59,23 @@ import { normalizeAliases } from './flag-aliases.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
 
+// Local builds stamp dist/build-info.json (git SHA + dirty flag) via the npm
+// `postbuild` hook, so `-v` can show whether the linked binary is your latest
+// code. It is intentionally absent from published installs: the npm `files`
+// allowlist ships only dist/**/*.js, so a released CLI prints a clean
+// `v1.0.398` with no dev marker. package.json `version` stays the source of
+// truth for the published release; this marker never touches it.
+function versionLabel(): string {
+  const base = `v${pkg.version}`;
+  try {
+    const info = JSON.parse(readFileSync(resolve(__dirname, 'build-info.json'), 'utf-8'));
+    if (info?.sha) return `${base} (dev ${info.sha}${info.dirty ? ', modified' : ''})`;
+  } catch {
+    // No build-info.json (published install or pre-build) → clean version.
+  }
+  return base;
+}
+
 // Custom -v/--version output: include auth status so agents know whether
 // the next CLI call will succeed. Intercepted before Commander parses,
 // because Commander's built-in `.version()` only prints a string and exits.
@@ -79,7 +96,7 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-
       authLine = `${success('Logged in')} as ${auth.email}`;
     }
     console.log('');
-    console.log(`${brand(bold('Gipity'))} ${muted(`v${pkg.version}`)}`);
+    console.log(`${brand(bold('Gipity'))} ${muted(versionLabel())}`);
     console.log(authLine);
     console.log('');
     process.exit(0);
@@ -160,7 +177,7 @@ program.configureHelp({
     const lines: string[] = [];
 
     lines.push('');
-    lines.push(`${brand(bold('Gipity CLI'))} ${muted(`v${pkg.version}`)}`);
+    lines.push(`${brand(bold('Gipity CLI'))} ${muted(versionLabel())}`);
     lines.push(dim(GIPITY_TAGLINE));
     lines.push(dim('Hosting, databases, deploys, workflows - one place. Pair with Claude Code or use standalone.'));
     lines.push(dim('Works with Claude Code, Codex, Aider, or any AI coding tool - no MCP server needed.'));
