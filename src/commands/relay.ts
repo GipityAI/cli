@@ -8,17 +8,98 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { spawn } from 'child_process';
-import { post } from '../api.js';
+import { post, ApiError } from '../api.js';
 import { confirm } from '../utils.js';
 import {
-  bold, brand, success, error as clrError, muted,
+  bold, brand, dim, success, error as clrError, muted,
 } from '../colors.js';
 import * as state from '../relay/state.js';
 import * as daemon from '../relay/daemon.js';
+import { UnsupportedPlatformError } from '../relay/installers.js';
+import { pairDevice, startDaemon, installAutostart } from '../relay/setup.js';
 import { registerInstallCommands } from './relay-install.js';
 
 export const relayCommand = new Command('relay')
   .description('Pair with the web CLI');
+
+// ─── gipity relay setup ────────────────────────────────────────────────
+// Non-interactive pair + (optionally) start + autostart, for installers and
+// GUIs (e.g. the desktop onboarding client) that can't drive prompts. The
+// interactive equivalent is the first-run block in `gipity claude`.
+
+relayCommand
+  .command('setup')
+  .description('Pair this machine and start the relay - non-interactive (for installers/GUIs)')
+  .option('--name <name>', 'Device name shown in the web CLI (default: this machine\'s hostname)')
+  .option('--no-start', 'Pair only; do not start the relay daemon now')
+  .option('--no-autostart', 'Skip the OS login service (use when a supervising app owns the daemon)')
+  .option('--force', 'Re-pair even if already paired (revokes the old device first)')
+  .option('--json', 'Machine-readable output')
+  .action(async (opts: { name?: string; start: boolean; autostart: boolean; force?: boolean; json?: boolean }) => {
+    const fail = (code: string, message: string): never => {
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: false, code, error: message }));
+      } else {
+        console.error(clrError(message));
+        if (code === 'not_authenticated') console.error(muted('Run `gipity login` first.'));
+      }
+      process.exit(1);
+    };
+
+    // 1. Pair (idempotent unless --force).
+    let device;
+    try {
+      device = await pairDevice({ name: opts.name, force: opts.force });
+    } catch (err: any) {
+      if (err instanceof ApiError && err.statusCode === 401) {
+        return fail('not_authenticated', 'Not logged in - cannot pair this machine.');
+      }
+      return fail('pair_failed', `Could not pair: ${err?.message || err}`);
+    }
+
+    // 2. Start the daemon now (unless --no-start).
+    let daemonStarted = false;
+    if (opts.start) {
+      startDaemon();
+      daemonStarted = true;
+    }
+
+    // 3. Install OS autostart (unless --no-autostart). Option B desktop clients
+    //    pass --no-autostart because the app itself supervises `relay run`.
+    const autostart = { requested: opts.autostart, installed: false, supported: true, summary: '' };
+    if (opts.autostart) {
+      try {
+        const res = installAutostart();
+        autostart.installed = res.ok;
+        autostart.summary = res.summary;
+      } catch (err) {
+        if (err instanceof UnsupportedPlatformError) {
+          autostart.supported = false;
+        } else {
+          return fail('autostart_failed', `Autostart install failed: ${(err as any)?.message || err}`);
+        }
+      }
+    }
+
+    // 4. Report.
+    if (opts.json) {
+      console.log(JSON.stringify({
+        ok: true,
+        device: { guid: device.guid, name: device.name, platform: device.platform, reused: device.reused },
+        daemon_started: daemonStarted,
+        autostart,
+      }));
+      return;
+    }
+    console.log(success(`${device.reused ? 'Already paired' : 'Paired'} as ${bold(device.name)} ${muted(`(${device.guid})`)}.`));
+    if (daemonStarted) console.log(success('Relay started.'));
+    if (autostart.requested) {
+      if (!autostart.supported) console.log(muted(`Auto-start not supported on ${process.platform}; skipped.`));
+      else if (autostart.installed) console.log(`${success('Auto-start installed.')} ${dim(autostart.summary)}`);
+      else console.log(muted('Auto-start enable returned non-zero - retry with `gipity relay install`.'));
+    }
+    console.log(dim('In the Gipity web CLI, type `/claude` to dispatch messages to this machine.'));
+  });
 
 // ─── gipity relay status ───────────────────────────────────────────────
 
@@ -30,10 +111,13 @@ relayCommand
     const s = state.loadState();
 
     if (opts.json) {
-      // Redact the token - no reason for scripts to see it.
+      // Redact the token - no reason for scripts to see it. `daemon_running`
+      // lets a supervising app (the desktop client) poll liveness and decide
+      // whether to (re)spawn `relay run` without parsing the PID file itself.
       const safe = {
         ...s,
         device: s.device ? { ...s.device, token: '***' } : null,
+        daemon_running: state.isDaemonRunning(),
       };
       console.log(JSON.stringify(safe, null, 2));
       return;
@@ -47,6 +131,7 @@ relayCommand
     console.log(`${bold('Platform:')}    ${s.device.platform}`);
     console.log(`${bold('Paired:')}      ${s.device.paired_at}`);
     console.log(`${bold('Paused:')}      ${s.paused ? 'yes' : 'no'}`);
+    console.log(`${bold('Running:')}     ${state.isDaemonRunning() ? 'yes' : 'no'}`);
   });
 
 // ─── gipity relay run ──────────────────────────────────────────────────

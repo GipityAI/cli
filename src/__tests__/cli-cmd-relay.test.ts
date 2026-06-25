@@ -95,6 +95,79 @@ test('gipity relay revoke --yes posts revoke + clears local state', async () => 
   assert.equal(state.device, null);
 });
 
+test('gipity relay setup (fresh) creates a device and writes local state', async () => {
+  mock.reset();
+  mock.on('POST /remote-devices', { body: { data: {
+    short_guid: 'rd_New01', name: 'CI Box', platform: 'linux', token: 'tok-new',
+  } } });
+  const home = makeAuthedHome();
+  // --no-start / --no-autostart keep the test hermetic (no detached daemon, no
+  // launchctl/systemctl) - and mirror how the Option-B desktop client calls it.
+  const r = await run(['relay', 'setup', '--name', 'CI Box', '--no-start', '--no-autostart', '--json'], home);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.device.guid, 'rd_New01');
+  assert.equal(parsed.device.reused, false);
+  assert.equal(parsed.daemon_started, false);
+  const state = JSON.parse(readFileSync(join(home, '.gipity', 'relay.json'), 'utf-8'));
+  assert.equal(state.device.guid, 'rd_New01');
+  assert.equal(state.device.token, 'tok-new');
+  assert.equal(state.relay_enabled, true);
+});
+
+test('gipity relay setup (already paired) is idempotent and makes no server call', async () => {
+  mock.reset(); // no /remote-devices handler registered → a POST would 404
+  const home = pairedHome();
+  const r = await run(['relay', 'setup', '--no-start', '--no-autostart', '--json'], home);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.device.reused, true);
+  assert.equal(parsed.device.guid, 'rd_TestDev01');
+  // Idempotent path must not hit the create endpoint.
+  assert.equal(mock.requests().some(q => q.method === 'POST' && q.url === '/remote-devices'), false);
+});
+
+test('gipity relay setup --force revokes the old device then re-pairs', async () => {
+  mock.reset();
+  mock.on('POST /remote-devices/rd_TestDev01/revoke', { body: { data: { revoked: true } } });
+  mock.on('POST /remote-devices', { body: { data: {
+    short_guid: 'rd_Fresh02', name: 'My Mac', platform: 'linux', token: 'tok-fresh',
+  } } });
+  const home = pairedHome();
+  const r = await run(['relay', 'setup', '--force', '--no-start', '--no-autostart', '--json'], home);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.device.guid, 'rd_Fresh02');
+  assert.equal(parsed.device.reused, false);
+  // The old device must have been revoked server-side before re-pairing.
+  const reqs = mock.requests();
+  assert.ok(reqs.some(q => q.method === 'POST' && q.url === '/remote-devices/rd_TestDev01/revoke'));
+  const state = JSON.parse(readFileSync(join(home, '.gipity', 'relay.json'), 'utf-8'));
+  assert.equal(state.device.guid, 'rd_Fresh02');
+});
+
+test('gipity relay setup --json surfaces a 401 as a not_authenticated error', async () => {
+  mock.reset();
+  mock.on('POST /remote-devices', { status: 401, body: { error: { code: 'UNAUTHENTICATED', message: 'expired' } } });
+  const home = makeAuthedHome();
+  const r = await run(['relay', 'setup', '--no-start', '--no-autostart', '--json'], home);
+  assert.equal(r.status, 1);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.code, 'not_authenticated');
+});
+
+test('gipity relay status --json reports daemon_running', async () => {
+  const home = pairedHome();
+  const r = await run(['relay', 'status', '--json'], home);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  // No daemon spawned in the test home, so it must be a literal false (not undefined).
+  assert.equal(parsed.daemon_running, false);
+});
+
 test('gipity relay log prints last lines when log file exists', async () => {
   const home = pairedHome();
   // The daemon log path is under ~/.gipity/. Pre-seed it.

@@ -10,11 +10,13 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-test('gipity doctor prints shim version + auto-update state', async () => {
+test('gipity doctor prints the environment block + shim version + auto-update state', async () => {
   const home = mkdtempSync(join(tmpdir(), 'gipity-doctor-'));
   const r = await runCliAsync(['doctor'], { env: { HOME: home } });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Gipity CLI - doctor/);
+  assert.match(r.stdout, /Gipity - doctor/);
+  assert.match(r.stdout, /Environment/);   // env probe (node / login / claude / relay)
+  assert.match(r.stdout, /relay\s+/);
   assert.match(r.stdout, /shim version/);
   assert.match(r.stdout, /auto-updates/);
   assert.doesNotMatch(r.stdout, /undefined/);

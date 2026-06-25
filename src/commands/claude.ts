@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { join, dirname, resolve, basename } from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from 'fs';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { resolveCommand } from '../platform.js';
@@ -31,6 +31,7 @@ import {
   adoptCurrentDir,
   ADOPT_THRESHOLDS,
 } from '../adopt-cwd.js';
+import { isClaudeInstalled, ensureClaudeInstalled, CLAUDE_PACKAGE } from '../claude-setup.js';
 
 const __clDir = dirname(fileURLToPath(import.meta.url));
 const __clPkg = JSON.parse(readFileSync(resolve(__clDir, '../../package.json'), 'utf-8'));
@@ -290,6 +291,20 @@ export const claudeCommand = new Command('claude')
       // a human at the terminal. Requires an existing .gipity.json - we
       // can't interactively pick or create a project in this mode.
       const rawArgs = process.argv.slice(process.argv.indexOf('claude') + 1);
+
+      // `gipity claude install` - explicit, GUI-callable Claude Code install.
+      // Handled here (leading positional) rather than as a Commander subcommand
+      // because this command uses allowUnknownOption/allowExcessArguments to
+      // pass everything through to `claude`; a real subcommand would risk that
+      // passthrough (which the relay daemon's `gipity claude -p` depends on).
+      if (rawArgs[0] === 'install') {
+        const r = ensureClaudeInstalled({ force: rawArgs.includes('--force') });
+        if (r.alreadyPresent) console.log(`  ${success('Claude Code already installed.')}`);
+        else if (r.installed) console.log(`  ${success('Claude Code installed.')}`);
+        else console.log(`  ${clrError('Could not install Claude Code.')} Install manually: npm install -g ${CLAUDE_PACKAGE}`);
+        process.exit(r.installed ? 0 : 1);
+      }
+
       const nonInteractive = rawArgs.some(a => a === '-p' || a === '--print' || a.startsWith('--print=') || a.startsWith('-p='));
 
       // Headless progress emitter: routes to stderr (stdout stays clean for
@@ -673,14 +688,18 @@ export const claudeCommand = new Command('claude')
         return;
       }
 
-      // Check claude is installed
-      try {
-        const checkCmd = process.platform === 'win32' ? 'where claude' : 'which claude';
-        execSync(checkCmd, { stdio: 'ignore' });
-      } catch {
-        console.log('  Claude Code not found. Install it: npm install -g @anthropic-ai/claude-code');
-        console.log(`  Then: cd ${process.cwd()} && claude`);
-        return;
+      // Ensure Claude Code is installed - install it ourselves if missing so a
+      // GUI/installer (and terminal users) get it for free, rather than being
+      // told to run npm by hand.
+      if (!isClaudeInstalled()) {
+        console.log('  Claude Code not found - installing it now...');
+        const r = ensureClaudeInstalled();
+        if (!r.installed) {
+          console.log(`  ${clrError('Could not install Claude Code.')} Install manually: npm install -g ${CLAUDE_PACKAGE}`);
+          console.log(`  Then: cd ${process.cwd()} && claude`);
+          return;
+        }
+        console.log(`  ${success('Claude Code installed.')}`);
       }
 
       // Ensure the Gipity plugin is actually installed at user scope (not just

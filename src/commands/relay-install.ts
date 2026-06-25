@@ -8,13 +8,11 @@
  * parent `relay` command passes itself in via `registerInstallCommands`.
  */
 import { Command } from 'commander';
-import { spawnSync } from 'child_process';
-import { resolve, dirname } from 'path';
-import { mkdirSync, writeFileSync } from 'fs';
 import { confirm } from '../utils.js';
 import { bold, dim, success, error as clrError, muted, info } from '../colors.js';
 import * as state from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
+import { installAutostart, removeAutostart, resolveCliPath } from '../relay/setup.js';
 
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
@@ -25,28 +23,6 @@ function requirePaired(): state.RelayDevice {
   return device;
 }
 
-/** Absolute path to the currently-running `gipity` CLI. Embedded in the
- *  service unit so the launchd/systemd/Task Scheduler entry re-launches
- *  the same binary even if PATH changes. */
-function resolveCliPath(): string {
-  return resolve(process.argv[1] ?? 'gipity');
-}
-
-/** Run a sequence of argv commands directly (no shell). Returns true if all
- *  succeeded. Spawns each command's stdio inherited so the user sees the
- *  service manager's output verbatim. */
-function runArgvSequence(cmds: string[][], { failFast }: { failFast: boolean }): boolean {
-  let allOk = true;
-  for (const argv of cmds) {
-    const r = spawnSync(argv[0], argv.slice(1), { stdio: 'inherit' });
-    if (r.status !== 0) {
-      allOk = false;
-      if (failFast) return false;
-    }
-  }
-  return allOk;
-}
-
 export function registerInstallCommands(relayCommand: Command): void {
   relayCommand
     .command('install')
@@ -54,9 +30,8 @@ export function registerInstallCommands(relayCommand: Command): void {
     .option('--print', 'Print the service-unit file and the commands, but don\'t run them')
     .action(async (opts: { print?: boolean }) => {
       requirePaired();
-      const cliPath = resolveCliPath();
       let plan;
-      try { plan = planFor({ cliPath }); }
+      try { plan = planFor({ cliPath: resolveCliPath() }); }
       catch (err) {
         if (err instanceof UnsupportedPlatformError) {
           console.error(clrError(err.message));
@@ -82,11 +57,11 @@ export function registerInstallCommands(relayCommand: Command): void {
         return;
       }
 
-      mkdirSync(dirname(plan.path), { recursive: true });
-      writeFileSync(plan.path, plan.content);
-      console.log(success(`Wrote ${plan.path}`));
-
-      if (!runArgvSequence(plan.enableCmds, { failFast: true })) {
+      // Shared helper writes the unit + runs the enable commands; `inherit`
+      // surfaces launchctl/systemctl/schtasks output for this interactive path.
+      const res = installAutostart({ stdio: 'inherit' });
+      console.log(success(`Wrote ${res.path}`));
+      if (!res.ok) {
         console.error(clrError(`Couldn't enable autostart. Try manually: ${plan.enableDisplay}`));
         process.exit(1);
       }
@@ -104,22 +79,25 @@ export function registerInstallCommands(relayCommand: Command): void {
         console.error(clrError('Usage: gipity relay autostart <on|off>'));
         process.exit(1);
       }
-      let plan;
-      try { plan = planFor({ cliPath: resolveCliPath() }); }
-      catch (err) {
+      try {
+        if (want === 'on') {
+          const plan = planFor({ cliPath: resolveCliPath() });
+          console.log(`${info('Running:')} ${dim(plan.enableDisplay)}`);
+          const res = installAutostart({ stdio: 'inherit' });
+          if (!res.ok) {
+            console.error(clrError('Command failed.'));
+            process.exit(1);
+          }
+        } else {
+          // Disable is best-effort - the task may already be stopped.
+          const { plan } = removeAutostart({ stdio: 'inherit' });
+          console.log(`${info('Running:')} ${dim(plan.disableDisplay)}`);
+        }
+      } catch (err) {
         if (err instanceof UnsupportedPlatformError) {
           console.error(clrError(err.message));
           process.exit(1);
         } else throw err;
-      }
-      const cmds = want === 'on' ? plan.enableCmds : plan.disableCmds;
-      const display = want === 'on' ? plan.enableDisplay : plan.disableDisplay;
-      console.log(`${info('Running:')} ${dim(display)}`);
-      // Disable is best-effort (the task may already be stopped); enable is fail-fast.
-      const ok = runArgvSequence(cmds, { failFast: want === 'on' });
-      if (!ok && want === 'on') {
-        console.error(clrError('Command failed.'));
-        process.exit(1);
       }
       console.log(success(`Autostart ${want}.`));
     });
