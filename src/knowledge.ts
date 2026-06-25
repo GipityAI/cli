@@ -22,6 +22,7 @@ Templates:
     - \`api\` - Backend service, webhook, data pipeline, chatbot, cron job - no frontend
     - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
     - \`outreach-agent\` - AI outreach / drip-email funnel - reach a list of people with personalized, human-approved emails that auto-send on a schedule and a self-improving agent that learns from your edits
+    - \`paid-app\` - App that charges users money - SaaS subscription, paid membership, digital product store, "Pro" upgrade, paywalled content (Stripe one-time + subscriptions)
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
 Only skip this on a build request if the user explicitly says not to.
 
@@ -39,7 +40,8 @@ Kits are reusable building blocks added to an existing app, not whole templates 
     - \`gipity add records\` - Registry-driven records: declare objects/fields as data, get generic CRUD functions with validation, full-text search, soft delete, ACTOR provenance, and an audit event spine - every write is transactional (row + event). Field types include relations ({id,label}), currency, emails/phones/links composites. Ships backend functions + migrations. Needs a database (web-fullstack/api template).
     - \`gipity add views\` - Generic UI over records-kit objects: sortable/filterable table with full-text search, create/edit/delete forms with type-appropriate widgets, kanban board with drag-to-update. Renders entirely from the field registry - zero per-object UI code. Requires the records kit.
     - \`gipity add agent-api\` - Make your app agent-operable: named API keys (kit_api_keys) let agents and scripts write through the records kit's single write path with AGENT/API actor attribution - machine writes land on the same audit spine as human edits. Requires the records kit.
-    - \`gipity add contacts\` - Source-agnostic contact data layer for lead-gen/CRM apps: import people from LinkedIn CSV + Gmail + pasted lists, resolve duplicates into one person while keeping EVERY value from every source with provenance (multi-valued attributes, never overwrites). Exact email/URL auto-merge; fuzzy name+company goes to a human merge-review queue (reversible). Re-imports detect job changes and emit signals. User-definable tags, full-text search, and a transactional event spine. Ships backend functions + migrations. Needs a database (web-fullstack/api template).`;
+    - \`gipity add contacts\` - Source-agnostic contact data layer for lead-gen/CRM apps: import people from LinkedIn CSV + Gmail + pasted lists, resolve duplicates into one person while keeping EVERY value from every source with provenance (multi-valued attributes, never overwrites). Exact email/URL auto-merge; fuzzy name+company goes to a human merge-review queue (reversible). Re-imports detect job changes and emit signals. User-definable tags, full-text search, and a transactional event spine. Ships backend functions + migrations. Needs a database (web-fullstack/api template).
+    - \`gipity add stripe\` - Charge your app's end-users for one-time purchases and subscriptions via Stripe. Owner connects their own Stripe account through Gipity-hosted onboarding (no API keys to paste); money lands in their account, Gipity takes a small platform fee. Ships a buy-button / pricing component, a subscription-status helper for gating UI, a webhook-verified fulfillment function, and the payments/subscriptions tables. The platform brokers checkout + signature-verified webhooks. Needs a database (web-fullstack/api template).`;
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
@@ -132,6 +134,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-image\` - text-to-image only (no input image / editing); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
+- \`app-payments\` - charge end-users real money - Stripe one-time purchases & subscriptions, via the stripe kit (gipity add stripe)
 - \`app-realtime\` - Gipity Realtime rooms, relay vs state
 - \`app-tts\` - voices, multi-speaker, languages
 - \`app-video\` - Gipity Video: models, aspect, resolution
