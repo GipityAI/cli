@@ -26,6 +26,7 @@ export const FLAG_ALIASES: Record<string, string> = {
   '--ratio': '--aspect-ratio',
   '--res': '--resolution',
   '--desc': '--description',
+  '--body': '--data',
   '--src': '--source-dir',
   '--srcdir': '--source-dir',
   '--parallel': '--concurrency',

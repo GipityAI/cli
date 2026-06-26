@@ -10,6 +10,9 @@ function buildProgram(): Command {
   program.command('logs').option('--since <when>', 'start time');
   const wf = program.command('workflow');
   wf.command('create').requiredOption('--from <path>', 'yaml path');
+  const fn = program.command('fn');
+  fn.command('call <name> [body]').option('--data <json>', 'request body');
+  program.command('email').command('send').requiredOption('--body <body>', 'email body');
   return program;
 }
 
@@ -88,6 +91,22 @@ describe('normalizeAliases', () => {
       assert.deepEqual(
         normalizeAliases(['node', 'gipity', 'logs', '--from', '1h'], program),
         ['node', 'gipity', 'logs', '--since', '1h'],
+      );
+    });
+
+    it('aliases the HTTP-convention --body to --data on fn call', () => {
+      const program = buildProgram();
+      assert.deepEqual(
+        normalizeAliases(['node', 'gipity', 'fn', 'call', 'smart-tracks', '--body', '{"x":1}'], program),
+        ['node', 'gipity', 'fn', 'call', 'smart-tracks', '--data', '{"x":1}'],
+      );
+    });
+
+    it('leaves --body alone for email send, which declares it for real', () => {
+      const program = buildProgram();
+      assert.deepEqual(
+        normalizeAliases(['node', 'gipity', 'email', 'send', '--body', 'hello'], program),
+        ['node', 'gipity', 'email', 'send', '--body', 'hello'],
       );
     });
   });

@@ -238,16 +238,47 @@ function fullCommandName(cmd: Command): string {
   for (let c: Command | null = cmd; c; c = c.parent) parts.unshift(c.name());
   return parts.join(' ');
 }
+// Resolve the deepest (sub)command the user actually targeted by walking the
+// command tree against the leading positional tokens of argv (skipping flags,
+// and a root value-option's value). Used at error time to render the RIGHT
+// command's help — see enableHelpAfterError below for why we can't just capture
+// the command in a closure.
+function resolveTargetCommand(argv: string[]): Command {
+  const args = argv.slice(2);
+  const rootValueFlags = new Set(
+    program.options.filter(o => o.long && o.required).map(o => o.long as string),
+  );
+  let cmd: Command = program;
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok.startsWith('-')) {
+      if (!tok.includes('=') && rootValueFlags.has(tok)) i++; // consume its value
+      continue;
+    }
+    const next = cmd.commands.find(c => c.name() === tok || c.aliases().includes(tok));
+    if (!next) break; // first non-subcommand operand ends the command chain
+    cmd = next;
+  }
+  return cmd;
+}
 function enableHelpAfterError(cmd: Command): void {
   cmd.configureOutput({
-    // Commander calls this on the offending (sub)command. We render that exact
-    // command's full help (via outputHelp, so addHelpText blocks are included)
-    // FIRST, then write the one-line error LAST. Both go to the same writeErr
-    // stream synchronously, so the order holds. We do NOT call
+    // Render the offending command's full help (via outputHelp, so addHelpText
+    // blocks are included) FIRST, then the one-line error LAST. Both go to the
+    // same writeErr stream synchronously, so the order holds. We do NOT call
     // showHelpAfterError - that would render help a second time, before the error.
+    //
+    // We must resolve the target command from argv rather than capturing `cmd`
+    // here: commander shares ONE _outputConfiguration object across a command
+    // and all its subcommands (copyInheritedSettings copies it by reference, and
+    // configureOutput mutates it in place). So every subcommand's closure would
+    // clobber its siblings', leaving only the last-registered subcommand's — and
+    // an unknown option on `fn call` would print `fn delete`'s help. Installing
+    // one identical, self-resolving handler everywhere sidesteps the clobber.
     outputError: (str, write) => {
-      write(`Showing \`${fullCommandName(cmd)} --help\`:\n\n`);
-      cmd.outputHelp({ error: true });
+      const target = resolveTargetCommand(process.argv);
+      write(`Showing \`${fullCommandName(target)} --help\`:\n\n`);
+      target.outputHelp({ error: true });
       write(`\n${str.replace(/\n+$/, '')}\n`);
     },
   });

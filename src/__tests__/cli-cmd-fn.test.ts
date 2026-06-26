@@ -70,6 +70,29 @@ test('gipity fn call --field exits 1 on a missing path', async () => {
   assert.match(r.stderr, /Field not found/);
 });
 
+test('gipity fn call --body is accepted as an alias for --data', async () => {
+  mock.reset();
+  mock.on('POST /api/p_TestProj/fn/hello', { body: { data: { greeting: 'Hello!' } } });
+  const r = await fresh(['fn', 'call', 'hello', '--body', '{"name":"world"}']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Hello/);
+  const reqs = mock.requests();
+  const post = reqs.find(q => q.method === 'POST' && q.url === '/api/p_TestProj/fn/hello');
+  assert.ok(post, 'expected the call to POST');
+  assert.deepEqual(post!.body, { name: 'world' });
+});
+
+test('an unknown option on fn call shows fn call help, not a sibling subcommand', async () => {
+  mock.reset();
+  const r = await fresh(['fn', 'call', 'hello', '--bogus']);
+  assert.notEqual(r.status, 0);
+  // The bug: commander shares one output config across sibling subcommands, so
+  // the help block used to be the LAST-registered sibling (`fn delete`).
+  assert.match(r.stderr, /Showing `gipity fn call --help`/);
+  assert.doesNotMatch(r.stderr, /gipity fn delete --help/);
+  assert.match(r.stderr, /unknown option '--bogus'/);
+});
+
 test('gipity fn delete <name> --yes DELETEs the function', async () => {
   mock.reset();
   mock.on('DELETE /projects/p_TestProj/functions/hello', { body: { data: { name: 'hello', deleted: true } } });
