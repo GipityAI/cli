@@ -172,6 +172,7 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
+  .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
     // A JS-intent flag guess (captured as a hidden decoy below): redirect to the
@@ -232,6 +233,7 @@ export const pageEvalCommand = new Command('eval')
         url, expr: sentExpr, waitMs,
         waitForSelector: opts.waitFor || undefined,
         waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
+        auth: opts.auth || undefined,
       });
       const d = await pollEvalResult(kickoff.data.evalJobId, waitMs);
       const { result, noValue } = normalizeEvalResult(d.result);

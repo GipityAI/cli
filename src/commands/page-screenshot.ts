@@ -142,6 +142,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
+  .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
   // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
@@ -179,6 +180,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
       ...(opts.fakeMedia ? { fakeMedia: true } : {}),
+      ...(opts.auth ? { auth: true } : {}),
       ...(opts.action ? { action: opts.action } : {}),
     };
 

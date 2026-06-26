@@ -67,6 +67,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps run headlessly (audio is a built-in tone, not real speech)')
+  .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
   // an image here (`page screenshot` is the single path for that) — just point there.
   .addOption(new Option('--screenshot [path]', 'Capture a screenshot').hideHelp())
@@ -88,6 +89,7 @@ export const pageInspectCommand = new Command('inspect')
       waitForSelector: opts.waitFor || undefined,
       waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
       fakeMedia: opts.fakeMedia || undefined,
+      auth: opts.auth || undefined,
     };
 
     const res = await post<{ data: DebugBundle }>(`/tools/browser/inspect`, inspectBody);
