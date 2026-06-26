@@ -14,6 +14,7 @@ import {
   DEFAULT_API_BASE,
   type GipityConfig,
 } from '../config.js';
+import { DEFAULT_SYNC_IGNORE } from '../setup.js';
 
 describe('shouldIgnore', () => {
   const patterns = ['node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '*.log'];
@@ -74,6 +75,38 @@ describe('shouldIgnore', () => {
     const p = ['*.log', '!keep.log'];
     assert.equal(shouldIgnore('app.log', p), true);
     assert.equal(shouldIgnore('keep.log', p), false);
+  });
+});
+
+// The scratch convention: ephemeral work (conversions, intermediate output)
+// must never sync or deploy. DEFAULT_SYNC_IGNORE mirrors the sandbox's
+// isEphemeralSandboxPath denylist (server/.../sandbox/no-persist.ts) so the same
+// dirs are throwaway everywhere. This guards against a regression where loose
+// scratch (the `_vsd_tmp/`/`out/`-style dirs that bloated past deploys) leaks
+// back into sync. Keep SCRATCH_IGNORE in lockstep with no-persist.ts.
+describe('scratch namespaces are sync-ignored by default', () => {
+  for (const dir of ['tmp', '.tmp', '.gipityscratch']) {
+    it(`ignores ${dir}/ and its contents`, () => {
+      assert.equal(shouldIgnore(`${dir}/intermediate.bin`, DEFAULT_SYNC_IGNORE), true);
+      assert.equal(shouldIgnore(`${dir}/in/diagram.vsd`, DEFAULT_SYNC_IGNORE), true);
+    });
+  }
+
+  it('ignores any *_tmp/ working dir (the Streamload _vsd_tmp/_convert_tmp case)', () => {
+    assert.equal(shouldIgnore('_vsd_tmp/in/diagram.vsd', DEFAULT_SYNC_IGNORE), true);
+    assert.equal(shouldIgnore('_convert_tmp/deck.ppt', DEFAULT_SYNC_IGNORE), true);
+    assert.equal(shouldIgnore('build_tmp/out.o', DEFAULT_SYNC_IGNORE), true);
+  });
+
+  it('does NOT ignore the keep-but-do-not-ship and app buckets', () => {
+    // docs/ (reference) and src/ (app) sync and version normally.
+    assert.equal(shouldIgnore('docs/architecture.png', DEFAULT_SYNC_IGNORE), false);
+    assert.equal(shouldIgnore('src/index.html', DEFAULT_SYNC_IGNORE), false);
+    // A real file that merely ends in "template" must not trip the *_tmp/ glob.
+    assert.equal(shouldIgnore('src/my_template.html', DEFAULT_SYNC_IGNORE), false);
+    // A loose output dir is intentionally NOT scratch - it syncs (the doc tells
+    // agents to move it to docs/ or tmp/, but the matcher must not silently eat it).
+    assert.equal(shouldIgnore('out/report.pdf', DEFAULT_SYNC_IGNORE), false);
   });
 });
 

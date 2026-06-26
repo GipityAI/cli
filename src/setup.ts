@@ -43,8 +43,24 @@ export const PRIMER_FILES = {
  *  AGENTS.md - a per-workstation artifact like the primers, never synced. */
 export const AIDER_CONF_FILE = '.aider.conf.yml';
 
+/** Project-local scratch namespaces: file conversions, intermediate outputs,
+ *  design staging - work the agent wants on disk but should never sync or
+ *  deploy. These MUST mirror the sandbox's `isEphemeralSandboxPath` denylist
+ *  (`platform/server/src/services/sandbox/no-persist.ts`) so the same dirs are
+ *  treated as throwaway everywhere: a sandbox run refuses to persist them, and
+ *  `gipity sync`/deploy refuses to upload them. Keeping the two in lockstep is
+ *  what makes scratch coherent across the platform - update both together.
+ *  `tmp/` is the one we teach agents to use (see knowledge.ts "Files and sync");
+ *  `*_tmp/` and `.gipityscratch/` are caught defensively so legacy/scattered
+ *  scratch (the `_vsd_tmp/`/`_convert_tmp/` dirs that bloated past deploys)
+ *  can't leak in either. Reference material to KEEP (diagrams, decks, ADRs) goes
+ *  in `docs/` instead - synced and versioned, but outside `src/` so it's never
+ *  deployed. Gitignore-glob form, matched by the `ignore` package in config.ts. */
+export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', '.gipityscratch/'];
+
 export const DEFAULT_SYNC_IGNORE = [
   'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', AIDER_CONF_FILE,
+  ...SCRATCH_IGNORE,
   ...new Set(Object.values(PRIMER_FILES)),
 ];
 
@@ -507,7 +523,9 @@ export const DEFAULT_TOOLS = SUPPORTED_TOOLS.filter(t => !t.optIn);
 
 export function setupGitignore(): void {
   const gitignorePath = resolve(process.cwd(), '.gitignore');
-  const entries = ['.gipity/', '.gipity.json'];
+  // Sync already skips the scratch namespaces (DEFAULT_SYNC_IGNORE); ignore them
+  // in git too so ephemeral conversion/staging work never gets committed.
+  const entries = ['.gipity/', '.gipity.json', ...SCRATCH_IGNORE];
 
   if (existsSync(gitignorePath)) {
     let content = readFileSync(gitignorePath, 'utf-8');
