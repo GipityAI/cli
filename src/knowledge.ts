@@ -123,19 +123,6 @@ Write files locally - the Gipity Claude Code plugin's hooks auto-push every save
 
 To keep local-only material (research clones, scratch data, vendored references) in the project directory without syncing or deploying it, list it in a \`.gipityignore\` at the project root - gitignore-style, one pattern per line, \`#\` comments. Ignored paths are invisible to sync in both directions; anything that already synced before being ignored stays on the server until you delete it.
 
-### Where files go: deploy only ships \`src/\`
-
-Deploy is opt-in, not opt-out: the \`files\` phase uploads **only** what's under \`src/\` (plus \`functions/\` and \`migrations/\` as backend, not CDN files). Anything else at the project root is kept but never deployed. Put each kind of file in the right bucket so scratch and reference material can't bloat a deploy:
-
-- **\`src/\`** - the app itself. Synced **and** deployed to the CDN. Only app code, assets, and pages belong here.
-- **\`tmp/\`** - ephemeral scratch: file conversions, intermediate outputs, design staging. **Already ignored** (never synced, never deployed) - the one place to do throwaway work. Use this single root. (\`*_tmp/\` dirs and \`.gipityscratch/\` are auto-ignored too, as a safety net, so legacy scattered scratch like \`_vsd_tmp/\` can't leak - but write new scratch to \`tmp/\`, not scattered dirs.)
-- **\`docs/\`** - reference material you want to keep: UI/architecture diagrams, design decks, notes, ADRs. Synced and versioned on the server (backed up, rollback-able) but **never deployed**, because it's outside \`src/\`. This is the home for "keep forever, don't ship" artifacts.
-- **\`tests/\`** - \`*.test.js\` suites. Synced, run by \`gipity test\`, never deployed.
-
-Rule of thumb: shipping to users → \`src/\`; keep as reference → \`docs/\`; throwaway → \`tmp/\`.
-
-Watch for **bulky output dirs dropped loose at the root** (e.g. \`out/\`, \`vsd_out/\`, \`renders/\`). Unlike scratch, those are NOT ignored - they sync on every push and re-hash on every deploy, which is the classic cause of a slow, bloated deploy. Move them into \`docs/\` if you want to keep them or \`tmp/\` if they're disposable.
-
 ## Skills (detailed documentation)
 
 Run \`gipity skill list\` to see every skill. Run \`gipity skill read <name>\` to read one. Load the relevant skill before starting a task - they have the correct API patterns, code examples, and common mistakes.
