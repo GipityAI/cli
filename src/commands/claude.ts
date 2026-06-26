@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { resolveCommand } from '../platform.js';
-import { getAuth, saveAuth, sessionExpired, type AuthData } from '../auth.js';
+import { getAuth, saveAuth, sessionExpired, accessTokenExpired, refreshTokenIfNeeded, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync, type SyncResult } from '../sync.js';
@@ -353,11 +353,38 @@ export const claudeCommand = new Command('claude')
         printBanner({ version: __clPkg.version, email: auth?.email, cwd: process.cwd() });
       }
 
-      if (auth && sessionExpired()) {
-        // The cached auth.json exists but its refresh token has lapsed, so the
-        // first API call below would 401 anyway. Re-login up front instead of
-        // printing "Logged in" and immediately contradicting it with "session
-        // expired" once the projects fetch fails.
+      // A GIPITY_TOKEN env token authenticates every request on its own, so the
+      // saved session's expiry is irrelevant when one is set — never re-login or
+      // warn about expiry in that case.
+      const hasEnvToken = Boolean(process.env.GIPITY_TOKEN?.trim());
+
+      // For an interactive saved-session run, renew the access token UP FRONT so
+      // the login line we're about to print is actually true. A saved session
+      // can look valid locally (refresh token not past its JWT expiry, so
+      // sessionExpired() is false) yet be dead on the server — most often because
+      // a sibling process sharing this auth.json already consumed the single-use
+      // refresh token (GipRunner runs many gipity processes against one auth dir).
+      // refreshTokenIfNeeded() attempts the rotation here; if it fails, the
+      // access token stays expired and accessTokenExpired() catches it below.
+      if (auth && !hasEnvToken && !nonInteractive && !sessionExpired()) {
+        await refreshTokenIfNeeded();
+        auth = getAuth();
+      }
+
+      // Re-login is genuinely required when the refresh token has lapsed, OR the
+      // proactive renewal above could not produce a still-valid access token
+      // (refresh token rejected/rotated away). The access-token check is gated to
+      // interactive runs: headless runs can't prompt, and their downstream API
+      // call renews the token itself. Never triggered while a GIPITY_TOKEN env
+      // token is supplying auth.
+      const reloginRequired = auth != null && !hasEnvToken &&
+        (sessionExpired() || (!nonInteractive && accessTokenExpired()));
+
+      if (auth && reloginRequired) {
+        // The saved session is dead (refresh token lapsed, or rotated away by a
+        // sibling process), so the first API call below would 401. Re-login up
+        // front instead of printing "Logged in" and immediately contradicting it
+        // with "session expired" once the projects fetch fails.
         console.log(`  ${muted('Your session expired. Let\'s sign you back in.')}\n`);
         auth = await interactiveLogin();
       } else if (auth) {

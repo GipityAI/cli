@@ -91,3 +91,48 @@ describe('acquireRefreshLock', () => {
     releaseB!();
   });
 });
+
+// JWT with a custom `exp` (seconds from now) so decodeJwtExp resolves it.
+function jwtExpiringIn(seconds: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + seconds })).toString('base64url');
+  return `${header}.${payload}.sig`;
+}
+
+// Guards the up-front login-state messaging in `gipity claude`: sessionExpired()
+// (refresh-token lifetime) and accessTokenExpired() (access-token usability now)
+// must disagree exactly in the case that produced the "Logged in" → "session
+// expired" contradiction — a still-valid refresh token whose rotation/renewal
+// failed, leaving the access token expired.
+describe('sessionExpired vs accessTokenExpired', () => {
+  it('both false when refresh and access tokens are valid', async () => {
+    const { saveAuth, sessionExpired, accessTokenExpired } = await import('../auth.js');
+    saveAuth({
+      accessToken: jwtExpiringIn(900),
+      refreshToken: jwtExpiringIn(7 * 24 * 3600),
+      email: 'ec-test@914-6.com',
+      expiresAt: new Date(Date.now() + 900_000).toISOString(),
+    });
+    assert.equal(sessionExpired(), false);
+    assert.equal(accessTokenExpired(), false);
+  });
+
+  it('refresh token live but access token already expired → session looks valid, access does not', async () => {
+    const { saveAuth, sessionExpired, accessTokenExpired } = await import('../auth.js');
+    saveAuth({
+      accessToken: jwtExpiringIn(-60),
+      refreshToken: jwtExpiringIn(7 * 24 * 3600), // not time-expired (e.g. rotated away by a sibling)
+      email: 'ec-test@914-6.com',
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    assert.equal(sessionExpired(), false, 'refresh token has not lapsed');
+    assert.equal(accessTokenExpired(), true, 'access token is past expiry → re-login required');
+  });
+
+  it('both true when there is no saved auth', async () => {
+    const { clearAuth, sessionExpired, accessTokenExpired } = await import('../auth.js');
+    clearAuth();
+    assert.equal(sessionExpired(), true);
+    assert.equal(accessTokenExpired(), true);
+  });
+});

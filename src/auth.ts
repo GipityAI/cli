@@ -72,6 +72,23 @@ export function sessionExpired(): boolean {
   return Date.now() > exp * 1000;
 }
 
+/** True when the access token is currently past its expiry. Unlike
+ *  sessionExpired() (which only inspects the refresh token's lifetime), this
+ *  reflects whether the NEXT authenticated request can actually succeed right
+ *  now. Meaningful only when read AFTER refreshTokenIfNeeded(): a normal
+ *  expired access token gets silently renewed, so a token that is STILL expired
+ *  after a refresh attempt means the renewal failed — the refresh token was
+ *  rejected (genuinely lapsed, or rotated away by a sibling process sharing this
+ *  auth.json) — and re-login is required. Used to keep the up-front "Logged in"
+ *  message from contradicting a 401 on the very next call. */
+export function accessTokenExpired(): boolean {
+  const auth = getAuth();
+  if (!auth) return true;
+  const t = new Date(auth.expiresAt).getTime();
+  if (isNaN(t)) return false; // unparseable - let the live 401 path decide
+  return Date.now() >= t;
+}
+
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // ─── Cross-process refresh lock ────────────────────────────────
