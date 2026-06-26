@@ -189,6 +189,20 @@ export async function downloadStream(path: string): Promise<import('stream').Rea
   return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
 }
 
+// A presigned PUT has no built-in deadline: `fetch` will wait forever if S3
+// accepts the connection then stalls mid-body. That can't surface as a retry
+// (a hang never throws), so one stalled PUT wedges an entire deploy/sync while
+// it holds the project lock. Bound every PUT with a throughput-scaled deadline:
+// a generous floor for tiny files plus time for the body at a conservative
+// assumed-minimum rate, so a genuinely-progressing large upload survives but a
+// true stall aborts and lets withRetry() retry it.
+const PUT_TIMEOUT_FLOOR_MS = 120_000;        // 2 min minimum, regardless of size
+const PUT_MIN_BYTES_PER_SEC = 256 * 1024;    // assume the link sustains ≥256 KB/s
+
+export function putTimeoutMs(contentLength: number): number {
+  return Math.max(PUT_TIMEOUT_FLOOR_MS, Math.ceil(contentLength / PUT_MIN_BYTES_PER_SEC) * 1000);
+}
+
 /**
  * PUT raw bytes to a presigned URL (no auth header - the URL is signed).
  * Supports a Buffer or a Readable stream body. Returns the response ETag header
@@ -208,12 +222,25 @@ export async function putToPresignedUrl(
     ? (Readable.toWeb(body as import('stream').Readable) as unknown as ReadableStream)
     : new Uint8Array(body as Buffer);
 
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers,
-    body: fetchBody,
-    ...(isStream ? ({ duplex: 'half' } as RequestInit) : {}),
-  });
+  const timeoutMs = putTimeoutMs(contentLength);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: fetchBody,
+      signal: AbortSignal.timeout(timeoutMs),
+      ...(isStream ? ({ duplex: 'half' } as RequestInit) : {}),
+    });
+  } catch (err) {
+    // A timeout aborts with a TimeoutError/AbortError. Surface it as a 408 so
+    // withRetry() treats it as transient and retries the PUT.
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new ApiError(408, 'S3_UPLOAD_TIMEOUT',
+        `S3 PUT stalled (no completion in ${Math.round(timeoutMs / 1000)}s)`);
+    }
+    throw err;
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);

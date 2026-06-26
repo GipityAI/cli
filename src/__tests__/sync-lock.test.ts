@@ -4,7 +4,7 @@
  */
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, existsSync, readFileSync, rmSync, mkdtempSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, rmSync, mkdtempSync, statSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -110,5 +110,47 @@ describe('acquireLock', () => {
     const releaseB = await pB;
     assert.equal(bResolved, true);
     releaseB();
+  });
+
+  it('breaks an empty lock file (holder crashed before writing its PID)', async () => {
+    const lockFile = join(tempProject, '.gipity', 'sync.lock');
+    writeFileSync(lockFile, '');  // created, but PID never written
+    const { acquireLock } = await import('../sync.js');
+    const release = await acquireLock();  // must not deadlock - empty = abandoned
+    assert.equal(parseInt(readFileSync(lockFile, 'utf-8'), 10), process.pid);
+    release();
+  });
+});
+
+describe('isLockReclaimable', () => {
+  const lockFile = join(tempProject, '.gipity', 'sync.lock');
+
+  it('reclaims an empty / garbage lock file', async () => {
+    const { isLockReclaimable } = await import('../sync.js');
+    writeFileSync(lockFile, '');
+    assert.equal(isLockReclaimable(lockFile), true, 'empty lock');
+    writeFileSync(lockFile, 'not-a-pid');
+    assert.equal(isLockReclaimable(lockFile), true, 'garbage lock');
+  });
+
+  it('does NOT reclaim a live holder whose heartbeat is fresh', async () => {
+    const { isLockReclaimable } = await import('../sync.js');
+    writeFileSync(lockFile, String(process.pid));  // our own (alive) PID, just-written mtime
+    assert.equal(isLockReclaimable(lockFile), false);
+  });
+
+  it('reclaims a live holder whose heartbeat went silent past the stale window', async () => {
+    const { isLockReclaimable, LOCK_STALE_MS } = await import('../sync.js');
+    writeFileSync(lockFile, String(process.pid));  // alive PID...
+    const mtimeMs = statSync(lockFile).mtimeMs;
+    // ...but evaluate as if "now" is well past the stale window (no heartbeat).
+    assert.equal(isLockReclaimable(lockFile, mtimeMs + LOCK_STALE_MS + 1), true);
+    assert.equal(isLockReclaimable(lockFile, mtimeMs + LOCK_STALE_MS - 1000), false);
+  });
+
+  it('returns false for a missing lock file (nothing to steal)', async () => {
+    const { isLockReclaimable } = await import('../sync.js');
+    rmSync(lockFile, { force: true });
+    assert.equal(isLockReclaimable(lockFile), false);
   });
 });

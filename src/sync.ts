@@ -21,7 +21,7 @@
  * `name (conflict from <host> YYYY-MM-DD-HHMMSS).ext` and then uploaded on
  * the next pass so every client sees it. No content merging, ever.
  */
-import { writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync, readFileSync, renameSync, openSync, closeSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync, readFileSync, renameSync, openSync, closeSync, utimesSync } from 'fs';
 import { join, relative, dirname, extname, resolve, sep } from 'path';
 import { hostname } from 'os';
 import { get, del, downloadStream, ApiError } from './api.js';
@@ -170,6 +170,36 @@ function projectDir(): string {
 
 const LOCK_WAIT_MS = 30_000;
 const LOCK_POLL_MS = 500;
+// While a holder works it refreshes the lock's mtime on this cadence; a lock
+// whose mtime is older than the stale window is treated as abandoned and
+// reclaimed even if a process with its PID still exists. This catches the two
+// cases a dead-PID check misses: a CPU-wedged holder that stopped heartbeating,
+// and PID reuse (some unrelated process now owns the old holder's PID). The
+// stale window must stay comfortably larger than the heartbeat so a briefly
+// busy holder isn't robbed mid-run.
+const LOCK_HEARTBEAT_MS = 15_000;
+export const LOCK_STALE_MS = 90_000;
+
+/** Decide whether an existing lock file is reclaimable. Exported for tests.
+ *  Reclaim when: the file is empty/garbage (holder crashed between creating the
+ *  lock and writing its PID), the holder PID is dead, or the lock's heartbeat
+ *  went silent past {@link LOCK_STALE_MS}. A live, freshly-heartbeating holder
+ *  is never reclaimed. */
+export function isLockReclaimable(path: string, now = Date.now()): boolean {
+  let raw: string;
+  let mtimeMs: number;
+  try {
+    raw = readFileSync(path, 'utf-8').trim();
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    return false; // can't read it (likely already gone / racing) - retry, don't steal
+  }
+  const pid = parseInt(raw, 10);
+  if (!raw || !pid || isNaN(pid)) return true; // empty/garbage = crashed mid-create
+  try { process.kill(pid, 0); }
+  catch { return true; }                        // holder PID is dead
+  return now - mtimeMs > LOCK_STALE_MS;          // alive but heartbeat went silent
+}
 
 /** Acquire the per-project sync lock. Returns a release function. Exported for tests. */
 export async function acquireLock(): Promise<() => void> {
@@ -181,17 +211,20 @@ export async function acquireLock(): Promise<() => void> {
       const fd = openSync(path, 'wx');
       writeFileSync(fd, String(process.pid));
       closeSync(fd);
-      return () => { try { unlinkSync(path); } catch { /* already gone */ } };
+      // Heartbeat: keep the lock's mtime fresh so peers can distinguish a live
+      // holder from an abandoned one. unref() so it never holds the process open.
+      const beat = setInterval(() => {
+        try { utimesSync(path, new Date(), new Date()); } catch { /* lock gone */ }
+      }, LOCK_HEARTBEAT_MS);
+      beat.unref?.();
+      return () => { clearInterval(beat); try { unlinkSync(path); } catch { /* already gone */ } };
     } catch {
-      // Either lock exists, or the race gave us a transient error. Check for
-      // staleness (holder PID is dead → treat as unlocked).
-      try {
-        const pid = parseInt(readFileSync(path, 'utf-8').trim(), 10);
-        if (pid && !isNaN(pid)) {
-          try { process.kill(pid, 0); }
-          catch { try { unlinkSync(path); } catch { /* race */ } continue; }
-        }
-      } catch { /* couldn't read - retry */ }
+      // Lock exists (or the race gave a transient error). Reclaim it if the
+      // holder is dead/abandoned; otherwise wait and retry.
+      if (isLockReclaimable(path)) {
+        try { unlinkSync(path); } catch { /* race - someone else got it */ }
+        continue;
+      }
 
       if (Date.now() - start > LOCK_WAIT_MS) {
         throw new Error(

@@ -5,6 +5,23 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { createServer, type Server } from 'http';
 import { hashFile, guessMime, transferToS3 } from '../upload.js';
+import { putTimeoutMs } from '../api.js';
+
+describe('putTimeoutMs (presigned-PUT stall deadline)', () => {
+  it('applies a generous floor for small files', () => {
+    assert.equal(putTimeoutMs(0), 120_000);
+    assert.equal(putTimeoutMs(1024), 120_000);
+    // 10 MB at the 256 KB/s floor is ~40s, still under the 2-min floor.
+    assert.equal(putTimeoutMs(10 * 1024 * 1024), 120_000);
+  });
+
+  it('scales above the floor for large files so progressing uploads survive', () => {
+    // 1 GB / 256 KB/s = 4096s.
+    assert.equal(putTimeoutMs(1024 * 1024 * 1024), 4096 * 1000);
+    // Monotonic: a bigger file always gets at least as much time.
+    assert.ok(putTimeoutMs(500 * 1024 * 1024) >= putTimeoutMs(100 * 1024 * 1024));
+  });
+});
 
 describe('guessMime', () => {
   it('detects common types from extension', () => {
