@@ -35,7 +35,7 @@ import {
   type BatchInitResult, type BatchCompleteItem,
 } from './upload.js';
 import { DEFAULT_SYNC_IGNORE } from './setup.js';
-import type { ProgressReporter } from './progress.js';
+import type { ProgressReporter, SpinnerHandle } from './progress.js';
 
 const CONFIG_FILE = '.gipity.json';
 import * as tar from 'tar-stream';
@@ -206,11 +206,24 @@ export function isLockReclaimable(path: string, now = Date.now()): boolean {
   return now - mtimeMs > LOCK_STALE_MS;          // alive but heartbeat went silent
 }
 
-/** Acquire the per-project sync lock. Returns a release function. Exported for tests. */
-export async function acquireLock(): Promise<() => void> {
+/** Acquire the per-project sync lock. Returns a release function. Exported for tests.
+ *  Pass `progress` so a *contended* wait (another sync/push holds the lock) shows a
+ *  live "Waiting for another sync…" spinner instead of a silent stall - the lock is
+ *  taken before any sync phase prints, so without this an agent or user staring at a
+ *  frozen terminal can't tell a 30s lock wait from a genuine hang. The spinner is
+ *  created lazily, only when we actually have to wait, so the common instant-acquire
+ *  path stays output-free (and on a non-TTY the reporter is a no-op regardless). */
+export async function acquireLock(progress?: ProgressReporter): Promise<() => void> {
   const path = lockPath();
   mkdirSync(dirname(path), { recursive: true });
   const start = Date.now();
+  // Lazily-opened spinner for the contended case; settled before we return.
+  let waitSpinner: SpinnerHandle | null = null;
+  const settleWait = (ok: boolean) => {
+    if (!waitSpinner) return;
+    if (ok) waitSpinner.stop(); else waitSpinner.fail('Gave up waiting for the sync lock');
+    waitSpinner = null;
+  };
   while (true) {
     try {
       const fd = openSync(path, 'wx');
@@ -222,6 +235,7 @@ export async function acquireLock(): Promise<() => void> {
         try { utimesSync(path, new Date(), new Date()); } catch { /* lock gone */ }
       }, LOCK_HEARTBEAT_MS);
       beat.unref?.();
+      settleWait(true);
       return () => { clearInterval(beat); try { unlinkSync(path); } catch { /* already gone */ } };
     } catch {
       // Lock exists (or the race gave a transient error). Reclaim it if the
@@ -232,10 +246,16 @@ export async function acquireLock(): Promise<() => void> {
       }
 
       if (Date.now() - start > LOCK_WAIT_MS) {
+        settleWait(false);
         throw new Error(
           `Another sync is in progress (${path}). Waited ${LOCK_WAIT_MS / 1000}s. ` +
           `Remove the file manually if you're sure no sync is running.`,
         );
+      }
+      // First time we're forced to wait: open the spinner so the wait is visible
+      // (with an elapsed timer) rather than reading as a frozen process.
+      if (!waitSpinner) {
+        waitSpinner = progress?.spinner('Waiting for another sync to finish…') ?? null;
       }
       await new Promise(r => setTimeout(r, LOCK_POLL_MS));
     }
@@ -742,7 +762,7 @@ export async function sync(opts: SyncOptions = {}): Promise<SyncResult> {
 
   const ignore = effectiveIgnore(root, config.ignore);
 
-  const releaseLock = await acquireLock();
+  const releaseLock = await acquireLock(opts.progress);
   try {
     return await syncInner(config.projectGuid, root, ignore, opts, interactive);
   } finally {

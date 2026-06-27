@@ -64,6 +64,8 @@ class TerminalProgress implements ProgressReporter {
   private lastRenderAt = 0;
   /** The label of the current transfer session; a change starts a fresh one. */
   private barLabel: string | null = null;
+  /** Wall-clock start of the current transfer session, for the elapsed timer. */
+  private barStartedAt = 0;
   /** True once the current session hit 100% - late/overshoot ticks are dropped. */
   private barSettled = false;
   /** Active indeterminate spinner timer, if any. */
@@ -86,6 +88,7 @@ class TerminalProgress implements ProgressReporter {
     if (label !== this.barLabel) {
       this.barLabel = label;
       this.barSettled = false;
+      this.barStartedAt = Date.now();
     }
     if (this.barSettled) return;
 
@@ -158,7 +161,12 @@ class TerminalProgress implements ProgressReporter {
     const filled = Math.round((pct / 100) * BAR_WIDTH);
     const bar = brand('█'.repeat(filled)) + dim('░'.repeat(BAR_WIDTH - filled));
     const sizes = muted(`${formatSize(done)} / ${formatSize(total)}`);
-    return `  ${muted(label)}  ${bar}  ${brandBold(`${pct}%`)}  ${sizes}`;
+    // Same built-in elapsed timer the spinner carries, so a determinate transfer
+    // that stalls mid-flight (slow upload, wedged S3 PUT) still visibly ticks
+    // instead of freezing at "80%" - and the in-place line and the committed
+    // 100% frame both show how long the transfer took.
+    const elapsed = muted(formatElapsed(Date.now() - this.barStartedAt));
+    return `  ${muted(label)}  ${bar}  ${brandBold(`${pct}%`)}  ${sizes}  ${elapsed}`;
   }
 
   private spinFrame(label: string, tick: number, elapsedMs: number): string {

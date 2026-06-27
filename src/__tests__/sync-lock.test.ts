@@ -112,6 +112,47 @@ describe('acquireLock', () => {
     releaseB();
   });
 
+  it('shows a wait spinner only when the lock is contended (silent on instant acquire)', async () => {
+    const { acquireLock } = await import('../sync.js');
+
+    // Fake reporter that records whether a spinner was opened + how it settled.
+    const makeReporter = () => {
+      const spins: Array<{ label: string; settled: string | null }> = [];
+      const reporter: any = {
+        phase() {}, transfer() {}, finish() {},
+        spinner(label: string) {
+          const rec = { label, settled: null as string | null };
+          spins.push(rec);
+          return {
+            succeed() { rec.settled = 'succeed'; },
+            fail() { rec.settled = 'fail'; },
+            stop() { rec.settled = 'stop'; },
+          };
+        },
+      };
+      return { reporter, spins };
+    };
+
+    // Instant acquire: no contention, so no spinner should ever open.
+    const clean = makeReporter();
+    const releaseClean = await acquireLock(clean.reporter);
+    assert.equal(clean.spins.length, 0, 'instant acquire must not open a spinner');
+
+    // Contended: hold the lock, then a second caller must open a wait spinner
+    // and settle it once it finally acquires.
+    const contended = makeReporter();
+    let resolved = false;
+    const pB = acquireLock(contended.reporter).then(r => { resolved = true; return r; });
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(resolved, false, 'second caller should still be waiting');
+    assert.equal(contended.spins.length, 1, 'a wait spinner should be open while blocked');
+
+    releaseClean();
+    const releaseB = await pB;
+    assert.equal(contended.spins[0].settled, 'stop', 'wait spinner settles when the lock is acquired');
+    releaseB();
+  });
+
   it('breaks an empty lock file (holder crashed before writing its PID)', async () => {
     const lockFile = join(tempProject, '.gipity', 'sync.lock');
     writeFileSync(lockFile, '');  // created, but PID never written

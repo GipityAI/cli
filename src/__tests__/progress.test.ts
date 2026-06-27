@@ -44,6 +44,7 @@ describe('createProgressReporter', () => {
     assert.match(out, /3 B \/ 10 B/);
     assert.match(out, /[█░]/);       // a bar was drawn
     assert.match(out, /^\r/);        // redrawn in place
+    assert.match(out, /0s/);         // built-in elapsed timer, same as the spinner
   });
 
   it('throttles mid-flight redraws but always paints the final frame', () => {
