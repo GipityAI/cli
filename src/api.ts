@@ -17,6 +17,29 @@ export class ApiError extends Error {
   }
 }
 
+// Bound every network call so a wedged connection becomes a clear error instead
+// of an unbounded hang (the "sync gets stuck forever" bug). JSON API calls must
+// finish well within REQUEST_TIMEOUT_MS; the S3 PUT path keeps its own
+// size-based timeout. Streaming downloads can't use a single total cap (a large
+// but healthy tree would be cut off mid-stream), so downloadStream bounds only
+// the time-to-first-byte here and an idle watchdog in sync.ts guards the body.
+const REQUEST_TIMEOUT_MS = 60_000;
+const DOWNLOAD_HEADER_TIMEOUT_MS = 30_000;
+
+/** fetch() that rejects with a clean 408 ApiError if the whole exchange (headers
+ *  + body) doesn't complete within timeoutMs, instead of hanging forever. For
+ *  request/response JSON calls only - never wrap a long streaming body in this. */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e: any) {
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+      throw new ApiError(408, 'REQUEST_TIMEOUT', `${label} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw e;
+  }
+}
+
 /** Resolve the Bearer token value. A GIPITY_TOKEN env var (a long-lived agent
  *  API token) takes precedence over the saved session — the persistent,
  *  login-free path for headless agents and CI. Falls back to the refreshed
@@ -59,11 +82,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
 
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
@@ -178,9 +201,26 @@ export async function download(path: string): Promise<Buffer> {
 export async function downloadStream(path: string): Promise<import('stream').Readable> {
   const { Readable } = await import('stream');
   const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, {
-    headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
-  });
+  // Bound time-to-first-byte only: abort if no RESPONSE within the header window,
+  // then clear the timer so the (possibly large) body streams without a total cap.
+  // The body is guarded by an idle watchdog at the call site (sync.ts), which
+  // destroys this stream - cancelling the fetch - if bytes stop flowing.
+  const ac = new AbortController();
+  const headerTimer = setTimeout(() => ac.abort(), DOWNLOAD_HEADER_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
+      signal: ac.signal,
+    });
+  } catch (e: any) {
+    if (ac.signal.aborted) {
+      throw new ApiError(408, 'DOWNLOAD_TIMEOUT', `Download did not respond within ${DOWNLOAD_HEADER_TIMEOUT_MS / 1000}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(headerTimer);
+  }
 
   if (!res.ok) {
     throw new ApiError(res.status, 'DOWNLOAD_ERROR', `Download failed: ${res.statusText}`);

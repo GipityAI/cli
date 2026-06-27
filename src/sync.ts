@@ -49,6 +49,11 @@ import * as tar from 'tar-stream';
 const BULK_DELETE_COUNT = 10;
 const BULK_DELETE_FRACTION = 0.25;
 
+/** A tar download that stops producing bytes for this long - without ever
+ *  ending the stream - is treated as a stall and aborted, so a wedged
+ *  connection becomes a recoverable error instead of an unbounded hang. */
+const DOWNLOAD_IDLE_MS = 30_000;
+
 // ─── Types ─────────────────────────────────────────────────────
 
 export interface BaselineEntry {
@@ -382,29 +387,71 @@ async function fetchRemote(projectGuid: string): Promise<Map<string, RemoteFileI
   return out;
 }
 
+/**
+ * Extract a tar stream into a path→bytes map, guarded by an idle watchdog.
+ *
+ * The sync hang was here: the server delivered every byte (progress bar hit
+ * 100%) but never cleanly ended the stream, so tar's 'finish' never fired and
+ * the awaiting Promise never settled - an unbounded hang. The watchdog turns
+ * that into a recoverable error: if no bytes arrive for idleMs without the
+ * stream ending, destroy it (closing the socket) and reject. pipe() also doesn't
+ * forward source errors to the destination, so we reject on a source 'error' too
+ * - a truncated body must never look like a clean 'finish' with partial files.
+ *
+ * `keep` filters which entries to buffer (default: all); every entry is still
+ * drained so the stream can progress. Exported for tests.
+ */
+export function extractTarToMap(
+  stream: import('stream').Readable,
+  idleMs: number,
+  onBytes?: (delta: number) => void,
+  keep?: (path: string) => boolean,
+): Promise<Map<string, Buffer>> {
+  const extract = tar.extract();
+  const files = new Map<string, Buffer>();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const e = new Error(`download stalled: no data for ${idleMs / 1000}s`);
+        stream.destroy(e);
+        reject(e);
+      }, idleMs);
+      idle.unref?.();
+    };
+    const done = (fn: (v?: any) => void, arg?: any) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(idle);
+      fn(arg);
+    };
+    extract.on('entry', (header, entryStream, next) => {
+      arm();
+      const name = normalizeTreePath(header.name);
+      const wanted = keep ? keep(name) : true;
+      const chunks: Buffer[] = [];
+      entryStream.on('data', (c: Buffer) => { if (wanted) chunks.push(c); onBytes?.(c.length); arm(); });
+      entryStream.on('end', () => { if (wanted) files.set(name, Buffer.concat(chunks)); next(); });
+      entryStream.resume();
+    });
+    extract.on('finish', () => done(resolve, files));
+    extract.on('error', (e) => done(reject, e));
+    stream.on('error', (e) => done(reject, e));
+    arm();
+    stream.pipe(extract);
+  });
+}
+
 async function downloadAll(
   projectGuid: string,
   onBytes?: (delta: number) => void,
 ): Promise<Map<string, Buffer>> {
   const stream = await downloadStream(`/projects/${projectGuid}/files/tree?content=tar`);
-  const extract = tar.extract();
-  const files = new Map<string, Buffer>();
-  return new Promise((resolve, reject) => {
-    extract.on('entry', (header, entryStream, next) => {
-      const chunks: Buffer[] = [];
-      entryStream.on('data', (c: Buffer) => { chunks.push(c); onBytes?.(c.length); });
-      entryStream.on('end', () => { files.set(normalizeTreePath(header.name), Buffer.concat(chunks)); next(); });
-      entryStream.resume();
-    });
-    extract.on('finish', () => resolve(files));
-    extract.on('error', reject);
-    // pipe() does NOT forward source-stream errors to the destination, so a
-    // truncated/aborted HTTP body would otherwise surface as a clean tar
-    // 'finish' with a partial file set. Reject explicitly so a short download is
-    // an error the caller can recover from, never a silent partial.
-    stream.on('error', reject);
-    stream.pipe(extract);
-  });
+  return extractTarToMap(stream, DOWNLOAD_IDLE_MS, onBytes);
 }
 
 async function fetchOne(projectGuid: string, path: string): Promise<Buffer | null> {
@@ -430,23 +477,12 @@ async function fetchOne(projectGuid: string, path: string): Promise<Buffer | nul
     const stream = await downloadStream(
       `/projects/${projectGuid}/files/tree?content=tar&path=${encodeURIComponent(path)}`,
     );
-    const extract = tar.extract();
-    return await new Promise<Buffer | null>((resolve, reject) => {
-      let found: Buffer | null = null;
-      extract.on('entry', (header, entryStream, next) => {
-        if (normalizeTreePath(header.name) === normalizeTreePath(path)) {
-          const chunks: Buffer[] = [];
-          entryStream.on('data', (c: Buffer) => chunks.push(c));
-          entryStream.on('end', () => { found = Buffer.concat(chunks); next(); });
-        } else {
-          entryStream.on('end', () => next());
-        }
-        entryStream.resume();
-      });
-      extract.on('finish', () => resolve(found));
-      extract.on('error', reject);
-      stream.pipe(extract);
-    });
+    // Same idle-guarded extraction as the bulk path; keep only the one entry we
+    // asked for. The recovery path must not hang either, or a single stalled file
+    // wedges the whole sync.
+    const want = normalizeTreePath(path);
+    const files = await extractTarToMap(stream, DOWNLOAD_IDLE_MS, undefined, (p) => p === want);
+    return files.get(want) ?? null;
   } catch {
     return null;
   }

@@ -3,7 +3,61 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, resolveInRoot, type BaselineEntry } from '../sync.js';
+import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, resolveInRoot, extractTarToMap, type BaselineEntry } from '../sync.js';
+import { PassThrough } from 'stream';
+import * as tar from 'tar-stream';
+
+describe('extractTarToMap (idle-watchdog download)', () => {
+  it('rejects (never hangs) when the stream delivers no end within the idle window', async () => {
+    // The original bug: bytes arrive, the stream never ends, tar never emits
+    // 'finish', and the awaiting Promise hangs forever. A short idle here must
+    // reject promptly instead. The watchdog timer is unref'd (in production the
+    // open socket keeps the loop alive); a bare in-memory stream has no such
+    // handle, so keep the loop alive for the test ourselves.
+    const keepAlive = setInterval(() => {}, 25);
+    try {
+      const stream = new PassThrough();
+      const t0 = Date.now();
+      await assert.rejects(extractTarToMap(stream, 120), /stalled/);
+      assert.ok(Date.now() - t0 < 2000, 'rejected well before any real timeout');
+    } finally { clearInterval(keepAlive); }
+  });
+
+  it('rejects when bytes flow then stall mid-stream without finishing', async () => {
+    const keepAlive = setInterval(() => {}, 25);
+    try {
+      const stream = new PassThrough();
+      stream.write(Buffer.alloc(512)); // some bytes, then silence (no tar end blocks)
+      await assert.rejects(extractTarToMap(stream, 120), /stalled/);
+    } finally { clearInterval(keepAlive); }
+  });
+
+  it('resolves with every file when the tar completes normally', async () => {
+    const pack = tar.pack();
+    pack.entry({ name: 'a.txt' }, 'hello');
+    pack.entry({ name: 'dir/b.txt' }, 'world');
+    pack.finalize();
+    const files = await extractTarToMap(pack as any, 5000);
+    assert.equal(files.get('a.txt')?.toString(), 'hello');
+    assert.equal(files.get('dir/b.txt')?.toString(), 'world');
+  });
+
+  it('keeps only entries the filter selects', async () => {
+    const pack = tar.pack();
+    pack.entry({ name: 'keep.txt' }, 'yes');
+    pack.entry({ name: 'skip.txt' }, 'no');
+    pack.finalize();
+    const files = await extractTarToMap(pack as any, 5000, undefined, (p) => p === 'keep.txt');
+    assert.equal(files.get('keep.txt')?.toString(), 'yes');
+    assert.equal(files.has('skip.txt'), false);
+  });
+
+  it('rejects on a source-stream error (a truncated body is never a clean finish)', async () => {
+    const stream = new PassThrough();
+    queueMicrotask(() => stream.destroy(new Error('socket reset')));
+    await assert.rejects(extractTarToMap(stream, 5000), /socket reset/);
+  });
+});
 
 describe('resolveInRoot (path-traversal guard)', () => {
   const root = join(tmpdir(), 'proj-root');
