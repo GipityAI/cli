@@ -157,6 +157,63 @@ test('gipity test results <runGuid> --json re-fetches a finished run without re-
   assert.ok(!mock.requests().some((q) => q.url.endsWith('/test/run')), 'must not start a new run');
 });
 
+test('gipity test list shows test files grouped by directory (no run)', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: {
+    files: [
+      { path: 'api', name: 'health.test.js', vfsPath: 'tests/api/health.test.js' },
+      { path: 'api', name: 'users.test.js', vfsPath: 'tests/api/users.test.js' },
+      { path: 'e2e/portal', name: 'login.test.js', vfsPath: 'tests/e2e/portal/login.test.js' },
+      { path: '', name: 'smoke.test.js', vfsPath: 'tests/smoke.test.js' },
+    ],
+    total: 4,
+  } } });
+  const r = await fresh(['test', 'list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Test files: 4/);
+  assert.match(r.stdout, /health\.test\.js/);
+  assert.match(r.stdout, /e2e\/portal/);
+  // A file with no directory groups under a "(root)" header rather than a blank line.
+  assert.match(r.stdout, /\(root\)/);
+  assert.match(r.stdout, /smoke\.test\.js/);
+  // No run should be kicked off.
+  assert.ok(!mock.requests().some((q) => q.url.endsWith('/test/run')), 'list must not start a run');
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity test list <path> passes filterPath to the server', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: {
+    files: [{ path: 'api', name: 'health.test.js', vfsPath: 'tests/api/health.test.js' }],
+    total: 1,
+  } } });
+  const r = await fresh(['test', 'list', 'api']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /filter: api/);
+  assert.ok(mock.requests().some((q) => q.url.includes('filterPath=api')), 'must send filterPath query');
+});
+
+test('gipity test list --json emits the raw payload', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: {
+    files: [{ path: 'api', name: 'health.test.js', vfsPath: 'tests/api/health.test.js' }],
+    total: 1,
+  } } });
+  const r = await fresh(['test', 'list', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.total, 1);
+  assert.equal(parsed.files[0].vfsPath, 'tests/api/health.test.js');
+});
+
+test('gipity test list reports clearly when no test files match', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: { files: [], total: 0 } } });
+  const r = await fresh(['test', 'list', 'nope']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /No test files matched filter: nope/);
+});
+
 test('gipity test history shows recent runs', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/test/history', { body: { data: [

@@ -130,7 +130,7 @@ Deploy is opt-in, not opt-out: the \`files\` phase uploads **only** what's under
 - **\`src/\`** - the app itself. Synced **and** deployed to the CDN. Only app code, assets, and pages belong here.
 - **\`tmp/\`** - ephemeral scratch: file conversions, intermediate outputs, design staging. **Already ignored** (never synced, never deployed) - the one place to do throwaway work. Use this single root. (\`*_tmp/\` dirs and \`.gipityscratch/\` are auto-ignored too, as a safety net, so legacy scattered scratch like \`_vsd_tmp/\` can't leak - but write new scratch to \`tmp/\`, not scattered dirs.)
 - **\`docs/\`** - reference material you want to keep: UI/architecture diagrams, design decks, notes, ADRs. Synced and versioned on the server (backed up, rollback-able) but **never deployed**, because it's outside \`src/\`. This is the home for "keep forever, don't ship" artifacts.
-- **\`tests/\`** - \`*.test.js\` suites. Synced, run by \`gipity test\`, never deployed.
+- **\`tests/\`** - \`*.test.js\` suites. Synced, run by \`gipity test\`, never deployed. \`gipity test list [path]\` lists the test files (and what a filter selects) without running them.
 
 Rule of thumb: shipping to users → \`src/\`; keep as reference → \`docs/\`; throwaway → \`tmp/\`.
 

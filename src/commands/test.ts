@@ -280,6 +280,51 @@ testCommand
       }
   }));
 
+// ── List subcommand (show test files without running) ─────────────────
+
+testCommand
+  .command('list')
+  .description('List the test files that would run — no run, optional path filter')
+  .argument('[path]', 'Test path filter (e.g. "api", "e2e/portal")')
+  .option('--json', 'Output as JSON')
+  // optsWithGlobals: see the status subcommand — `--json` lands on the parent.
+  .action((pathFilter: string | undefined, _o, command: Command) => run('List', async () => {
+      const opts = command.optsWithGlobals();
+      const config = requireConfig();
+      const qs = pathFilter ? `?filterPath=${encodeURIComponent(pathFilter)}` : '';
+      const res = await get<{
+        data: { files: Array<{ path: string; name: string; vfsPath: string }>; total: number };
+      }>(`/projects/${config.projectGuid}/test/list${qs}`);
+      const { files, total } = res.data;
+
+      if (opts.json) { console.log(JSON.stringify(res.data, null, 2)); return; }
+
+      if (total === 0) {
+        console.log(muted(pathFilter
+          ? `No test files matched filter: ${pathFilter}`
+          : 'No test files found. Add *.test.js files under tests/.'));
+        return;
+      }
+
+      console.log(bold(`Test files${pathFilter ? ` (filter: ${pathFilter})` : ''}: ${total}`));
+      console.log('');
+
+      // Group by directory so the layout mirrors `gipity test` run output.
+      const groups = new Map<string, string[]>();
+      for (const f of files) {
+        const key = f.path || '(root)';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(f.name);
+      }
+      for (const [dir, names] of groups) {
+        console.log(`  ${dim(dir)}`);
+        for (const name of names) console.log(`    ${name}`);
+      }
+
+      console.log('');
+      console.log(muted(`Run them: gipity test${pathFilter ? ` ${pathFilter}` : ''}`));
+  }));
+
 // ── History subcommand ─────────────────────────────────────────────────
 
 testCommand
