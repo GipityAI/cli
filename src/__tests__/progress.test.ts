@@ -105,9 +105,8 @@ describe('spinner (indeterminate)', () => {
 
   it('draws the bouncing block on the same track as the bar, then a ✓ line', () => {
     const out = capture(true, (r) => r.spinner('Deploying to dev…').succeed('Deployed to dev'));
-    assert.match(out, /Deploying to dev…/); // animated label
     assert.match(out, /[█░]/);              // SAME track glyphs as transfer()
-    assert.match(out, /0s/);                // elapsed timer fights "looks hung"
+    assert.match(out, /0\.0s/);             // label-less clock, tenths under 10s
     assert.match(out, /✓/);                 // settles to success icon
     assert.match(out, /Deployed to dev/);   // settle message
     assert.match(out, /\n$/);               // line committed

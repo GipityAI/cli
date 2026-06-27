@@ -45,10 +45,13 @@ const CLEAR_TO_EOL = '\x1b[K';
 const BAR_WIDTH = 18;
 const RENDER_THROTTLE_MS = 60;
 // Indeterminate bounce: a short block sliding across the same BAR_WIDTH track
-// the determinate bar fills. Frame cadence is slow enough to read, fast enough
-// to feel alive.
+// the determinate bar fills. Redraw cadence steps down once the wait gets long:
+// a snappy 10×/s under 10s, then once a second so a long wait reads as a calm
+// clock rather than a frantic blur.
 const SPIN_BLOCK = 5;
-const SPIN_FRAME_MS = 90;
+const SPIN_FRAME_FAST_MS = 100;
+const SPIN_FRAME_SLOW_MS = 1000;
+const SPIN_SLOWDOWN_AFTER_MS = 10_000;
 
 /** Compact elapsed: "8s", "1m 04s". Keeps the timer narrow and glanceable. */
 function formatElapsed(ms: number): string {
@@ -56,6 +59,17 @@ function formatElapsed(ms: number): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+/**
+ * Spinner clock. Under 10s shows tenths ("2.2s") so a fresh wait visibly moves;
+ * at/after 10s switches to m:ss ("0:11", "1:02") - whole seconds are plenty once
+ * the redraw has slowed to once a second.
+ */
+function formatSpinClock(ms: number): string {
+  if (ms < SPIN_SLOWDOWN_AFTER_MS) return `${(ms / 1000).toFixed(1)}s`;
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
 class TerminalProgress implements ProgressReporter {
@@ -69,7 +83,7 @@ class TerminalProgress implements ProgressReporter {
   /** True once the current session hit 100% - late/overshoot ticks are dropped. */
   private barSettled = false;
   /** Active indeterminate spinner timer, if any. */
-  private spinTimer: ReturnType<typeof setInterval> | null = null;
+  private spinTimer: ReturnType<typeof setTimeout> | null = null;
 
   phase(message: string): void {
     this.stopSpinTimer();
@@ -111,13 +125,16 @@ class TerminalProgress implements ProgressReporter {
     const startedAt = Date.now();
     let tick = 0;
     const draw = () => {
+      const elapsed = Date.now() - startedAt;
       this.liveOpen = true;
-      process.stdout.write('\r' + this.spinFrame(label, tick++, Date.now() - startedAt) + CLEAR_TO_EOL);
+      process.stdout.write('\r' + this.spinFrame(tick++, elapsed) + CLEAR_TO_EOL);
+      // Reschedule each frame so the cadence can step down as the wait lengthens.
+      const next = elapsed < SPIN_SLOWDOWN_AFTER_MS ? SPIN_FRAME_FAST_MS : SPIN_FRAME_SLOW_MS;
+      this.spinTimer = setTimeout(draw, next);
+      // Don't let the animation keep the event loop (and process) alive on its own.
+      this.spinTimer.unref?.();
     };
     draw();
-    this.spinTimer = setInterval(draw, SPIN_FRAME_MS);
-    // Don't let the animation keep the event loop (and process) alive on its own.
-    this.spinTimer.unref?.();
 
     const settle = (icon: string | null, message?: string): void => {
       this.stopSpinTimer();
@@ -147,7 +164,7 @@ class TerminalProgress implements ProgressReporter {
   }
 
   private stopSpinTimer(): void {
-    if (this.spinTimer) { clearInterval(this.spinTimer); this.spinTimer = null; }
+    if (this.spinTimer) { clearTimeout(this.spinTimer); this.spinTimer = null; }
   }
 
   private commitLive(): void {
@@ -169,7 +186,7 @@ class TerminalProgress implements ProgressReporter {
     return `  ${muted(label)}  ${bar}  ${brandBold(`${pct}%`)}  ${sizes}  ${elapsed}`;
   }
 
-  private spinFrame(label: string, tick: number, elapsedMs: number): string {
+  private spinFrame(tick: number, elapsedMs: number): string {
     // Ping-pong the block's left edge between 0 and (BAR_WIDTH - SPIN_BLOCK).
     const span = BAR_WIDTH - SPIN_BLOCK;
     const cycle = span * 2;
@@ -179,7 +196,8 @@ class TerminalProgress implements ProgressReporter {
       dim('░'.repeat(pos)) +
       brand('█'.repeat(SPIN_BLOCK)) +
       dim('░'.repeat(BAR_WIDTH - pos - SPIN_BLOCK));
-    return `  ${muted(label)}  ${bar}  ${muted(formatElapsed(elapsedMs))}`;
+    // No label: a bare track plus a clock, framed by three spaces on each side.
+    return `   ${bar}   ${muted(formatSpinClock(elapsedMs))}`;
   }
 }
 

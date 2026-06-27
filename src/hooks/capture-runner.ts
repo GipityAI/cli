@@ -32,6 +32,8 @@ import {
   unlinkSync,
   openSync,
   closeSync,
+  statSync,
+  utimesSync,
   createReadStream,
 } from 'fs';
 import { homedir } from 'os';
@@ -101,26 +103,71 @@ function deleteState(convGuid: string): void {
   try { unlinkSync(lockPath(convGuid)); } catch { /* already gone */ }
 }
 
-/** Simple exclusive file-lock via `wx` open. Stop and SubagentStop can
- *  fire concurrently on the same conv (e.g. a Task subagent finishing
- *  while the parent is also wrapping up), and a crashed hook retry would
- *  race the next one. Holding a lock for the duration serializes them.
- *  Returns a releaser (or null if the lock is already held - in which
- *  case we skip this run; the holder will catch our data on its next
- *  transcript scan). */
-function acquireLock(convGuid: string): (() => void) | null {
+// Crash-safe reclaim, mirroring the advisory lock in src/sync.ts: a holder
+// writes its PID and heartbeats the lock's mtime; a peer reclaims it when the
+// holder crashed (dead PID), died before writing a PID (empty/garbage file), or
+// went silent past the stale window (wedged, or its PID was reused by an
+// unrelated process). Without this a SIGKILL'd hook would strand the lock and
+// silently disable capture for that conversation until SessionEnd.
+const LOCK_HEARTBEAT_MS = 15_000;
+export const LOCK_STALE_MS = 90_000;
+
+/** Decide whether an existing capture lock is reclaimable. Exported for tests.
+ *  Kept in sync with sync.ts's namesake. */
+export function isLockReclaimable(path: string, now = Date.now()): boolean {
+  let raw: string;
+  let mtimeMs: number;
+  try {
+    raw = readFileSync(path, 'utf-8').trim();
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    return false; // unreadable / already gone - don't steal, just skip
+  }
+  const pid = parseInt(raw, 10);
+  if (!raw || !pid || isNaN(pid)) return true; // empty/garbage = crashed mid-create
+  try { process.kill(pid, 0); }
+  catch { return true; }                        // holder PID is dead
+  return now - mtimeMs > LOCK_STALE_MS;          // alive but heartbeat went silent
+}
+
+/** Exclusive file-lock via `wx` open, with crash-safe reclaim. Stop and
+ *  SubagentStop can fire concurrently on the same conv (e.g. a Task subagent
+ *  finishing while the parent is also wrapping up), and a crashed hook retry
+ *  would race the next one. Holding a lock for the duration serializes them.
+ *  Returns a releaser, or null when a *live* holder is already flushing - in
+ *  which case we skip this run; the holder will catch our data on its next
+ *  transcript scan. A dead/abandoned holder's lock is reclaimed once and
+ *  retried rather than waited on (capture is fire-and-forget; we never block
+ *  the user's session). Exported for tests. */
+export function acquireLock(convGuid: string): (() => void) | null {
   mkdirSync(CAPTURE_DIR, { recursive: true });
   const path = lockPath(convGuid);
-  let fd: number;
-  try {
-    fd = openSync(path, 'wx');
-  } catch {
-    return null;
+  // At most one reclaim+retry: a genuinely live holder is flushing the same
+  // transcript, so we just skip; only a crashed/stale holder is stolen.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let fd: number;
+    try {
+      fd = openSync(path, 'wx');   // fails if the file exists
+    } catch {
+      if (attempt === 0 && isLockReclaimable(path)) {
+        try { unlinkSync(path); } catch { /* race - someone else got it */ }
+        continue;
+      }
+      return null; // live holder (or lost the reclaim race) - let it cover us
+    }
+    try { writeFileSync(fd, String(process.pid)); } finally { closeSync(fd); }
+    // Heartbeat the mtime so a long flush isn't mistaken for abandoned. unref()
+    // so the timer never keeps the hook process alive on its own.
+    const beat = setInterval(() => {
+      try { utimesSync(path, new Date(), new Date()); } catch { /* lock gone */ }
+    }, LOCK_HEARTBEAT_MS);
+    beat.unref?.();
+    return () => {
+      clearInterval(beat);
+      try { unlinkSync(path); } catch { /* already gone */ }
+    };
   }
-  return () => {
-    try { closeSync(fd); } catch { /* ignore */ }
-    try { unlinkSync(path); } catch { /* ignore */ }
-  };
+  return null;
 }
 
 async function readStdin(): Promise<string> {
