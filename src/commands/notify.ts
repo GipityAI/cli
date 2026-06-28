@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { resolveProjectContext } from '../config.js';
 import { bold, muted, success, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 
@@ -14,9 +14,10 @@ notifyCommand
   .option('--title <text>', 'Notification title', 'Test notification')
   .option('--body <text>', 'Notification body', 'Hello from Gipity Notify 👋')
   .option('--url <url>', 'URL to open when the notification is clicked')
+  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext({ projectOverride: opts.project });
     const to = opts.to === 'all' ? 'all' : (opts.to.includes(',') ? opts.to.split(',').map((s: string) => s.trim()) : opts.to);
     const notification: Record<string, string> = { title: opts.title, body: opts.body };
     if (opts.url) notification.url = opts.url;
@@ -37,9 +38,10 @@ notifyCommand
 notifyCommand
   .command('subs')
   .description('Show how many push subscriptions this app has, per user')
+  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext({ projectOverride: opts.project });
     const res = await get<{ data: { total: number; byUser: { user_guid: string; count: number }[] } }>(
       `/api/${config.projectGuid}/services/notify/subs`,
     );
@@ -53,9 +55,10 @@ notifyCommand
   .command('rm')
   .description("Remove a user's push subscriptions (e.g. on account deletion)")
   .requiredOption('--user <guid>', 'User guid whose subscriptions to remove')
+  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const config = requireConfig();
+    const { config } = await resolveProjectContext({ projectOverride: opts.project });
     const res = await post<{ data: { removed: number } }>(
       `/api/${config.projectGuid}/services/notify/remove`,
       { user_guid: opts.user },
