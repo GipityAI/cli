@@ -35,6 +35,7 @@ import { pageCommand } from './commands/page.js';
 import { recordsCommand } from './commands/records.js';
 import { fnCommand } from './commands/fn.js';
 import { serviceCommand } from './commands/service.js';
+import { notifyCommand } from './commands/notify.js';
 import { paymentsCommand } from './commands/payments.js';
 import { jobCommand } from './commands/job.js';
 import { rbacCommand } from './commands/rbac.js';
@@ -128,7 +129,7 @@ const commonGroup      = [skillCommand, projectCommand, addCommand, removeComman
 const connectGroup     = [claudeCommand, relayCommand];
 const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, syncCommand, pushCommand, uploadCommand];
-const appBuildingGroup = [testCommand, fnCommand, serviceCommand, paymentsCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
+const appBuildingGroup = [testCommand, fnCommand, serviceCommand, notifyCommand, paymentsCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
 const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand, textCommand];
 const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
 const setupGroup       = [loginCommand, logoutCommand, tokenCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
