@@ -475,12 +475,14 @@ async function downloadAll(
 }
 
 async function fetchOne(projectGuid: string, path: string): Promise<Buffer | null> {
-  // Exact single-file read first. The tree-tar endpoint below treats its `path`
-  // as a DIRECTORY prefix, so a single root file (e.g. `gipity.yaml`) comes back
-  // empty — which silently broke conflict restores and trapped sync in an
-  // unresolvable delete-vs-newer loop. `/files/read` is the exact-path endpoint
+  // Exact single-file read first. `/files/read` is the exact-path endpoint
   // (what `gipity file cat` uses); it returns text content, reliable for the
-  // config/code files that actually hit a restore. Binary falls through to tar.
+  // config/code files that actually hit a restore. Binary falls through to the
+  // tar path below, which now resolves an exact file path server-side (the
+  // /files/tree endpoint stats a non-directory `path` and packs that one file
+  // under its full name). Before that fix the tar endpoint treated `path` as a
+  // DIRECTORY prefix, so a single file came back empty and a dropped binary
+  // (e.g. an agent-generated image) could never be recovered.
   try {
     const res = await get<{ data: { content: string; mime?: string } }>(
       `/projects/${projectGuid}/files/read?path=${encodeURIComponent(path)}`,
