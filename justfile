@@ -46,11 +46,15 @@ cli-publish:
 cli-dev *ARGS:
     npm run build && node dist/index.js {{ARGS}}
 
-# Build and link CLI globally for local dev
+# Build and link CLI globally for local dev.
+# NOTE: this recipe can't rehash your shell itself (it runs in a subshell), so
+# after linking you must `hash -r` or `gipity` keeps resolving to the old path.
+# To do both in one step, source scripts/dev-shell.sh from your rc and run the
+# `go-cli-link` wrapper instead — it relinks AND rehashes your current shell.
 cli-link:
     npm uninstall -g gipity 2>/dev/null; npm unlink -g 2>/dev/null; just cli-build && npm link
     @echo ""
-    @echo "✓ Linked. If 'gipity' still points to a stale path in THIS shell, run: hash -r"
+    @echo "✓ Linked. Now run: hash -r   (or use 'go-cli-link' from scripts/dev-shell.sh, which does it for you)"
 
 # Reset to a clean first-run state: run `gipity uninstall` (stops daemon,
 # removes autostart, revokes device, wipes ~/.gipity/), then rebuild + relink,
