@@ -96,14 +96,21 @@ export const pageInspectCommand = new Command('inspect')
 
     const b = res.data;
 
-    // ── Strip the platform's own instrumentation noise first ──
-    // Every deployed page loads Gipity's injected analytics SDK, which POSTs to
-    // Gipity's traffic/error log endpoints (`/api/<guid>/log/traffic|error`).
-    // Those are platform infrastructure, not the app's resources, so when one
-    // fails it surfaces as a failed resource on the Gipity host PLUS a generic,
-    // URL-less "Failed to load resource" console error — identical noise on
-    // essentially every deployed app. Drop both so an agent inspecting the app
-    // it just built sees only its own code's resources, not the platform's.
+    // ── Move resource-load failures out of the console, where they're noise ──
+    // A sub-resource that returns an HTTP 4xx/5xx is reported twice: once in
+    // `failedResources` (CDP network layer — carries the full URL, method, and
+    // status) and once as a generic, URL-less console echo ("Failed to load
+    // resource: the server responded with a status of 404 ()"). The echo names
+    // nothing, so it can't be triaged on its own and only duplicates — worse —
+    // what `failedResources` already says with a URL. Drop one echo per failed
+    // resource we actually have, so every attributed failure (a real app 404 AND
+    // the platform's own injected-SDK telemetry-beacon 404, which 404s on
+    // essentially every deployed page) is surfaced exactly once, under Failed
+    // resources, with its URL — never as a bare, unattributable console line.
+    // Count BEFORE stripping the platform log endpoints below, so their echoes go
+    // too. Any SURPLUS echo (a failure the network drain missed, leaving
+    // failedResources short) is KEPT — a real problem is never hidden just because
+    // we couldn't name it.
     const isPlatformLog = (entry: string): boolean => {
       const urlPart = entry.replace(/\s*\([^)]*\)\s*$/, '');
       try {
@@ -113,22 +120,23 @@ export const pageInspectCommand = new Command('inspect')
         return false;
       }
     };
-    const platformFailures = (b.failedResources || []).filter(isPlatformLog);
-    b.failedResources = (b.failedResources || []).filter((r) => !isPlatformLog(r));
-    // Each failed platform POST also emits exactly one generic, URL-less
-    // "Failed to load resource" console error. Drop one per platform failure —
-    // the text is identical, so removing by count is exact and any genuine app
-    // 404 keeps its own (indistinguishable) line.
-    let platformConsoleToDrop = platformFailures.length;
-    if (platformConsoleToDrop > 0) {
+    let resourceEchoesToDrop = (b.failedResources || []).length;
+    if (resourceEchoesToDrop > 0) {
+      const isHttpStatusResourceError = (l: string): boolean =>
+        /^error:\s*Failed to load resource: the server responded with a status of \d{3}/i.test(l);
       b.console = (b.console || []).filter((l) => {
-        if (platformConsoleToDrop > 0 && /^error:\s*Failed to load resource:/i.test(l)) {
-          platformConsoleToDrop--;
+        if (resourceEchoesToDrop > 0 && isHttpStatusResourceError(l)) {
+          resourceEchoesToDrop--;
           return false;
         }
         return true;
       });
     }
+    // The injected analytics SDK POSTs to `/log/{traffic,error}` on the Gipity
+    // host; a failure there is platform infrastructure, not the app's, so strip it
+    // from the failed-resource list entirely (its console echo is already gone,
+    // dropped above with every other attributed failure).
+    b.failedResources = (b.failedResources || []).filter((r) => !isPlatformLog(r));
 
     // Pull message-less cross-origin "Script error." lines out first. They carry
     // no source/stack, so they're never actionable as app-code defects, and on a

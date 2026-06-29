@@ -108,7 +108,7 @@ test("gipity page inspect drops the platform's own traffic/error-log 404 noise f
   assert.doesNotMatch(r.stdout, /Failed to load resource/);
 });
 
-test('gipity page inspect keeps a real app 404 while dropping the platform log-endpoint noise', async () => {
+test('gipity page inspect surfaces a real app 404 (with URL) under Failed resources, not as a bare console echo', async () => {
   mock.reset();
   mock.on('POST /tools/browser/inspect', { body: { data: {
     ...baseBundle,
@@ -123,11 +123,31 @@ test('gipity page inspect keeps a real app 404 while dropping the platform log-e
   } } });
   const r = await run(['page', 'inspect', 'https://dev.gipity.ai/steve/app/']);
   assert.equal(r.status, 0, r.stderr);
+  // The real 404 is named — with its URL — under Failed resources.
   assert.match(r.stdout, /Failed resources \(1\)/);
   assert.match(r.stdout, /missing\.js \(404\)/);
   assert.doesNotMatch(r.stdout, /log\/traffic/);
-  // One generic console line stays (for the real 404); the platform one is gone.
+  // Both URL-less console echoes (one per attributed failure: the app 404 and the
+  // platform-log 404) are gone — no bare "Failed to load resource" line remains
+  // for the agent to chase or have to correlate by hand.
+  assert.match(r.stdout, /Console:\s*\(clean\)/);
+  assert.doesNotMatch(r.stdout, /Failed to load resource/);
+});
+
+test('gipity page inspect keeps an unattributed resource 404 in the console when failedResources cannot name it', async () => {
+  // Safety net: if the CDP network drain comes back empty (so failedResources
+  // can't account for a console 404), the echo is KEPT rather than silently
+  // dropped — a real failure must never be hidden just because we lack its URL.
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: {
+    ...baseBundle,
+    console: ['error: Failed to load resource: the server responded with a status of 404 ()'],
+    failedResources: [],
+  } } });
+  const r = await run(['page', 'inspect', 'https://dev.gipity.ai/steve/app/']);
+  assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Console \(1\)/);
+  assert.match(r.stdout, /Failed to load resource/);
 });
 
 test('gipity page eval redirects a JS-intent flag guess to the positional <expr> arg', async () => {
