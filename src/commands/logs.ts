@@ -4,6 +4,12 @@ import { requireConfig } from '../config.js';
 import { success, error as clrError, warning, muted, bold } from '../colors.js';
 import { run } from '../helpers/index.js';
 
+interface FnLogLine {
+  level: 'log' | 'warn' | 'error';
+  message: string;
+  timestamp: number;
+}
+
 interface FnLog {
   id: string;
   status: string;
@@ -11,6 +17,7 @@ interface FnLog {
   trigger_type: string;
   limits_consumed: Record<string, number> | null;
   error_message: string | null;
+  logs: FnLogLine[] | null;
   created_at: string;
 }
 
@@ -67,6 +74,13 @@ logsCommand
       const trigger = muted(log.trigger_type.padEnd(8));
       const err = log.error_message ? `  ${clrError(`"${log.error_message}"`)}` : '';
       console.log(`${muted(time)}  ${status} ${dur} ${trigger}${err}`);
+      // Captured console.log/warn/error output for this invocation, indented
+      // under its summary line. Empty for calls that printed nothing.
+      for (const line of log.logs ?? []) {
+        const lvlColor = line.level === 'error' ? clrError : line.level === 'warn' ? warning : muted;
+        const tag = line.level === 'log' ? '' : `${line.level}: `;
+        console.log(`${muted('         │')} ${lvlColor(`${tag}${line.message}`)}`);
+      }
     }
   }));
 

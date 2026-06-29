@@ -45,6 +45,22 @@ test('gipity fn logs <name> shows status + duration + error_message', async () =
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity fn logs <name> renders captured console output beneath each run (WT-363)', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/functions/hello/logs', { body: { data: [
+    { status: 'success', duration_ms: 42, trigger_type: 'http', error_message: null, created_at: '2026-05-01T10:00:00Z',
+      logs: [
+        { level: 'log', message: 'hello from fn', timestamp: 1 },
+        { level: 'error', message: 'kaboom inside', timestamp: 2 },
+      ] },
+  ] } });
+  const r = await fresh(['fn', 'logs', 'hello']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /hello from fn/);
+  assert.match(r.stdout, /error: kaboom inside/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
 test('gipity fn call <name> posts and prints JSON', async () => {
   mock.reset();
   mock.on('POST /api/p_TestProj/fn/hello', { body: { data: { greeting: 'Hello!' } } });

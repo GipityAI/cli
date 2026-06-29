@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get, post, del } from '../api.js';
 import { requireConfig } from '../config.js';
-import { error as clrError, bold, muted, success } from '../colors.js';
+import { error as clrError, bold, muted, success, warning } from '../colors.js';
 import { run, printList, emitField } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
@@ -37,8 +37,15 @@ fnCommand
       const dur = log.duration_ms != null ? `${log.duration_ms}ms` : '?';
       const ts = new Date(log.created_at).toLocaleString();
       const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : muted;
-      const line = `${statusColor(log.status)}  ${dur}  ${muted(log.trigger_type || 'http')}  ${muted(ts)}`;
-      return log.error_message ? `${line}\n${clrError(`error: ${log.error_message}`)}` : line;
+      let line = `${statusColor(log.status)}  ${dur}  ${muted(log.trigger_type || 'http')}  ${muted(ts)}`;
+      if (log.error_message) line += `\n${clrError(`error: ${log.error_message}`)}`;
+      // Captured console.log/warn/error output for this invocation.
+      for (const entry of (log.logs ?? []) as Array<{ level: string; message: string }>) {
+        const lvlColor = entry.level === 'error' ? clrError : entry.level === 'warn' ? warning : muted;
+        const tag = entry.level === 'log' ? '' : `${entry.level}: `;
+        line += `\n  ${lvlColor(`${tag}${entry.message}`)}`;
+      }
+      return line;
     });
   }));
 

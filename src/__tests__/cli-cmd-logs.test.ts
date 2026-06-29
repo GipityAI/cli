@@ -35,6 +35,36 @@ test('gipity logs fn <name> shows the function error_message when present', asyn
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity logs fn <name> renders captured console.log/warn/error lines (WT-363)', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/functions/hello/logs', { body: { data: [
+    { id: '1', status: 'success', duration_ms: 50, trigger_type: 'http', limits_consumed: null, error_message: null,
+      logs: [
+        { level: 'log', message: 'order 42 created', timestamp: 1 },
+        { level: 'warn', message: 'low stock', timestamp: 2 },
+        { level: 'error', message: 'charge failed', timestamp: 3 },
+      ],
+      created_at: '2026-05-01T11:00:00Z' },
+  ] } });
+  const r = await fresh(['logs', 'fn', 'hello']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /order 42 created/);
+  assert.match(r.stdout, /warn: low stock/);
+  assert.match(r.stdout, /error: charge failed/);
+});
+
+test('gipity logs fn <name> --json passes the logs array through verbatim', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/functions/hello/logs', { body: { data: [
+    { id: '1', status: 'success', duration_ms: 50, trigger_type: 'http', limits_consumed: null, error_message: null,
+      logs: [{ level: 'log', message: 'hi', timestamp: 1 }], created_at: '2026-05-01T11:00:00Z' },
+  ] } });
+  const r = await fresh(['logs', 'fn', 'hello', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout);
+  assert.deepEqual(parsed[0].logs, [{ level: 'log', message: 'hi', timestamp: 1 }]);
+});
+
 test('gipity logs fn <name> prints empty-history message when no entries', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/functions/hello/logs', { body: { data: [] } });
