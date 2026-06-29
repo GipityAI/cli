@@ -28,8 +28,15 @@ export function printCommandError(label: string, err: any): void {
   console.error(clrError(`${label} failed: ${err.message}`));
 }
 
-export function run(label: string, action: () => Promise<void>): void {
-  action().catch((err: any) => {
+// Returns the action's promise so Commander can await it. This matters for the
+// central output frame (installOutputFrame): Commander chains the `postAction`
+// hook off whatever the action handler returns, and only waits when that value
+// is thenable. Return `void` here and the trailing blank line fires before the
+// command's async output has even printed — the frame's leading blank then reads
+// as a double blank above the result, with none below it. Returning the promise
+// keeps the frame's boundaries (one blank above, one below) correctly ordered.
+export function run(label: string, action: () => Promise<void>): Promise<void> {
+  return action().catch((err: any) => {
     printCommandError(label, err);
     process.exit(1);
   });
