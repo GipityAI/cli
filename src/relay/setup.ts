@@ -105,6 +105,9 @@ export function startDaemon(): void {
       detached: true,
       stdio: 'ignore',
     });
+    // A spawn 'error' arrives asynchronously and bypasses the try/catch; swallow
+    // it so a launch failure stays best-effort instead of crashing the process.
+    child.on('error', () => {});
     child.unref();
   } catch {
     /* best-effort */

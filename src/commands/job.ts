@@ -236,6 +236,15 @@ jobCommand
 
     const runArgs = ['run', ...sharedArgs, '--entrypoint', 'sh', opts.image, '-c', shellCmd];
     const child = spawn('docker', runArgs, { stdio: 'inherit' });
+    // A missing `docker` binary is reported asynchronously via 'error' (not a
+    // throw), so a try/catch can't stop it - without this handler Node crashes
+    // with a raw stack trace instead of a clear message.
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      console.error(clrError(err.code === 'ENOENT'
+        ? 'Docker not found. Install Docker to use `gipity job run-local`.'
+        : `Failed to launch docker: ${err.message}`));
+      process.exit(1);
+    });
     child.on('exit', (code) => {
       if (code === 0) console.error(muted(`[run-local] ${success('done')}`));
       else console.error(muted(`[run-local] ${clrError('failed')} (exit ${code})`));

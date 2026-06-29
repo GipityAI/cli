@@ -104,37 +104,13 @@ test('gipity credits usage --json emits raw entries (parent/child --json collisi
   assert.equal(parsed[0].operation, 'llm_chat');
 });
 
-test('gipity credits status reports Stripe mode + config flags', async () => {
-  mock.reset();
-  mock.on('GET /admin/billing-status', { body: { data: {
-    mode: 'test',
-    secretKeyConfigured: true,
-    webhookSecretConfigured: true,
-    webhookPath: '/credits/stripe-webhook',
-    packsConfigured: true,
-    packsError: null,
-    testPackConfigured: false,
-    packs: [{ name: '20,000 Credits', priceId: 'price_20k', amountUsd: 20, credits: 20000, hidden: false }],
-    subscriptionPlans: [{ tier: 'pro', name: 'Gipity Pro', priceIdConfigured: true }],
-  } } });
-
-  const r = await runCliAsync(['--api-base', mock.apiBase, 'credits', 'status'], { env: { HOME: home } });
+test('gipity credits buy exits cleanly when no browser launcher is available (no unhandled spawn error)', async () => {
+  // Empty PATH so the browser-launcher spawn (xdg-open / open) fails to resolve,
+  // reproducing the WSL/minimal-Linux case where it errors ASYNCHRONOUSLY. The CLI
+  // must swallow that 'error' event and still exit 0 - previously this crashed the
+  // process with an unhandled 'error' event and a node:events stack trace.
+  const r = await runCliAsync(['credits', 'buy'], { env: { HOME: home, PATH: '' } });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Stripe mode:\s*test/);
-  assert.match(r.stdout, /Webhook secret:/);
-  assert.match(r.stdout, /Test pack \(\$1\):/);
-  assert.match(r.stdout, /20,000 Credits/);
-  assert.match(r.stdout, /Gipity Pro \(pro\)/);
-  assert.doesNotMatch(r.stdout, /undefined/);
-});
-
-test('gipity credits status --json emits the raw status payload', async () => {
-  mock.reset();
-  mock.on('GET /admin/billing-status', { body: { data: { mode: 'live', secretKeyConfigured: true, webhookSecretConfigured: false, webhookPath: '/credits/stripe-webhook', packsConfigured: true, packsError: null, testPackConfigured: true, packs: [], subscriptionPlans: [] } } });
-
-  const r = await runCliAsync(['--api-base', mock.apiBase, 'credits', 'status', '--json'], { env: { HOME: home } });
-  assert.equal(r.status, 0, r.stderr);
-  const parsed = JSON.parse(r.stdout.trim());
-  assert.equal(parsed.mode, 'live');
-  assert.equal(parsed.webhookSecretConfigured, false);
+  assert.match(r.stdout, /Opening .*\/pricing/);
+  assert.doesNotMatch(r.stderr, /Unhandled 'error' event|node:events/);
 });

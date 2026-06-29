@@ -49,6 +49,8 @@ test('gipity generate surfaces an out-of-credits 402 with the buy link', async (
   assert.match(r.stderr, /out of Gipity credits/i);
   // ...and the buy link from the server message is preserved.
   assert.match(r.stderr, /https:\/\/prompt\.gipity\.ai\/pricing/);
+  // ...plus the actionable CLI next-step so the user knows how to top up.
+  assert.match(r.stderr, /gipity credits buy/);
 });
 
 test('gipity generate speech --provider POSTs and writes the audio file', async () => {

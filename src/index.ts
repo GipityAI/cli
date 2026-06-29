@@ -327,4 +327,7 @@ if (mappedCmd) {
   }
 }
 
-program.parse(normalizeAliases(process.argv, program));
+// parseAsync (not parse) so commander awaits each command's returned promise
+// before its postAction hook - that ordering is what keeps the output frame's
+// trailing blank line after the command's async output instead of before it.
+await program.parseAsync(normalizeAliases(process.argv, program));

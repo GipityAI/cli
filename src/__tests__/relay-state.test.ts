@@ -112,6 +112,7 @@ describe('relay daemon pid lock: stale-file recovery', () => {
 
     // A real, now-dead pid: spawn a child, kill it, wait for it to exit.
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
+    child.on('error', () => {}); // async spawn error must not crash the test run
     const deadPid = child.pid!;
     await new Promise<void>(res => { child.once('exit', () => res()); child.kill('SIGKILL'); });
 
@@ -140,6 +141,7 @@ describe('relay daemon pid lock: stale-file recovery', () => {
     mkdirSync(dir, { recursive: true });
     // A genuinely-other live process (not us): a long-lived child.
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
+    child.on('error', () => {}); // async spawn error must not crash the test run
     const livePid = child.pid!;
     try {
       const pidPath = join(dir, 'relay.pid');

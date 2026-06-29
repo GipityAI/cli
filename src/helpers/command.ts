@@ -23,6 +23,7 @@ export function printCommandError(label: string, err: any): void {
   if (err?.code === 'INSUFFICIENT_CREDITS') {
     console.error(clrError(`${label} failed - out of Gipity credits.`));
     console.error(err.message);
+    console.error("Run 'gipity credits' to see your balance, or 'gipity credits buy' to top up.");
     return;
   }
   console.error(clrError(`${label} failed: ${err.message}`));

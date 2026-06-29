@@ -302,6 +302,14 @@ relayCommand
         process.exit(1);
       }
       const child = spawn(tailCmd, ['-f', '-n', '0', path], { stdio: 'inherit' });
+      // `tail` missing surfaces asynchronously via 'error' (not a throw); without
+      // this handler Node would crash with a raw stack trace.
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        console.error(clrError(err.code === 'ENOENT'
+          ? "`tail` not found - can't follow the log on this system."
+          : `Failed to follow log: ${err.message}`));
+        process.exit(1);
+      });
       process.on('SIGINT', () => child.kill('SIGINT'));
       child.on('exit', code => process.exit(code ?? 0));
     }

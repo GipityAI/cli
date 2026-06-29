@@ -914,6 +914,16 @@ export const claudeCommand = new Command('claude')
         cwd: process.cwd(),
         env: childEnv,
       });
+      // A spawn failure (missing/non-executable binary) arrives asynchronously via
+      // 'error', which the surrounding try/catch can't catch - without this handler
+      // Node crashes with a raw stack trace. claude is normally installed above, so
+      // this is a defensive fallback.
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        console.error(`\n  ${clrError(err.code === 'ENOENT'
+          ? `Claude Code not found. Install it: npm install -g ${CLAUDE_PACKAGE}`
+          : `Failed to launch Claude Code: ${err.message}`)}`);
+        process.exit(1);
+      });
       child.on('exit', (code) => {
         const doneLine = `Done (${formatElapsed(Date.now() - runStart)})`;
         if (nonInteractive) process.stderr.write(`\n${doneLine}\n\n`);

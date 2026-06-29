@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
 import { get } from '../api.js';
-import { brand, muted, success, error as clrError } from '../colors.js';
+import { brand, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
 const PRICING_URL = 'https://prompt.gipity.ai/pricing';
@@ -15,9 +15,16 @@ function openInBrowser(url: string): void {
     process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] as const :
     ['xdg-open', [url]] as const;
   try {
-    spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    // A missing/non-executable launcher (ENOENT, or EACCES on WSL/minimal Linux
+    // where xdg-open isn't runnable) is reported ASYNCHRONOUSLY via an 'error'
+    // event - not a throw - so the try/catch alone can't stop it. With no
+    // listener Node escalates it to an unhandled 'error' and crashes the whole
+    // process. Swallow it; the caller already printed the URL as the fallback.
+    child.on('error', () => {});
+    child.unref();
   } catch {
-    // Spawn failed (no xdg-open on minimal Linux, etc.) - caller prints the URL.
+    // Synchronous spawn failure - caller prints the URL.
   }
 }
 
@@ -30,18 +37,6 @@ interface BalanceData {
 interface SubscriptionData {
   tier: string;
   status: string;
-}
-
-interface BillingStatus {
-  mode: string;
-  secretKeyConfigured: boolean;
-  webhookSecretConfigured: boolean;
-  webhookPath: string;
-  packsConfigured: boolean;
-  packsError: string | null;
-  testPackConfigured: boolean;
-  packs: Array<{ name: string; priceId: string; amountUsd: number; credits: number; hidden: boolean }>;
-  subscriptionPlans: Array<{ tier: string; name: string; priceIdConfigured: boolean }>;
 }
 
 interface UsageEntry {
@@ -87,40 +82,12 @@ creditsCommand
   }));
 
 creditsCommand
-  .command('status')
-  .description('Show billing/Stripe configuration health (admin only)')
-  .option('--json', 'Output as JSON')
-  // optsWithGlobals(): the parent `credits` command also declares --json, which
-  // commander binds to the parent - so read merged opts to see the flag here.
-  .action((_opts, cmd: Command) => run('Billing status', async () => {
-    const opts = cmd.optsWithGlobals();
-    const res = await get<{ data: BillingStatus }>('/admin/billing-status');
-    const s = res.data;
-    if (opts.json) {
-      console.log(JSON.stringify(s));
-      return;
-    }
-    const mark = (ok: boolean) => (ok ? success('✓') : clrError('✗'));
-    console.log(`Stripe mode:     ${brand(s.mode)}`);
-    console.log(`Secret key:      ${mark(s.secretKeyConfigured)}`);
-    console.log(`Webhook secret:  ${mark(s.webhookSecretConfigured)}  ${muted(`endpoint ${s.webhookPath}`)}`);
-    console.log(`Credit packs:    ${mark(s.packsConfigured)}${s.packsError ? `  ${clrError(s.packsError)}` : ''}`);
-    for (const p of s.packs) {
-      console.log(`  ${p.name}  ${muted(p.priceId)}${p.hidden ? muted(' [hidden]') : ''}`);
-    }
-    console.log(`Test pack ($1):  ${mark(s.testPackConfigured)}  ${muted('set STRIPE_PACK_TEST_PRICE_ID to enable a cheap purchase smoke test')}`);
-    console.log('Subscription plans:');
-    for (const pl of s.subscriptionPlans) {
-      console.log(`  ${pl.name} (${pl.tier})  ${mark(pl.priceIdConfigured)}`);
-    }
-  }));
-
-creditsCommand
   .command('usage')
   .description('Show recent usage')
   .option('--limit <n>', 'Number of entries', '20')
   .option('--json', 'Output as JSON')
-  // optsWithGlobals(): parent `credits` also declares --json (see status above).
+  // optsWithGlobals(): the parent `credits` command also declares --json, which
+  // commander binds to the parent - so read merged opts to see the flag here.
   .action((_opts, cmd: Command) => run('Usage', async () => {
     const opts = cmd.optsWithGlobals();
     const limit = parseInt(opts.limit, 10) || 20;

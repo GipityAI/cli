@@ -30,6 +30,9 @@ function startBackgroundUpdater(): void {
       stdio: 'ignore',
       env: process.env,
     });
+    // Async spawn 'error' bypasses the try/catch; swallow so the best-effort
+    // updater never crashes the CLI.
+    child.on('error', () => {});
     child.unref();
   } catch { /* updater is best-effort, never block */ }
 }
