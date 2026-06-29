@@ -183,6 +183,7 @@ GCC/Rust).
         outputFiles?: string[];
         mirroredCount?: number;
         autoMirrorSkipped?: { reason: string; totalBytes: number };
+        mirrorWarnings?: string[];
       };
     };
     // The run blocks until the sandbox finishes (up to the timeout); animate the
@@ -213,6 +214,10 @@ GCC/Rust).
     } else {
       if (res.data.autoMirrorSkipped) {
         console.error(dim(`Note: ${res.data.autoMirrorSkipped.reason}`));
+      }
+      if (res.data.mirrorWarnings && res.data.mirrorWarnings.length > 0) {
+        console.error(dim(`Note: ${res.data.mirrorWarnings.length} project file(s) could not be mirrored into the sandbox and were skipped:`));
+        for (const w of res.data.mirrorWarnings) console.error(dim(`  - ${w}`));
       }
       if (res.data.stdout) console.log(res.data.stdout);
       if (res.data.stderr) console.error(res.data.stderr);
