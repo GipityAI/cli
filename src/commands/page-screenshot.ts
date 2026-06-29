@@ -136,7 +136,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   // is applied in the merge instead.
   .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms (default: 1000)')
   .option('--action <js>', 'Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs after the post-load delay, then settles again before the shot.')
-  .option('--full', 'Capture the full scrollable page (default: viewport only)')
+  .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
@@ -277,16 +277,18 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
   }));
 
-// `screenshot` captures the page AFTER load + settle (+ optional --action). It does
-// NOT scroll or wait for a selector before capture (agents reach for --scroll/
-// --selector and get an unknown-option detour). State the supported levers right
-// here, so the help (rendered on any bad flag, and this 'after' block survives
-// `| tail`/`| grep`) ends the hunt in one shot. --action covers "click, then shoot";
-// --full + crop covers off-screen regions; `page eval` reads data without a picture.
+// `screenshot` captures the page AFTER load + settle (+ optional --action). There
+// is no scroll-to-a-position or wait-for-a-selector lever (agents reach for
+// --scroll/--selector and get an unknown-option detour) — but `--full` does walk
+// the page top→bottom→top before the shot so scroll-reveal content paints in.
+// State the supported levers right here, so the help (rendered on any bad flag,
+// and this 'after' block survives `| tail`/`| grep`) ends the hunt in one shot.
+// --action covers "click, then shoot"; --full + crop covers off-screen regions
+// (and triggers reveals); `page eval` reads data without a picture.
 pageScreenshotCommand.addHelpText('after', `
 Examples:
   gipity page screenshot "https://dev.gipity.ai/me/app/"
-  gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page
+  gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page (scroll-reveal sections triggered)
   gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
   gipity page screenshot "https://dev.gipity.ai/me/app/" \\
     --action "document.getElementById('play').click()"                   # capture an in-game frame
