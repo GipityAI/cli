@@ -111,7 +111,7 @@ Run \`gipity --help\` for the full list. Use \`--help\` on any command for detai
 
 Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** - read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
 
-Tests write to your real DB: \`gipity test\` runs the test code sandboxed, but \`ctx.fn.call\`/\`callAs\` hit your actual deployed functions, which write to the same project database the app reads from - rows a test creates persist and surface on the live page. Register \`ctx.cleanup(fn)\` in any write-test to delete what it made; the harness runs every cleanup after the suite (even on failure).
+Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.fn.call\`/\`callAs\` at a throwaway copy of your database (your \`migrations/\` + \`seeds/\`), reset (truncate + reseed) before every run - so test rows never reach the deployed app and you don't write teardown. Functions see \`ctx.isTest === true\` during a run (use it to skip your own rate limiting); the platform also suppresses \`notify()\` push so a suite can't spam subscribers. Reference data tests need goes in seed files; a runtime-written settings table that isn't seeded goes under \`test.preserve\` in \`gipity.yaml\`. Build per-file fixtures in \`setup(fn)\` → \`ctx.fixtures\`, and namespace unique values with \`ctx.testId\`.
 
 ## Tool output is complete and synchronous
 
