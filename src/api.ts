@@ -61,6 +61,35 @@ function usingEnvToken(): boolean {
   return !!process.env.GIPITY_TOKEN?.trim();
 }
 
+// A transient 401 on a session token means the access token the server just saw
+// is dead NOW — it lapsed at the refresh boundary, a sibling `gipity` process
+// sharing this auth.json rotated the single-use refresh token out from under us,
+// or clock skew put us past expiry while the 5-min refresh buffer still read
+// "fresh". refreshTokenIfNeeded's fast-path skips a locally-fresh token, so we
+// force a refresh and replay the call once. This self-heals the intermittent
+// "Session expired" that surfaced on `page eval` (a kickoff POST plus a long GET
+// poll loop crosses the refresh boundary many times). These two helpers carry
+// that behavior to EVERY authenticated entry point — including the streaming and
+// download paths (downloadStream → sync, postForTarEntries → page screenshot)
+// that bypass request() — so one raced 401 can't hard-fail them either.
+
+/** Decide whether to replay an authenticated call after a 401: force one token
+ *  refresh and return true if the caller should retry. False for an env-token
+ *  caller (static, unrefreshable), an already-retried call, a non-401, or an
+ *  unrecoverable session — the caller then surfaces the error. */
+async function shouldRetryAfter401(status: number, retried: boolean): Promise<boolean> {
+  if (status !== 401 || retried || usingEnvToken()) return false;
+  return forceRefreshAccessToken();
+}
+
+/** Append a re-login hint to a 401 message for session users. A 401 that
+ *  survived the refresh-and-retry is an unrecoverable session (the refresh token
+ *  is gone too); env-token callers authenticate differently, so don't misdirect
+ *  them. */
+function with401Hint(status: number, message: string): string {
+  return status === 401 && !usingEnvToken() ? `${message} — run: gipity login` : message;
+}
+
 async function getHeaders(): Promise<Record<string, string>> {
   return {
     ...clientHeaders(),
@@ -96,33 +125,14 @@ async function request<T>(method: string, path: string, body?: unknown, retrying
     body: body ? JSON.stringify(body) : undefined,
   }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
 
-  // A transient 401 on a session token: the access token the server just saw is
-  // dead NOW — it lapsed at the refresh boundary, a sibling `gipity` process
-  // sharing this auth.json rotated the single-use refresh token out from under
-  // us, or clock skew put us past expiry while the 5-min refresh buffer still
-  // read "fresh". refreshTokenIfNeeded's fast-path skips a locally-fresh token,
-  // so force a refresh and replay the call once. This self-heals the intermittent
-  // "Session expired" that surfaced on `page eval` — a kickoff POST plus a long
-  // GET poll loop is many requests crossing the refresh boundary, and a single
-  // 401 anywhere in that loop used to fail the whole command. Env-token
-  // (GIPITY_TOKEN) callers can't refresh — a static agent token that 401s is
-  // genuinely bad — so they fall straight through to the error.
-  if (res.status === 401 && !retrying && !usingEnvToken()) {
-    if (await forceRefreshAccessToken()) {
-      return request<T>(method, path, body, true);
-    }
+  if (await shouldRetryAfter401(res.status, retrying)) {
+    return request<T>(method, path, body, true);
   }
 
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    // A 401 that survived the refresh-and-retry above is an unrecoverable session
-    // (the refresh token is gone too). Point session users at re-login; env-token
-    // callers authenticate differently, so don't misdirect them.
-    const message = res.status === 401 && !usingEnvToken()
-      ? `${err.message} — run: gipity login`
-      : err.message;
-    throw new ApiError(res.status, err.code, message, json.data);
+    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
   }
 
   return res.json() as Promise<T>;
@@ -141,6 +151,7 @@ export function post<T>(path: string, body?: unknown): Promise<T> {
 export async function postForTarEntries(
   path: string,
   body?: unknown,
+  retried = false,
 ): Promise<Array<{ name: string; buffer: Buffer }>> {
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;
@@ -149,10 +160,13 @@ export async function postForTarEntries(
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (await shouldRetryAfter401(res.status, retried)) {
+    return postForTarEntries(path, body, true);
+  }
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, err.message, json.data);
+    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
   }
   if (!res.body) throw new ApiError(500, 'EMPTY_RESPONSE', 'Server returned no body');
 
@@ -215,21 +229,24 @@ export async function sendMessage(message: string): Promise<string> {
 }
 
 /** Download a file as raw bytes (no JSON parsing) */
-export async function download(path: string): Promise<Buffer> {
+export async function download(path: string, retried = false): Promise<Buffer> {
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
     headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
   });
 
+  if (await shouldRetryAfter401(res.status, retried)) {
+    return download(path, true);
+  }
   if (!res.ok) {
-    throw new ApiError(res.status, 'DOWNLOAD_ERROR', `Download failed: ${res.statusText}`);
+    throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: ${res.statusText}`));
   }
 
   return Buffer.from(await res.arrayBuffer());
 }
 
 /** Download a response as a Node.js Readable stream */
-export async function downloadStream(path: string): Promise<import('stream').Readable> {
+export async function downloadStream(path: string, retried = false): Promise<import('stream').Readable> {
   const { Readable } = await import('stream');
   const url = `${baseUrl()}${path}`;
   // Bound time-to-first-byte only: abort if no RESPONSE within the header window,
@@ -253,8 +270,11 @@ export async function downloadStream(path: string): Promise<import('stream').Rea
     clearTimeout(headerTimer);
   }
 
+  if (await shouldRetryAfter401(res.status, retried)) {
+    return downloadStream(path, true);
+  }
   if (!res.ok) {
-    throw new ApiError(res.status, 'DOWNLOAD_ERROR', `Download failed: ${res.statusText}`);
+    throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: ${res.statusText}`));
   }
 
   return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
