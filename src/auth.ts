@@ -140,15 +140,22 @@ export async function acquireRefreshLock(): Promise<(() => void) | null> {
  *  others wait, re-read the file, and ADOPT the freshly-rotated token. If the lock
  *  can't be had in time we still try (re-reading first), so this never hangs a command.
  *  Stays void / never throws / never clears auth: a genuine dead token still flows to
- *  the caller's existing 401 path (which messages "run: gipity login"). */
-export async function refreshTokenIfNeeded(): Promise<void> {
+ *  the caller's existing 401 path (which messages "run: gipity login").
+ *
+ *  `force` is for the post-401 recovery path: when the server has just REJECTED the
+ *  access token, the local 5-min freshness check is no longer trustworthy (clock
+ *  skew put us past expiry while the buffer still read "fresh", or a sibling rotated
+ *  the refresh token out from under us). Force skips every "looks fresh, skip the
+ *  refresh" shortcut and performs the refresh round-trip unconditionally, so a token
+ *  the server considers dead actually gets replaced instead of re-sent. */
+export async function refreshTokenIfNeeded(force = false): Promise<void> {
   const auth = readAuthFresh();        // never the cache — a sibling may have rotated
   if (!auth) return;                   // not logged in - caller throws the clean error
   cached = auth;
 
   const buffer = 5 * 60 * 1000;        // refresh 5 min before the access token lapses
   const fresh = (a: AuthData) => Date.now() <= new Date(a.expiresAt).getTime() - buffer;
-  if (fresh(auth)) return;             // fast path: token still good, no lock needed
+  if (!force && fresh(auth)) return;   // fast path: token still good, no lock needed
 
   // If the refresh token itself has expired, re-login is genuinely required; leave the
   // expired auth in place so the caller's existing 401 path prompts `gipity login`.
@@ -158,16 +165,18 @@ export async function refreshTokenIfNeeded(): Promise<void> {
   // Serialize with sibling processes so we don't race the single-use refresh token.
   const release = await acquireRefreshLock();
   try {
-    // Re-check under the lock: a sibling may have refreshed while we waited.
+    // Re-check under the lock: a sibling may have refreshed while we waited. Under
+    // force we skip this adopt — a locally-"fresh" token is exactly what the server
+    // just rejected, so we must actually refresh rather than re-adopt it.
     const held = readAuthFresh();
-    if (held && fresh(held)) { cached = held; return; }
+    if (!force && held && fresh(held)) { cached = held; return; }
 
     const { resolveApiBase } = await import('./config.js');
     const apiBase = resolveApiBase();
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       const cur = readAuthFresh();     // a sibling may have just refreshed for us
-      if (cur && fresh(cur)) { cached = cur; return; }
+      if (!force && cur && fresh(cur)) { cached = cur; return; }
       const refreshToken = cur?.refreshToken ?? auth.refreshToken;
 
       let res: Response;
@@ -205,4 +214,17 @@ export async function refreshTokenIfNeeded(): Promise<void> {
   } finally {
     if (release) release();
   }
+}
+
+/** Recover from a live 401 on a session token: force a refresh round-trip
+ *  (bypassing the local freshness fast-path, since the server has already
+ *  rejected the token the local clock still thinks is fine) and report whether
+ *  we now hold a usable, unexpired access token. The API layer calls this once
+ *  on a 401 and retries the request only when it returns true — turning a
+ *  transient/raced "Session expired" into a self-healing retry instead of a hard
+ *  failure. Returns false when the refresh token itself is gone (genuine
+ *  re-login required), so the caller surfaces the error instead of looping. */
+export async function forceRefreshAccessToken(): Promise<boolean> {
+  await refreshTokenIfNeeded(true);
+  return !accessTokenExpired();
 }

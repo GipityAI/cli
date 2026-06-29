@@ -1,6 +1,6 @@
 import { Readable } from 'stream';
 import * as tar from 'tar-stream';
-import { getAuth, refreshTokenIfNeeded } from './auth.js';
+import { getAuth, refreshTokenIfNeeded, forceRefreshAccessToken } from './auth.js';
 import { resolveApiBase, requireConfig, saveConfig } from './config.js';
 import { clientHeaders } from './client-context.js';
 
@@ -53,6 +53,14 @@ async function bearerToken(): Promise<string> {
   return auth.accessToken;
 }
 
+/** True when a long-lived agent API token (GIPITY_TOKEN) is in play. Such a token
+ *  is static — it can't be refreshed — so the 401 self-heal path must skip it and
+ *  the "run: gipity login" hint must not be shown (that's the wrong recovery for
+ *  env-token callers). */
+function usingEnvToken(): boolean {
+  return !!process.env.GIPITY_TOKEN?.trim();
+}
+
 async function getHeaders(): Promise<Record<string, string>> {
   return {
     ...clientHeaders(),
@@ -78,7 +86,7 @@ export async function getAuthHeader(): Promise<string | undefined> {
   return headers.Authorization;
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, retrying = false): Promise<T> {
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;
 
@@ -88,10 +96,33 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body ? JSON.stringify(body) : undefined,
   }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
 
+  // A transient 401 on a session token: the access token the server just saw is
+  // dead NOW — it lapsed at the refresh boundary, a sibling `gipity` process
+  // sharing this auth.json rotated the single-use refresh token out from under
+  // us, or clock skew put us past expiry while the 5-min refresh buffer still
+  // read "fresh". refreshTokenIfNeeded's fast-path skips a locally-fresh token,
+  // so force a refresh and replay the call once. This self-heals the intermittent
+  // "Session expired" that surfaced on `page eval` — a kickoff POST plus a long
+  // GET poll loop is many requests crossing the refresh boundary, and a single
+  // 401 anywhere in that loop used to fail the whole command. Env-token
+  // (GIPITY_TOKEN) callers can't refresh — a static agent token that 401s is
+  // genuinely bad — so they fall straight through to the error.
+  if (res.status === 401 && !retrying && !usingEnvToken()) {
+    if (await forceRefreshAccessToken()) {
+      return request<T>(method, path, body, true);
+    }
+  }
+
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, err.message, json.data);
+    // A 401 that survived the refresh-and-retry above is an unrecoverable session
+    // (the refresh token is gone too). Point session users at re-login; env-token
+    // callers authenticate differently, so don't misdirect them.
+    const message = res.status === 401 && !usingEnvToken()
+      ? `${err.message} — run: gipity login`
+      : err.message;
+    throw new ApiError(res.status, err.code, message, json.data);
   }
 
   return res.json() as Promise<T>;
