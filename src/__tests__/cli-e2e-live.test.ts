@@ -169,4 +169,45 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.match(r.stdout, /Gipity CLI - doctor/);
     assert.match(r.stdout, /shim version/);
   });
+
+  it('10a. secrets set + list (project) stores it and masks the value', () => {
+    const set = cli(['secrets', 'set', 'E2E_PROJECT_KEY', 'proj-secret-value-1234']);
+    assert.equal(set.status, 0, `secrets set failed: ${set.stderr || set.stdout}`);
+
+    const list = cli(['secrets', 'list', '--json']);
+    assert.equal(list.status, 0, `secrets list failed: ${list.stderr || list.stdout}`);
+    const rows = JSON.parse(list.stdout) as Array<{ name: string; preview: string | null }>;
+    const row = rows.find((s) => s.name === 'E2E_PROJECT_KEY');
+    assert.ok(row, 'E2E_PROJECT_KEY not in list');
+    assert.equal(row!.preview, '1234');
+    // The raw value must never appear in CLI output.
+    assert.doesNotMatch(list.stdout, /proj-secret-value-1234/);
+  });
+
+  it('10b. secrets rm (project) removes it', () => {
+    const rm = cli(['secrets', 'rm', 'E2E_PROJECT_KEY']);
+    assert.equal(rm.status, 0, `secrets rm failed: ${rm.stderr || rm.stdout}`);
+    const rows = JSON.parse(cli(['secrets', 'list', '--json']).stdout) as Array<{ name: string }>;
+    assert.ok(!rows.find((s) => s.name === 'E2E_PROJECT_KEY'), 'secret still present after rm');
+  });
+
+  it('10c. account-scoped secret set/list/rm, isolated from project scope', () => {
+    // Unique name: the cli-e2e account is shared + persistent (not deleted in
+    // afterAll), so we must clean up and avoid colliding with a concurrent run.
+    const name = `E2E_ACCT_KEY_${Date.now().toString(36).toUpperCase()}`;
+    const set = cli(['secrets', 'set', name, 'acct-secret-value-5678', '--account']);
+    assert.equal(set.status, 0, `account set failed: ${set.stderr || set.stdout}`);
+
+    const acct = JSON.parse(cli(['secrets', 'list', '--account', '--json']).stdout) as Array<{ name: string }>;
+    assert.ok(acct.find((s) => s.name === name), 'account secret not in --account list');
+
+    // Must NOT appear in the project-scoped listing.
+    const proj = JSON.parse(cli(['secrets', 'list', '--json']).stdout) as Array<{ name: string }>;
+    assert.ok(!proj.find((s) => s.name === name), 'account secret leaked into project list');
+
+    const rm = cli(['secrets', 'rm', name, '--account']);
+    assert.equal(rm.status, 0, `account rm failed: ${rm.stderr || rm.stdout}`);
+    const after = JSON.parse(cli(['secrets', 'list', '--account', '--json']).stdout) as Array<{ name: string }>;
+    assert.ok(!after.find((s) => s.name === name), 'account secret still present after rm');
+  });
 });
