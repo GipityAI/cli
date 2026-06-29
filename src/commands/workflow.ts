@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
-import { requireConfig } from '../config.js';
+import { getConfig, requireConfig } from '../config.js';
 import { success, error as clrError, muted, bold } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
@@ -10,7 +10,7 @@ import { run, printList, printResult } from '../helpers/index.js';
 // subcommand's local `opts.json` is missed and JSON output is silently
 // dropped. Read the merged opts so `gipity workflow <sub> … --json` always
 // works, wherever the flag lands.
-function mergedOpts(cmd: Command): { json?: boolean } {
+function mergedOpts(cmd: Command): { json?: boolean; all?: boolean } {
   return cmd.optsWithGlobals();
 }
 
@@ -106,19 +106,30 @@ async function waitForRun(wfGuid: string, prevGuid: string | undefined, timeoutS
   }
 }
 
-async function listWorkflows(opts: { json?: boolean }): Promise<void> {
+async function listWorkflows(opts: { json?: boolean; all?: boolean }): Promise<void> {
   const res = await get<WorkflowListResponse>('/workflows');
 
+  // The endpoint is account-wide. Default to the linked project so the list
+  // isn't drowned in every other project's workflows; --all (or running outside
+  // a linked project) shows everything.
+  const config = getConfig();
+  const scoped = !opts.all && config
+    ? { ...res, data: res.data.filter(w => w.project_slug === config.projectSlug) }
+    : res;
+
   if (opts.json) {
-    console.log(JSON.stringify(res));
+    console.log(JSON.stringify(scoped));
     return;
   }
 
-  if (res.meta) {
-    console.log(`Active workflows: ${res.meta.activeCount}/${res.meta.activeLimit}`);
+  if (scoped.meta) {
+    console.log(`Active workflows: ${scoped.meta.activeCount}/${scoped.meta.activeLimit}`);
+  }
+  if (!opts.all && config) {
+    console.log(muted(`Project: ${config.projectSlug} (use --all for every project)`));
   }
 
-  printList(res.data, opts, 'No workflows.', w => {
+  printList(scoped.data, opts, opts.all || !config ? 'No workflows.' : `No workflows in ${config.projectSlug}.`, w => {
     const statusText = w.is_active ? success('on') : clrError('off');
     const cron = w.cron_expression ? `  ${muted(`cron: ${w.cron_expression}`)}` : '';
     const table = w.trigger_table ? `  ${muted(`table: ${w.trigger_table}`)}` : '';
@@ -131,12 +142,14 @@ async function listWorkflows(opts: { json?: boolean }): Promise<void> {
 export const workflowCommand = new Command('workflow')
   .description('Manage workflows')
   .option('--json', 'Output as JSON')
+  .option('--all', 'List workflows across all projects (default: the linked project only)')
   .action((_opts, cmd) => run('Workflow', () => listWorkflows(mergedOpts(cmd))));
 
 workflowCommand
   .command('list')
-  .description('List workflows')
+  .description('List workflows (linked project by default; --all for every project)')
   .option('--json', 'Output as JSON')
+  .option('--all', 'List workflows across all projects')
   .action((_opts, cmd) => run('List', () => listWorkflows(mergedOpts(cmd))));
 
 workflowCommand

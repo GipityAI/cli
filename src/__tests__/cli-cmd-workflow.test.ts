@@ -18,14 +18,27 @@ function fresh(args: string[]) {
   return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: d });
 }
 
-test('gipity workflow lists workflows with active counters', async () => {
+test('gipity workflow scopes to the linked project by default', async () => {
   mock.reset();
+  // WF_A is in the linked project (test-project); WF_B belongs to another project.
   mock.on('GET /workflows', { body: { data: [WF_A, WF_B], meta: { activeCount: 1, activeLimit: 50 } } });
   const r = await fresh(['workflow']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Active workflows:\s*1\/50/);
   assert.match(r.stdout, /Daily/);
+  assert.doesNotMatch(r.stdout, /Manual/); // other project's workflow is filtered out
+  assert.match(r.stdout, /Project: test-project/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity workflow --all lists every project\'s workflows', async () => {
+  mock.reset();
+  mock.on('GET /workflows', { body: { data: [WF_A, WF_B], meta: { activeCount: 1, activeLimit: 50 } } });
+  const r = await fresh(['workflow', '--all']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Daily/);
   assert.match(r.stdout, /Manual/);
+  assert.doesNotMatch(r.stdout, /Project: test-project/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
