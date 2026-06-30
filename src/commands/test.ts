@@ -212,6 +212,13 @@ export const testCommand = new Command('test')
         process.exit(1);
       }
 
+      if (!filterPath && data.total === 0 && data.results.length === 0) {
+        console.log(muted('No tests ran - this app has no tests/*.test.js files.'));
+        console.log(muted('gipity test runs server-function tests only; a frontend-only app (no functions/) has nothing here to run.'));
+        console.log(muted('Verify a frontend app by driving the live page: gipity page inspect <url> (or gipity page eval).'));
+        return;
+      }
+
       if (data.status === 'failed' && data.errorMessage) {
         console.log(clrError(`Run failed: ${data.errorMessage}`));
         console.log('');
