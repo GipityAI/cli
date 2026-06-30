@@ -157,8 +157,10 @@ App services skills (load before calling \`/services/*\` endpoints):
 
 App development skills:
 - \`agent-deploy\` - headless auth via agent API tokens (GIPITY_TOKEN) for unattended deploys
+- \`app-database\` - app Postgres database: migrations, the db helper, transactions, table permissions
 - \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
+- \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the isolated test DB)
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
 - \`jobs\` - long-running CPU + GPU compute jobs (Python / Node / bash)
 - \`realtime-scheduled-app\` - recipe: realtime presence/messages + DB function + scheduled poster, end-to-end
