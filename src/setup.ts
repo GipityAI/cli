@@ -5,7 +5,7 @@ import { resolve, join, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
-import { resolveCommand } from './platform.js';
+import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 
 export { SKILLS_CONTENT };
@@ -299,11 +299,11 @@ export function ensureGipityPluginInstalled(): void {
   // without an explicit path, so resolve it (otherwise the install silently
   // ENOENTs and the plugin's hooks never land at user scope).
   const claudeCmd = resolveCommand('claude');
-  spawnSync(claudeCmd, ['plugin', 'marketplace', 'update', GIPITY_MARKETPLACE_NAME], {
+  spawnSyncCommand(claudeCmd, ['plugin', 'marketplace', 'update', GIPITY_MARKETPLACE_NAME], {
     stdio: 'ignore',
     timeout: 120_000,
   });
-  spawnSync(claudeCmd, ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'], {
+  spawnSyncCommand(claudeCmd, ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'], {
     stdio: 'ignore',
     timeout: 120_000,
   });

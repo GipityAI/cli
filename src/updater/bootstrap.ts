@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { LOCAL_DIR, LOCAL_ENTRY, LOCAL_PKG_DIR, writeState, readState } from './state.js';
-import { resolveCommand } from '../platform.js';
+import { resolveCommand, spawnSyncCommand } from '../platform.js';
 
 export function isBootstrapped(): boolean {
   return existsSync(LOCAL_ENTRY);
@@ -29,7 +28,7 @@ export function bootstrap(version: string, quiet = false): boolean {
   // --ignore-scripts: don't run install lifecycle hooks (gipity ships
   // precompiled, deps need no build), so a compromised package can't execute
   // code during this self-managed install.
-  const res = spawnSync(resolveCommand('npm'), ['install', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
+  const res = spawnSyncCommand(resolveCommand('npm'), ['install', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',

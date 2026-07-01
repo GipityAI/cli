@@ -1,10 +1,9 @@
 import { Command } from 'commander';
-import { join, dirname, resolve, basename } from 'path';
+import { join, dirname, resolve, basename, sep } from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from 'fs';
-import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { resolveCommand } from '../platform.js';
+import { resolveCommand, spawnCommand } from '../platform.js';
 import { getAuth, saveAuth, sessionExpired, accessTokenExpired, refreshTokenIfNeeded, type AuthData } from '../auth.js';
 import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
@@ -888,8 +887,9 @@ export const claudeCommand = new Command('claude')
         }
       }
 
-      // Resolve full path on Windows so we can avoid shell:true, which
-      // passes args through cmd.exe and mangles quotes/special chars.
+      // Resolve the real path on Windows; spawnCommand then routes the `.cmd`
+      // shim through cmd.exe with verbatim args (a bare `spawn` of a `.cmd`
+      // throws EINVAL on Node >=18.20.2/20.12.2 - the CVE-2024-27980 fix).
       const claudeCmd = resolveCommand('claude');
       const childEnv = { ...process.env };
       // Gate hook-based capture: when the daemon is streaming via
@@ -909,7 +909,7 @@ export const claudeCommand = new Command('claude')
       // `-p` runs skip the dialog already, so this is only needed interactively.
       if (!nonInteractive) markFolderTrusted(process.cwd());
 
-      const child = spawn(claudeCmd, allArgs, {
+      const child = spawnCommand(claudeCmd, allArgs, {
         stdio: 'inherit',
         cwd: process.cwd(),
         env: childEnv,
@@ -1023,10 +1023,10 @@ function formatNewProjectLabel(existingSlugs: string[]): string {
   const slug = suggestProjectName(existingSlugs);
   const root = getProjectsRoot();
   const home = homedir();
-  const display = root.startsWith(home + '/') || root === home
+  const display = root === home || root.startsWith(home + sep)
     ? '~' + root.slice(home.length)
     : root;
-  return `${display}/${slug}`;
+  return `${display}${sep}${slug}`;
 }
 
 /** Run the size-tier scan, surface the right UX:

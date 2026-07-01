@@ -20,8 +20,8 @@
  *
  * See docs/feature-backlog/gipity-relay-phases.md (Phase A Step 7).
  */
-import { spawn, ChildProcess } from 'child_process';
-import { resolveCommand } from '../platform.js';
+import { ChildProcess } from 'child_process';
+import { resolveCommand, spawnCommand } from '../platform.js';
 import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, closeSync, openSync, unlinkSync } from 'fs';
 import { stat, readFile } from 'fs/promises';
 import { createInterface } from 'readline';
@@ -587,13 +587,14 @@ function isSafeSessionId(s: string): boolean {
 }
 
 /** Resolve Claude Code's on-disk transcript path for measuring resume
- *  size. Claude encodes the project cwd into a slug by replacing `/` with
- *  `-`. We only read this file cosmetically (to show "resume 5 KB" in the
- *  Invoking marker); actual capture is via stream-json. Returns null for
+ *  size. Claude encodes the project cwd into a slug by replacing every
+ *  non-alphanumeric char with `-` (so `/`, and on Windows `\` and `:`, all
+ *  collapse). We only read this file cosmetically (to show "resume 5 KB" in
+ *  the Invoking marker); actual capture is via stream-json. Returns null for
  *  a sessionId that fails the safety check. */
 function transcriptPathFor(cwd: string, sessionId: string): string | null {
   if (!isSafeSessionId(sessionId)) return null;
-  const slug = cwd.replace(/\//g, '-');
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   return join(homedir(), '.claude', 'projects', slug, `${sessionId}.jsonl`);
 }
 
@@ -945,7 +946,7 @@ async function spawnSync(cwd: string, timeoutMs?: number): Promise<void> {
   // verbatim (it may be a full path); only the default name is resolved.
   const cmd = process.env.GIPITY_RELAY_CLAUDE_CMD || resolveCommand('gipity');
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, ['sync', '--json'], {
+    const child = spawnCommand(cmd, ['sync', '--json'], {
       cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -996,7 +997,7 @@ export async function spawnGipityClaude(
   const env = { ...process.env, GIPITY_CONVERSATION_GUID: d.conversation_guid };
 
   return new Promise((resolve, reject) => {
-    const child: ChildProcess = spawn(cmd, fullArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child: ChildProcess = spawnCommand(cmd, fullArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
 
     // `exited` fires when the child fully unwinds (exit event). Callers
     // like `killRunningForConv` await this before spawning a replacement

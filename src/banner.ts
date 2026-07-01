@@ -1,7 +1,20 @@
 // ── Gipity CLI Startup Banner ──────────────────────────────────────────
 // Two-panel box showing all AI models, platform tools, and sandbox capabilities.
 
+import { homedir } from 'os';
+import { sep } from 'path';
 import { brand, bold, faint, muted, fg } from './colors.js';
+
+/** Abbreviate a home-relative path to `~`, cross-platform. On Windows `HOME`
+ *  is usually unset (it's `USERPROFILE`), and `str.replace('', '~')` prepends
+ *  a stray `~`, so use os.homedir() and a real prefix check. */
+function tildify(p: string): string {
+  const home = homedir();
+  if (!home) return p;
+  if (p === home) return '~';
+  if (p.startsWith(home + sep)) return '~' + p.slice(home.length);
+  return p;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -213,7 +226,7 @@ function buildLeftPanel(opts: BannerOptions, panelW: number): string[] {
   }
 
   if (opts.cwd) {
-    const short = leadingEllipsify(opts.cwd.replace(process.env['HOME'] || '', '~'), panelW);
+    const short = leadingEllipsify(tildify(opts.cwd), panelW);
     leftLines.push('');
     leftLines.push(center(muted(short), panelW));
     leftLines.push('');

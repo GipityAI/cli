@@ -58,6 +58,16 @@ describe('installers: content renders CLI path correctly', () => {
     assert.match(p.content, /<Arguments>relay run<\/Arguments>/);
     assert.match(p.content, /<LogonTrigger>/);
   });
+
+  it('Task Scheduler runs a .js cliPath through node, never via file association', () => {
+    // resolveCliPath() yields the .js entry in production; Task Scheduler's
+    // <Command> would launch it via Windows Script Host (800A03F6) if we
+    // named the .js directly. It must be a node argument instead.
+    const js = 'C:\\Users\\Me\\AppData\\Roaming\\npm\\node_modules\\gipity\\dist\\index.js';
+    const p = planFor({ cliPath: js, platformOverride: 'win32' });
+    assert.doesNotMatch(p.content, /<Command>[^<]*index\.js<\/Command>/);
+    assert.match(p.content, new RegExp(`<Arguments>"${js.replace(/[\\.]/g, '\\$&')}" relay run</Arguments>`));
+  });
 });
 
 describe('installers: enable/disable commands look right', () => {

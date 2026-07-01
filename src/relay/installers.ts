@@ -149,6 +149,14 @@ WantedBy=default.target
 function windowsTaskPlan(cliPath: string): InstallerPlan {
   const taskName = 'GipityRelay';
   const path = join(homedir(), 'AppData', 'Local', 'Gipity', 'relay-task.xml');
+  // Launch through node.exe explicitly. Task Scheduler's <Command> runs the
+  // target via CreateProcess, and a `.js` cliPath (what resolveCliPath yields)
+  // would resolve to its file association - Windows Script Host - which chokes
+  // on the shebang with "Invalid character" (800A03F6). Passing the entry as a
+  // node argument runs it under Node like every other platform.
+  const runsViaNode = /\.[cm]?js$/i.test(cliPath);
+  const command = runsViaNode ? process.execPath : cliPath;
+  const argLine = runsViaNode ? `"${cliPath}" relay run` : 'relay run';
   const content = `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -174,8 +182,8 @@ function windowsTaskPlan(cliPath: string): InstallerPlan {
   </Settings>
   <Actions>
     <Exec>
-      <Command>${cliPath}</Command>
-      <Arguments>relay run</Arguments>
+      <Command>${command}</Command>
+      <Arguments>${argLine}</Arguments>
     </Exec>
   </Actions>
 </Task>
