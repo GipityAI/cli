@@ -277,7 +277,7 @@ export const claudeCommand = new Command('claude')
   // Forwarded to `claude` via the unknown-arg passthrough below (NOT in the
   // gipity strip lists). Declared here only so it shows up in --help — without
   // this, callers can't discover that the session model is selectable.
-  .option('--model <model>', 'Model for the Claude session, forwarded to claude (e.g. sonnet, opus, or a full id like claude-sonnet-4-6)')
+  .option('--model <model>', 'Model for the Claude session, forwarded to claude (e.g. sonnet, opus, or a full id like claude-sonnet-5)')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (opts) => {
