@@ -162,8 +162,8 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
     }
     const agents = await get<{ data: Array<{ short_guid: string }> }>(`/projects/${match.short_guid}/agents`);
     const accountSlug = await getAccountSlug();
-    console.error(dim(`→ One-off mode: targeting project "${match.slug}" (--project override).`));
-    console.error(dim(`→ Files are not synced - outputs will also be downloaded to ./ for you.`));
+    console.error(dim(`→ (project: ${match.slug} · no file sync)`));
+    console.error('');
     return {
       config: {
         projectGuid: match.short_guid,
@@ -192,8 +192,8 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
     console.error('Could not resolve your Home project - please contact support.');
     process.exit(1);
   }
-  console.error(dim(`→ One-off mode: no .gipity.json in cwd, using your Home project on the server.`));
-  console.error(dim(`→ Files are not synced - outputs will also be downloaded to ./ for you.`));
+  console.error(dim(`→ (project: ${res.data.projectName} · no file sync)`));
+  console.error('');
   return {
     config: {
       projectGuid: res.data.projectGuid,

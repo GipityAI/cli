@@ -5,7 +5,8 @@ import { bold, muted, success, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 
 export const notifyCommand = new Command('notify')
-  .description('Gipity Notify (web push): send a test notification or inspect subscriptions');
+  .description('Web push notifications')
+  .addHelpText('after', '\nGipity Notify: send a test notification or inspect subscriptions.');
 
 notifyCommand
   .command('test')

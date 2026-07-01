@@ -22,7 +22,8 @@ const SERVICES: Array<{ name: string; method: 'POST' | 'GET'; desc: string }> = 
 ];
 
 export const serviceCommand = new Command('service')
-  .description('Call a Gipity app service (LLM, image, music, TTS, ...)');
+  .description('Call an app service')
+  .addHelpText('after', '\nCall a Gipity app service: LLM, image, music, TTS, and more.');
 
 serviceCommand
   .command('list')

@@ -39,6 +39,7 @@ export const loginCommand = new Command('login')
       }
 
       await publicPost('/auth/login', { email });
+      console.log('');
       console.log('Check your email for a 6-digit code.');
 
       code = await prompt('Code: ');

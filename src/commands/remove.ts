@@ -15,7 +15,7 @@ interface RemoveResponse {
 }
 
 export const removeCommand = new Command('remove')
-  .description('Remove an installed kit from the project (inverse of `gipity add <kit>`).')
+  .description('Remove a kit')
   .argument('<kit>', 'Kit key/directory under src/packages/ to remove')
   .option('-y, --yes', 'Skip the confirmation prompt')
   .option('--json', 'Output as JSON')

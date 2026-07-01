@@ -20,7 +20,8 @@ async function scopeQuery(opts: { account?: boolean; project?: string }): Promis
 }
 
 export const secretsCommand = new Command('secrets')
-  .description('Encrypted secrets (API keys, tokens) for your app — read in functions via secrets.get("NAME")');
+  .description('Manage app secrets')
+  .addHelpText('after', '\nEncrypted API keys and tokens for your app, read in functions via secrets.get("NAME").');
 
 secretsCommand
   .command('list')

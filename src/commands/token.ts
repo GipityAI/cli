@@ -4,7 +4,8 @@ import { bold, muted, success, warning } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
 export const tokenCommand = new Command('token')
-  .description('Manage agent API tokens (gip_at_*) for headless agents and CI');
+  .description('Manage API tokens')
+  .addHelpText('after', '\nLong-lived agent API tokens (gip_at_*) for headless agents and CI.');
 
 interface TokenInfo {
   short_guid: string;

@@ -150,7 +150,8 @@ const analyzeCommand = new Command('analyze')
 // Parent namespace. One capability today (analyze); namespaced for a lean
 // top-level surface and room for future text operations.
 export const textCommand = new Command('text')
-  .description(`Deterministic text analysis - char/word counts, frequency, occurrences (${brand('text analyze')})`)
+  .description('Analyze text')
+  .addHelpText('after', `\nDeterministic char/word counts, frequency, and occurrences (${brand('text analyze')}). Local, no network.`)
   .addCommand(analyzeCommand);
 
 textCommand.action(() => {

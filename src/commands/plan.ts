@@ -51,7 +51,7 @@ function renderLimits(limits: Record<string, unknown>, indent = ''): void {
 }
 
 export const planCommand = new Command('plan')
-  .description('Show your current subscription plan and limits')
+  .description('Show your plan')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Plan', async () => {
     const [limitsRes, plansRes] = await Promise.all([

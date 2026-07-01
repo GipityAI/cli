@@ -9,7 +9,8 @@ function collect(value: string, prev: string[]): string[] {
 }
 
 export const emailCommand = new Command('email')
-  .description('Send email from the Gipity platform (gipity@gipity.ai). Omit --to to self-send.')
+  .description('Send email')
+  .addHelpText('after', '\nSends from gipity@gipity.ai. Omit --to to self-send.')
   .requiredOption('--subject <subject>', 'Email subject')
   .requiredOption('--body <body>', 'Email body (plain text)')
   .option('--to <email>', 'Recipient (repeatable; omit for self-send)', collect, [] as string[])

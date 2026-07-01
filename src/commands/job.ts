@@ -5,7 +5,8 @@ import { error as clrError, bold, muted, success, warning as warn } from '../col
 import { run, printList } from '../helpers/index.js';
 
 export const jobCommand = new Command('job')
-  .description('Long-running jobs - CPU sandbox or GPU via Modal (gpu-small=L4, gpu-medium=A10G, gpu-large=A100, gpu-huge=H100). Declared in gipity.yaml jobs: phase; submit + poll via subcommands below.');
+  .description('Run long jobs (CPU/GPU)')
+  .addHelpText('after', '\nCPU sandbox or GPU (gpu-small=L4, gpu-medium=A10G, gpu-large=A100, gpu-huge=H100). Declared in the gipity.yaml jobs: phase; submit and poll via the subcommands below.');
 
 jobCommand
   .command('list')

@@ -33,7 +33,8 @@ function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
 }
 
 export const initCommand = new Command('init')
-  .description('Link this directory to a Gipity project (writes primer files so your AI coding tool understands Gipity)')
+  .description('Link this directory to a project')
+  .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity.')
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
   .option(

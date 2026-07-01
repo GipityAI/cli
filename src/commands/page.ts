@@ -11,7 +11,7 @@ import { pageFetchCommand } from './page-fetch.js';
 // top-level surface lean and makes the siblings discoverable via `page --help`.
 // `inspect` is the rendered DOM (browser); `fetch` is the raw asset (plain HTTP).
 export const pageCommand = new Command('page')
-  .description('Inspect, evaluate, screenshot, multi-client test, and verify raw files of web pages (page inspect | eval | screenshot | test | fetch)')
+  .description('Inspect web pages')
   .addCommand(pageInspectCommand)
   .addCommand(pageEvalCommand)
   .addCommand(pageScreenshotCommand)

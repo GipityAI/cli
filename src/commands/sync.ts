@@ -4,7 +4,8 @@ import { createProgressReporter } from '../progress.js';
 import { error as clrError, muted } from '../colors.js';
 
 export const syncCommand = new Command('sync')
-  .description('Sync files (a .gipityignore at the project root excludes paths, gitignore-style)')
+  .description('Sync files')
+  .addHelpText('after', '\nAdd a .gipityignore at the project root to exclude paths (gitignore-style).')
   .option('--plan', 'Print the plan without applying any changes')
   .option('--force', 'Bypass the bulk-deletion guard')
   .option('--prune', 'Remove files that exist on Gipity but not locally (applies the bulk deletes the guard defers)')

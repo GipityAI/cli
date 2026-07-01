@@ -28,7 +28,8 @@ function renderStatus(status: ConnectStatus): void {
 }
 
 export const paymentsCommand = new Command('payments')
-  .description('Connect Stripe so your app can charge its users (one-time + subscriptions)');
+  .description('Charge your users via Stripe')
+  .addHelpText('after', '\nAccept one-time purchases and subscriptions. Set up with `gipity payments connect`.');
 
 paymentsCommand
   .command('connect')

@@ -169,7 +169,7 @@ function buildLocalPayload(rootDir: string): { name: string; files: PayloadFile[
 }
 
 export const addCommand = new Command('add')
-  .description('Add a template (scaffold an app) or a kit (reusable building block) to the project. Pass ./path/to/dir to install a local template directly.')
+  .description('Add a template or kit')
   .argument('[name]', 'Template/kit key, OR a local directory path (./, ~/, or /abs). Omit for help; use --list for just the catalog.')
   .option('--title <title>', 'App title - templates only (defaults to project name)')
   .option('--description <desc>', 'App description for meta tags - templates only')

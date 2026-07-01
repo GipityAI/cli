@@ -29,7 +29,7 @@ function keyToIndex(key: string): number {
 }
 
 export const approvalCommand = new Command('approval')
-  .description('List, create, answer, or cancel approvals');
+  .description('Manage approvals');
 
 approvalCommand
   .command('list')

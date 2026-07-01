@@ -55,7 +55,7 @@ export function bootstrap(version: string, quiet = false): boolean {
   const state = readState();
   state.installedVersion = version;
   writeState(state);
-  if (!quiet) process.stderr.write(`Done.\n\n`);
+  if (!quiet) process.stderr.write(`Done.\n`);
   return true;
 }
 

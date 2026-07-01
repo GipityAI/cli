@@ -20,7 +20,8 @@ interface GmailSummary {
 }
 
 export const gmailCommand = new Command('gmail')
-  .description('Send, reply, search, or read via your Gmail (user channel - separate from `gipity email`)');
+  .description('Use your Gmail')
+  .addHelpText('after', '\nSend, reply, search, or read via your own Gmail (separate from `gipity email`).');
 
 gmailCommand
   .command('search <query...>')
