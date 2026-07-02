@@ -78,3 +78,44 @@ cli-unlink:
     @echo "The binary is gone, but THIS shell still caches its old path. Run:"
     @echo "    hash -r"
     @echo "…in this shell, or open a new one."
+
+# ── Local dev: run the CLI against the LOCAL platform server ───────────────────
+# `just local-all-dev` (in platform/) runs the server on :7201 against an
+# isolated dev DB. These recipes run the freshly-built CLI from source against
+# THAT server, using a SEPARATE GIPITY_DIR (default ~/.gipity-dev) so a dev
+# login / relay pairing never clobbers your prod ~/.gipity auth + device state.
+# Override the port or state dir with GIPITY_DEV_PORT / GIPITY_DEV_DIR.
+
+# Run any gipity command against local dev (compiles first, passes args through):
+#   just dev-cli relay status
+#   just dev-cli login --email you@914-6.com --code 914914
+#   just dev-cli relay run          # foreground daemon against local dev
+dev-cli *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    npm run build
+    export GIPITY_API_BASE="http://localhost:${GIPITY_DEV_PORT:-7201}"
+    export GIPITY_DIR="${GIPITY_DEV_DIR:-$HOME/.gipity-dev}"
+    echo "→ gipity {{ARGS}} (api=$GIPITY_API_BASE dir=$GIPITY_DIR)" >&2
+    node dist/index.js {{ARGS}}
+
+# One-shot: pair a relay device on local dev (device ONLY - no daemon, no OS
+# autostart), so you can then run the daemon in the FOREGROUND and watch its
+# logs. Builds, logs in with the dev bypass creds from .env
+# (GIPITY_DEV_EMAIL/GIPITY_DEV_CODE), then `relay setup --no-start
+# --no-autostart`. Isolated GIPITY_DIR, so your prod pairing is untouched.
+dev-relay-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${GIPITY_DEV_EMAIL:?set GIPITY_DEV_EMAIL in cli/.env}"
+    : "${GIPITY_DEV_CODE:?set GIPITY_DEV_CODE in cli/.env}"
+    npm run build
+    export GIPITY_API_BASE="http://localhost:${GIPITY_DEV_PORT:-7201}"
+    export GIPITY_DIR="${GIPITY_DEV_DIR:-$HOME/.gipity-dev}"
+    echo "→ local dev: api=$GIPITY_API_BASE dir=$GIPITY_DIR" >&2
+    node dist/index.js login --email "$GIPITY_DEV_EMAIL" --code "$GIPITY_DEV_CODE"
+    node dist/index.js relay setup --no-start --no-autostart
+    echo ""
+    echo "✓ Paired on local dev (device only, daemon not started)."
+    echo "  Start the daemon in the foreground:  just dev-cli relay run"
+    echo "  Then drive it from the local web CLI: http://localhost:7200  (/relay)"
