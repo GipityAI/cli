@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { get } from '../api.js';
 import { brand, dim } from '../colors.js';
 import { run } from '../helpers/index.js';
+import type { RetentionData } from './storage.js';
 
 interface PlanRow {
   shortGuid: string;
@@ -54,12 +55,15 @@ export const planCommand = new Command('plan')
   .description('Show your plan')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Plan', async () => {
-    const [limitsRes, plansRes] = await Promise.all([
+    const [limitsRes, plansRes, retention] = await Promise.all([
       get<{ data: LimitsResponse }>('/users/me/limits'),
       get<{ data: PlanRow[] }>('/plans'),
+      // Retention rides alongside the Storage limit below; a failure here must
+      // not sink the whole `plan` view, so degrade to null and just omit the line.
+      get<{ data: RetentionData }>('/users/me/retention').then(r => r.data).catch(() => null),
     ]);
     if (opts.json) {
-      console.log(JSON.stringify({ user: limitsRes.data, plans: plansRes.data }));
+      console.log(JSON.stringify({ user: limitsRes.data, plans: plansRes.data, retention }));
       return;
     }
     const { tier, planAppliedAt, limits } = limitsRes.data;
@@ -78,6 +82,9 @@ export const planCommand = new Command('plan')
     }
     console.log('\nLimits:');
     renderLimits(limits);
+    if (retention) {
+      console.log(`${'Version retention'.padEnd(18)} ${retention.days} days / ${retention.count} copies`);
+    }
   }));
 
 planCommand

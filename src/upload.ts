@@ -168,7 +168,7 @@ export class UploadConflictError extends Error {
 /**
  * Upload one local file to a project's virtual path via the presigned-S3 flow.
  * Handles single-part PUT and multipart fan-out, server-driven resume, and
- * skip-if-identical (unless overwrite=true forces a new version).
+ * skip-if-identical (a byte-identical file at the same path is a no-op).
  */
 export async function uploadOneFile(
   projectGuid: string, localPath: string, virtualPath: string, opts: UploadOpts = {},

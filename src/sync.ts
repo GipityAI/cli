@@ -21,9 +21,10 @@
  * `name (conflict from <host> YYYY-MM-DD-HHMMSS).ext` and then uploaded on
  * the next pass so every client sees it. No content merging, ever.
  */
-import { writeFileSync, mkdirSync, existsSync, statSync, unlinkSync, readdirSync, rmdirSync, readFileSync, renameSync, openSync, closeSync, utimesSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, statSync, lstatSync, unlinkSync, readdirSync, rmdirSync, readFileSync, renameSync, openSync, closeSync, utimesSync, realpathSync } from 'fs';
 import { join, relative, dirname, extname, resolve, sep } from 'path';
 import { hostname } from 'os';
+import { createHash } from 'crypto';
 import { get, del, downloadStream, ApiError } from './api.js';
 import { requireConfig, shouldIgnore, getConfigPath } from './config.js';
 import { formatSize, prompt, getAutoConfirm } from './utils.js';
@@ -111,6 +112,18 @@ export interface PlanSummary {
   deletesLocal: number;
   deletesRemote: number;
   conflicts: number;
+  /** Paths whose baseline entry is now stale and must be pruned (the deleted×deleted
+   *  and deleted×absent cells produce no Action but must not leave the baseline entry
+   *  behind - a lingering entry masks a future recreate of the same path). `plan()`
+   *  is pure, so the caller drops these before `writeBaseline`. */
+  baselineDrops: string[];
+  /** Content-match cells (added×added / modified×modified where the local and remote
+   *  sha agree) produce no Action, but the agreed state MUST be recorded into the
+   *  baseline or sync never converges: without it, deleting such a file re-classifies
+   *  as absent×added and resurrects it, a crash between a confirmed upload and
+   *  `writeBaseline` mints a spurious conflict, and a lost sync-state never rebuilds.
+   *  `plan()` is pure, so the caller writes these before `writeBaseline`. (FIX M1) */
+  baselineAdopts: Array<{ path: string; entry: BaselineEntry }>;
 }
 
 export interface SyncOptions {
@@ -136,6 +149,12 @@ export interface SyncOptions {
    *  remote check, hashing, download) and a determinate byte bar during upload,
    *  so a long sync of a large tree doesn't read as a hang. Omit for silence. */
   progress?: ProgressReporter;
+  /** Paths whose deletion is pre-authorized by the caller (e.g. `gipity remove`
+   *  knows exactly which files a kit owns). Deletes of these paths bypass the
+   *  bulk-delete guard, while any OTHER pending deletion still trips it - so an
+   *  unrelated mass deletion can't ride in on a kit removal the way a blanket
+   *  `force` would let it. */
+  deleteWhitelist?: string[];
 }
 
 export interface SyncResult {
@@ -384,8 +403,29 @@ function normalizeTreePath(p: string): string {
 export function resolveInRoot(root: string, relPath: string): string {
   const rootResolved = resolve(root);
   const full = resolve(rootResolved, relPath);
+  // Fast lexical pre-filter.
   if (full !== rootResolved && !full.startsWith(rootResolved + sep)) {
     throw new Error(`Refusing path outside project root: ${relPath}`);
+  }
+  // Symlink-aware containment (FIX M6a): a lexical check can't see that a
+  // symlinked directory INSIDE the project points its real location outside the
+  // root, so a remote-supplied path could still write/rename/delete outside the
+  // project - and the relay daemon runs sync unattended. Resolve the nearest
+  // existing ancestor (the leaf may not exist yet) with realpath and assert its
+  // real path is still inside the project's real root. Realpath failures (root or
+  // ancestors that don't exist yet) fall through to the lexical result - there's
+  // no symlink to escape through when nothing exists.
+  try {
+    const rootReal = realpathSync(rootResolved);
+    let ancestor = full;
+    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+    const ancestorReal = realpathSync(ancestor);
+    if (ancestorReal !== rootReal && !ancestorReal.startsWith(rootReal + sep)) {
+      throw new Error(`Refusing path outside project root (symlink escape): ${relPath}`);
+    }
+  } catch (e) {
+    if (e instanceof Error && /outside project root/.test(e.message)) throw e;
+    // else: realpath couldn't resolve (nonexistent root/ancestor) - keep lexical result.
   }
   return full;
 }
@@ -474,48 +514,37 @@ async function downloadAll(
   return extractTarToMap(stream, DOWNLOAD_IDLE_MS, onBytes);
 }
 
-async function fetchOne(projectGuid: string, path: string): Promise<Buffer | null> {
-  // Exact single-file read first. `/files/read` is the exact-path endpoint
-  // (what `gipity file cat` uses); it returns text content, reliable for the
-  // config/code files that actually hit a restore. Binary falls through to the
-  // tar path below, which now resolves an exact file path server-side (the
-  // /files/tree endpoint stats a non-directory `path` and packs that one file
-  // under its full name). Before that fix the tar endpoint treated `path` as a
-  // DIRECTORY prefix, so a single file came back empty and a dropped binary
-  // (e.g. an agent-generated image) could never be recovered.
-  try {
-    const res = await get<{ data: { content: string; mime?: string } }>(
-      `/projects/${projectGuid}/files/read?path=${encodeURIComponent(path)}`,
-    );
-    const content = res?.data?.content;
-    if (typeof content === 'string' && isTextMime(res?.data?.mime, path)) {
-      return Buffer.from(content, 'utf-8');
-    }
-  } catch {
-    /* fall through to the tar path */
-  }
-
+async function fetchOne(
+  projectGuid: string, path: string, expectedSha?: string | null,
+): Promise<Buffer | null> {
+  // Byte-exact single-file recovery over the tar path only (FIX M3). We used to
+  // prefer `/files/read` for text-extension files, but that returns the content as
+  // a JSON *string* which we re-encoded as UTF-8 - a non-UTF-8 file (latin-1
+  // .csv/.txt) came back replacement-mangled, and the downloads pass then recorded
+  // the REMOTE sha against those wrong bytes, so the next sync uploaded the
+  // corruption over the good remote copy. The tar path packs the raw stored blob
+  // (the /files/tree endpoint stats a non-directory `path` and packs that one file
+  // under its full name), so the buffer is identical regardless of encoding. It's
+  // idle-guarded like the bulk path so a stalled single file can't wedge the sync.
   try {
     const stream = await downloadStream(
       `/projects/${projectGuid}/files/tree?content=tar&path=${encodeURIComponent(path)}`,
     );
-    // Same idle-guarded extraction as the bulk path; keep only the one entry we
-    // asked for. The recovery path must not hang either, or a single stalled file
-    // wedges the whole sync.
     const want = normalizeTreePath(path);
     const files = await extractTarToMap(stream, DOWNLOAD_IDLE_MS, undefined, (p) => p === want);
-    return files.get(want) ?? null;
+    const buf = files.get(want) ?? null;
+    // Verify the bytes against the expected content hash when the caller knows it
+    // (the recovery path records this sha into the baseline). A mismatch means a
+    // truncated/partial entry - treat it as a failed fetch and leave the file for
+    // the tar/next run rather than writing bytes that don't match what we'll record.
+    if (buf && expectedSha) {
+      const sha = createHash('sha256').update(buf).digest('hex');
+      if (sha !== expectedSha) return null;
+    }
+    return buf;
   } catch {
     return null;
   }
-}
-
-// Treat a file as text (safe to round-trip through `/files/read`'s string body)
-// from its mime or, failing that, a code/config extension. Binary needs the
-// byte-exact tar path.
-function isTextMime(mime: string | undefined, path: string): boolean {
-  if (mime && (mime.startsWith('text/') || /(json|javascript|xml|yaml|x-sh|sql)/.test(mime))) return true;
-  return /\.(js|mjs|cjs|ts|tsx|jsx|json|yaml|yml|sql|md|txt|html|css|svg|csv|env|sh|toml|ini)$/i.test(path);
 }
 
 // ─── Classification ────────────────────────────────────────────
@@ -560,6 +589,22 @@ export function plan(
   baseline: Record<string, BaselineEntry>,
 ): PlanSummary {
   const actions: Action[] = [];
+  const baselineDrops: string[] = [];
+  const baselineAdopts: Array<{ path: string; entry: BaselineEntry }> = [];
+  // Record the agreed (content-match) state into the baseline when it's missing or
+  // stale, so a locally-and-remotely-identical file is a known synced pair going
+  // forward. Size/mtime mirror what the scanner records (they key its hash cache);
+  // serverVersion + sha come from the agreed remote/local state. (FIX M1)
+  const adoptIfNeeded = (p: string, L: LocalFileInfo, R: RemoteFileInfo) => {
+    const entry: BaselineEntry = {
+      size: L.size, mtime: L.mtime, sha256: L.sha256!, serverVersion: R.serverVersion,
+    };
+    const b = baseline[p];
+    if (!b || b.sha256 !== entry.sha256 || b.serverVersion !== entry.serverVersion
+        || b.size !== entry.size || b.mtime !== entry.mtime) {
+      baselineAdopts.push({ path: p, entry });
+    }
+  };
   const allPaths = new Set<string>([...local.keys(), ...remote.keys(), ...Object.keys(baseline)]);
 
   for (const path of allPaths) {
@@ -587,15 +632,16 @@ export function plan(
     }
     // unchanged × unchanged → noop
     if (lSide === 'unchanged' && rSide === 'unchanged') continue;
-    // unchanged × modified → download, but ONLY if the remote genuinely advanced.
-    // Guards a read-after-write race: right after a local write+push, the push can
-    // advance the local baseline to the new version while the remote tree API still
-    // serves the OLD bytes (stale read). That makes remote look "modified" vs an
-    // already-updated baseline, and a blind download would silently clobber the
-    // just-written local file with a stale older version. A real remote change
-    // always carries a strictly newer serverVersion; an equal/older one is stale.
+    // unchanged × modified → download. server_version is per-NODE, not per-path:
+    // a server-side delete+recreate mints a fresh node whose counter restarts at 1,
+    // so the old `R.serverVersion <= B.serverVersion` guard wrongly treated a
+    // genuine recreate (e.g. remote v1 vs baseline v5) as a stale read and skipped
+    // it forever. Skip ONLY a true no-op re-read - the same node version AND the
+    // same content. Since rSide 'modified' already means the sha differs from
+    // baseline (or the remote sha is unknown), a regressed/equal counter with
+    // different bytes falls through to a real download. (FIX H7a)
     if (lSide === 'unchanged' && rSide === 'modified') {
-      if (B && R!.serverVersion <= B.serverVersion) continue;
+      if (B && R!.serverVersion === B.serverVersion && R!.sha256 === B.sha256) continue;
       actions.push({ path, kind: 'download', remoteSize: R!.size });
       continue;
     }
@@ -611,7 +657,7 @@ export function plan(
     }
     // modified × modified → conflict (or noop if content happens to match)
     if (lSide === 'modified' && rSide === 'modified') {
-      if (shasMatch) continue;
+      if (shasMatch) { adoptIfNeeded(path, L!, R!); continue; }
       actions.push({
         path, kind: 'conflict',
         localSize: L!.size, remoteSize: R!.size,
@@ -631,7 +677,7 @@ export function plan(
     }
     // added × added → noop if shas match, else conflict
     if (lSide === 'added' && rSide === 'added') {
-      if (shasMatch) continue;
+      if (shasMatch) { adoptIfNeeded(path, L!, R!); continue; }
       actions.push({
         path, kind: 'conflict',
         localSize: L!.size, remoteSize: R!.size,
@@ -641,8 +687,9 @@ export function plan(
       });
       continue;
     }
-    // deleted × absent → baseline is stale, drop it silently (no action)
-    if (lSide === 'deleted' && rSide === 'absent') continue;
+    // deleted × absent → baseline is stale, drop it (no action). Actually pruning
+    // the entry (FIX H7b) stops it accumulating and masking a future recreate.
+    if (lSide === 'deleted' && rSide === 'absent') { baselineDrops.push(path); continue; }
     // deleted × unchanged → delete remote. Use the remote's CURRENT version for
     // the optimistic-delete check, not the baseline's: the content can be equal
     // (rSide 'unchanged' is sha-based) while the server version moved ahead - the
@@ -652,19 +699,20 @@ export function plan(
       actions.push({ path, kind: 'delete-remote', remoteSize: R!.size, expectedServerVersion: R!.serverVersion });
       continue;
     }
-    // deleted × modified → remote wins, restore locally — but only if the remote
-    // actually advanced past the baseline. A stale (older/equal) remote read must
-    // not resurrect a file the user intentionally deleted.
+    // deleted × modified → remote wins, restore locally. Skip ONLY a true no-op
+    // re-read (same node version AND same content); a regressed counter is a
+    // delete+recreate (fresh node, restarted counter), which is a genuine remote
+    // change to restore, not a stale read to ignore. (FIX H7a)
     if (lSide === 'deleted' && rSide === 'modified') {
-      if (B && R!.serverVersion <= B.serverVersion) continue;
+      if (B && R!.serverVersion === B.serverVersion && R!.sha256 === B.sha256) continue;
       actions.push({
         path, kind: 'download', remoteSize: R!.size,
         reason: 'local deleted but remote modified - remote preserved',
       });
       continue;
     }
-    // deleted × deleted → noop, drop baseline
-    if (lSide === 'deleted' && rSide === 'deleted') continue;
+    // deleted × deleted → noop, drop baseline (FIX H7b: actually prune it)
+    if (lSide === 'deleted' && rSide === 'deleted') { baselineDrops.push(path); continue; }
 
     // Remaining combinations are impossible given baseline semantics.
   }
@@ -675,7 +723,7 @@ export function plan(
   const deletesRemote = actions.filter(a => a.kind === 'delete-remote').length;
   const conflicts = actions.filter(a => a.kind === 'conflict').length;
 
-  return { actions, uploads, downloads, deletesLocal, deletesRemote, conflicts };
+  return { actions, uploads, downloads, deletesLocal, deletesRemote, conflicts, baselineDrops, baselineAdopts };
 }
 
 // ─── Apply ─────────────────────────────────────────────────────
@@ -871,13 +919,27 @@ async function syncInner(
     }
   }
 
-  // Bulk-delete guard over the *planned* deletes.
-  const knownFiles = local.size + remote.size;
-  const deletesOk = await bulkDeleteGuard(planned, knownFiles, { ...opts, interactive });
+  // Bulk-delete guard over the *planned* deletes. Count DISTINCT paths across
+  // local ∪ remote (FIX M7): summing the two sizes double-counts every synced
+  // file, roughly doubling the denominator so the "delete ≥25% of the tree"
+  // trip-wire needed ~50% before it fired. A set union reflects the real tree size.
+  const knownFiles = new Set<string>([...local.keys(), ...remote.keys()]).size;
 
-  // Filter actions based on guard
+  // Pre-authorized deletions (FIX M5): a caller that owns a specific set of paths
+  // (e.g. `gipity remove` deleting a kit's files) whitelists them so they bypass
+  // the guard, while any OTHER pending deletion is still counted and guarded.
+  const whitelist = new Set((opts.deleteWhitelist ?? []).map(normalizeTreePath));
+  const isDelete = (a: Action) => a.kind === 'delete-local' || a.kind === 'delete-remote';
+  const guardDeletesLocal = planned.actions.filter(a => a.kind === 'delete-local' && !whitelist.has(a.path)).length;
+  const guardDeletesRemote = planned.actions.filter(a => a.kind === 'delete-remote' && !whitelist.has(a.path)).length;
+  const deletesOk = await bulkDeleteGuard(
+    { ...planned, deletesLocal: guardDeletesLocal, deletesRemote: guardDeletesRemote },
+    knownFiles, { ...opts, interactive },
+  );
+
+  // Filter actions based on guard - but always keep the caller's whitelisted deletes.
   const plannedToApply = deletesOk ? planned.actions : planned.actions.filter(
-    a => a.kind !== 'delete-local' && a.kind !== 'delete-remote',
+    a => !isDelete(a) || whitelist.has(a.path),
   );
   const skippedByGuard = planned.actions.length - plannedToApply.length;
 
@@ -937,9 +999,13 @@ async function syncInner(
     if (missing.length) {
       p?.phase(`Recovering ${missing.length} file${missing.length === 1 ? '' : 's'} the bulk download dropped…`);
       for (const a of missing) {
+        // Verify against the remote's content hash: the downloads pass records
+        // this sha into the baseline, so bytes that don't match it must be
+        // rejected (FIX M3) rather than written and then re-uploaded as corruption.
+        const expectedSha = remote.get(a.path)?.sha256 ?? undefined;
         let buf: Buffer | null = null;
         for (let attempt = 0; attempt < 3 && !buf; attempt++) {
-          buf = await fetchOne(config.projectGuid, a.path);
+          buf = await fetchOne(config.projectGuid, a.path, expectedSha);
         }
         if (buf) downloadedBytes.set(a.path, buf);
       }
@@ -957,6 +1023,51 @@ async function syncInner(
   const downloadQueue: Action[] = plannedToApply.filter(a => a.kind === 'download');
   const conflictQueue: Action[] = plannedToApply.filter(a => a.kind === 'conflict');
 
+  // Conflict downgrade shared by the download TOCTOU guard and init-/complete-time
+  // CAS rejections: remote wins the canonical path - rename local out of the way,
+  // restore the server copy, re-upload the rename as a brand-new path so the local
+  // edit survives as a conflicted copy on every client.
+  const downgradeToConflict = async (
+    a: Action, full: string, currentServerVersion: number | null,
+  ): Promise<void> => {
+    const currentBytes = await fetchOne(config.projectGuid, a.path);
+    const renamedRel = conflictedCopyName(a.path);
+    let renamedFull: string;
+    try { renamedFull = resolveInRoot(root, renamedRel); }
+    catch (e) { errors.push((e as Error).message); return; }
+    try {
+      renameSync(full, renamedFull);
+    } catch (e) {
+      errors.push(`Rename failed for ${a.path}: ${(e as Error).message}`);
+      return;
+    }
+    if (currentBytes) {
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, currentBytes);
+      const stat = statSync(full);
+      baseline.files[a.path] = {
+        size: stat.size, mtime: stat.mtime.toISOString(),
+        sha256: '',  // will re-hash on next sync
+        serverVersion: currentServerVersion ?? 0,
+      };
+    }
+    try {
+      const result = await uploadOneFile(
+        config.projectGuid, renamedFull, renamedRel,
+        { expectedServerVersion: null },
+      );
+      const stat = statSync(renamedFull);
+      const { sha256 } = await hashFile(renamedFull);
+      baseline.files[renamedRel] = {
+        size: stat.size, mtime: stat.mtime.toISOString(),
+        sha256, serverVersion: result.serverVersion,
+      };
+    } catch (e) {
+      errors.push(`Conflict-copy upload failed for ${renamedRel}: ${(e as Error).message}`);
+    }
+    applied++;
+  };
+
   // Handle downloads first (no network writes) - fills local fs with remote changes.
   for (const a of downloadQueue) {
     const buf = downloadedBytes.get(a.path);
@@ -967,6 +1078,28 @@ async function syncInner(
     let full: string;
     try { full = resolveInRoot(root, a.path); }
     catch (e) { errors.push((e as Error).message); continue; }
+
+    // Pull TOCTOU guard (FIX H8): the whole-tree tar download between scan and
+    // this write can take a long time, and a local edit landing in that window
+    // would be silently clobbered by the remote bytes. Re-hash the on-disk file
+    // now and compare to what the plan saw at scan time (the local scan sha, or
+    // the baseline sha it was derived from). If it moved, the newer local edit
+    // must not be lost - downgrade to the conflict path so the remote lands as
+    // the canonical copy and the local edit is preserved as a conflicted copy.
+    if (existsSync(full)) {
+      const scanSha = local.get(a.path)?.sha256 ?? baseline.files[a.path]?.sha256;
+      const remoteSha = remote.get(a.path)?.sha256 ?? undefined;
+      let currentSha: string | undefined;
+      try { currentSha = (await hashFile(full)).sha256; } catch { /* unreadable - fall through to overwrite */ }
+      // Clobber only if the on-disk bytes moved since the scan (or a file appeared
+      // in a path we scanned as absent) AND they don't already equal the remote
+      // bytes we're about to write (no point conflicting on an identical file).
+      if (currentSha !== undefined && currentSha !== scanSha && currentSha !== remoteSha) {
+        await downgradeToConflict(a, full, remote.get(a.path)!.serverVersion);
+        continue;
+      }
+    }
+
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, buf);
     const stat = statSync(full);
@@ -1043,50 +1176,6 @@ async function syncInner(
   const onBytes = p
     ? (delta: number) => { sentBytes += delta; p.transfer(uploadLabel, sentBytes, totalUploadBytes); }
     : undefined;
-
-  // Conflict downgrade shared by init-time and complete-time CAS rejections:
-  // remote moved under us, so remote wins the canonical path - rename local,
-  // restore the server copy, re-upload the rename as a brand-new path.
-  const downgradeToConflict = async (
-    a: Action, full: string, currentServerVersion: number | null,
-  ): Promise<void> => {
-    const currentBytes = await fetchOne(config.projectGuid, a.path);
-    const renamedRel = conflictedCopyName(a.path);
-    let renamedFull: string;
-    try { renamedFull = resolveInRoot(root, renamedRel); }
-    catch (e) { errors.push((e as Error).message); return; }
-    try {
-      renameSync(full, renamedFull);
-    } catch (e) {
-      errors.push(`Rename failed for ${a.path}: ${(e as Error).message}`);
-      return;
-    }
-    if (currentBytes) {
-      mkdirSync(dirname(full), { recursive: true });
-      writeFileSync(full, currentBytes);
-      const stat = statSync(full);
-      baseline.files[a.path] = {
-        size: stat.size, mtime: stat.mtime.toISOString(),
-        sha256: '',  // will re-hash on next sync
-        serverVersion: currentServerVersion ?? 0,
-      };
-    }
-    try {
-      const result = await uploadOneFile(
-        config.projectGuid, renamedFull, renamedRel,
-        { expectedServerVersion: null },
-      );
-      const stat = statSync(renamedFull);
-      const { sha256 } = await hashFile(renamedFull);
-      baseline.files[renamedRel] = {
-        size: stat.size, mtime: stat.mtime.toISOString(),
-        sha256, serverVersion: result.serverVersion,
-      };
-    } catch (e) {
-      errors.push(`Conflict-copy upload failed for ${renamedRel}: ${(e as Error).message}`);
-    }
-    applied++;
-  };
 
   interface PreparedUpload { a: Action; full: string; size: number; mtime: string; sha256: string }
   for (let chunkStart = 0; chunkStart < uploadQueue.length; chunkStart += UPLOAD_INIT_BATCH_SIZE) {
@@ -1233,11 +1322,25 @@ async function syncInner(
       continue;
     }
     if (a.kind === 'delete-local') {
+      // Only drop the baseline entry when the file is actually gone. A locked file
+      // (Windows EBUSY/EPERM) that survives the unlink must KEEP its baseline: with
+      // no baseline the next sync sees added×absent and re-uploads it, reverting the
+      // remote deletion. ENOENT counts as success (already gone). (FIX M4)
+      let full: string;
+      try { full = resolveInRoot(root, a.path); }
+      catch (e) { errors.push((e as Error).message); continue; }
       try {
-        unlinkSync(resolveInRoot(root, a.path));
-      } catch { /* already gone or outside root */ }
-      delete baseline.files[a.path];
-      applied++;
+        unlinkSync(full);
+        delete baseline.files[a.path];
+        applied++;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          delete baseline.files[a.path];
+          applied++;
+        } else {
+          errors.push(`Could not delete local ${a.path}: ${(err as Error).message} - left in place, will retry next sync`);
+        }
+      }
     } else if (a.kind === 'delete-remote') {
       try {
         const qs = `path=${encodeURIComponent(a.path)}` +
@@ -1301,6 +1404,14 @@ async function syncInner(
   // Clean up empty local directories after delete-local actions.
   cleanupEmptyDirs(root, config.ignore);
 
+  // Adopt agreed content-match state into the baseline, and prune stale entries.
+  // `plan()` is pure, so it emits these as lists and the mutation happens here.
+  // Adopting (FIX M1) makes sync convergent - a locally+remotely-identical file
+  // becomes a known synced pair, so a later delete propagates instead of
+  // resurrecting. Pruning (FIX H7b) stops stale entries masking a later recreate.
+  for (const { path, entry } of planned.baselineAdopts) baseline.files[path] = entry;
+  for (const path of planned.baselineDrops) delete baseline.files[path];
+
   baseline.lastFullSync = new Date().toISOString();
   writeBaseline(baseline);
 
@@ -1347,6 +1458,14 @@ export async function pushFile(filePath: string): Promise<void> {
   const root = projectDir();
   const rel = relative(root, filePath).replace(/\\/g, '/');
   if (shouldIgnore(rel, effectiveIgnore(root, config.ignore))) return;
+
+  // Skip symlinks (FIX M6b): `walkLocal` (the full-sync scanner) ignores symlink
+  // dirents, so if the push path followed a link and uploaded it, the next full
+  // sync would see a remote path with no local counterpart and plan delete-remote
+  // - churn, and eventual remote loss. Both sides must agree symlinks are out of
+  // scope. lstat (not stat) so we inspect the link itself, not its target.
+  try { if (lstatSync(filePath).isSymbolicLink()) return; }
+  catch { return; /* gone/unreadable - nothing to push */ }
 
   // Serialize against `gipity sync` and other concurrent pushes by holding the
   // same per-project lock `sync()` uses. Both paths read-modify-write the shared

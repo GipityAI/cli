@@ -8,7 +8,6 @@ import { error as clrError, dim } from '../colors.js';
 
 interface UploadOpts {
   recursive?: boolean;
-  overwrite?: boolean;
   mime?: string;
   concurrency?: string;
   dryRun?: boolean;
@@ -48,7 +47,6 @@ export const uploadCommand = new Command('upload')
   .argument('<src>', 'Local source file or directory')
   .argument('[dest]', 'Destination path in the project (defaults to /)')
   .option('-r, --recursive', 'Upload a directory recursively')
-  .option('--overwrite', 'Force a new version even if the file is byte-identical to the current version')
   .option('--mime <type>', 'Override the content-type (default: detect from extension)')
   .option('--concurrency <n>', `Parallel files (default ${UPLOAD_CONCURRENCY})`)
   .option('--dry-run', 'Print what would be uploaded; do not call the network')
@@ -104,7 +102,7 @@ export const uploadCommand = new Command('upload')
       }
 
       const concurrency = Math.max(1, parseInt(opts.concurrency ?? String(UPLOAD_CONCURRENCY), 10));
-      const uploadOpts = { mime: opts.mime, overwrite: opts.overwrite };
+      const uploadOpts = { mime: opts.mime };
 
       let cursor = 0;
       let uploaded = 0, skipped = 0, resumed = 0, failed = 0;

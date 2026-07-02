@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { sync } from '../sync.js';
-import { success, muted, bold } from '../colors.js';
+import { success, muted, bold, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { createProgressReporter, withSpinner } from '../progress.js';
 
@@ -65,6 +65,10 @@ interface AddResponse {
   type?: string;
   kit?: string;
   notes?: string[];
+  /** Present when the install partially failed (server responds HTTP 207): the
+   *  files that could not be written, with the per-file error. The rest of the
+   *  install still landed. */
+  failed?: Array<{ path: string; error: string }>;
 }
 
 // ─── Local-path payload mode ────────────────────────────────────────────────
@@ -249,6 +253,14 @@ export const addCommand = new Command('add')
     if (data.notes?.length) {
       console.log('');
       for (const n of data.notes) console.log(n);
+    }
+    // Partial install (server HTTP 207): some files were dropped. Surface them so
+    // the user knows the install is incomplete rather than reading a clean success.
+    if (data.failed?.length) {
+      console.log('');
+      console.warn(warning(`${data.failed.length} file(s) failed to install:`));
+      for (const f of data.failed) console.warn(warning(`  ! ${f.path}: ${f.error}`));
+      console.warn(warning(`Re-run \`gipity add ${data.kit ?? name}${opts.force ? ' --force' : ''}\` to retry the dropped files.`));
     }
     // After scaffolding an app, point at kits as the next step - they add
     // features (multiplayer, etc.) into the app you just created.

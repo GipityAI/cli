@@ -33,10 +33,16 @@ export const removeCommand = new Command('remove')
     const res = opts.json
       ? await doRemove()
       : await withSpinner('Removing…', doRemove, { done: null });
-    // Force the pull so the kit's deletions land locally without tripping the
-    // bulk-deletion guard - the removal is an explicit, user-invoked action.
-    const syncResult = await sync({ interactive: false, force: true, progress: opts.json ? undefined : createProgressReporter() });
     const data = res.data;
+    // Pull the kit's deletions locally. Whitelist ONLY the kit's own removed files
+    // so they bypass the bulk-delete guard (the removal is explicit), while any
+    // unrelated mass deletion pending on either side is still guarded - a blanket
+    // `force` here would let that ride in silently.
+    const syncResult = await sync({
+      interactive: false,
+      deleteWhitelist: data.removed ?? [],
+      progress: opts.json ? undefined : createProgressReporter(),
+    });
 
     if (opts.json) {
       console.log(JSON.stringify({ ...data, synced: syncResult.applied }));

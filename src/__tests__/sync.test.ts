@@ -112,35 +112,42 @@ describe('plan() - 9-cell decision table', () => {
     assert.equal(p.actions[0].kind, 'download');
   });
 
-  // Read-after-write race guard: a just-pushed local file advances the baseline,
-  // but the remote tree can still serve an OLDER version (stale read). That looks
-  // like unchanged×modified; a blind download would clobber the new local bytes.
-  // A real remote change always carries a strictly newer serverVersion.
-  it('unchanged × modified but remote serverVersion ≤ baseline (stale read) → no download', () => {
+  // FIX H7a: server_version is per-NODE, not per-path. A server-side delete+recreate
+  // mints a fresh node whose counter restarts (e.g. at 1), so a regressed counter
+  // (remote < baseline) is a GENUINE remote change to pull, not a stale read to skip.
+  // The old `R.serverVersion <= baseline` guard skipped these forever; now we skip
+  // only a true no-op re-read (same version AND same content), which - since the sha
+  // already differs in the 'modified' branch - never applies, so a differing-content
+  // remote always downloads. (Behavior changed here on purpose vs the old stale-read
+  // guard; see FIX H7 in the sync engine.)
+  it('unchanged × modified with a regressed serverVersion (delete+recreate) → download', () => {
     const p = plan(
       new Map([['foo', local(100, 'h-new')]]),
-      new Map([['foo', remote('foo', 'h-stale', 4)]]),
+      new Map([['foo', remote('foo', 'h-recreated', 4)]]),
       { foo: baselineOf('h-new', 5) },
     );
-    assert.equal(p.actions.length, 0);
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
   });
 
-  it('unchanged × modified with equal serverVersion (differing sha) → no download', () => {
+  it('unchanged × modified with equal serverVersion but differing sha → download', () => {
     const p = plan(
       new Map([['foo', local(100, 'h-new')]]),
-      new Map([['foo', remote('foo', 'h-stale', 5)]]),
+      new Map([['foo', remote('foo', 'h-other', 5)]]),
       { foo: baselineOf('h-new', 5) },
     );
-    assert.equal(p.actions.length, 0);
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
   });
 
-  it('deleted × modified but stale remote (serverVersion ≤ baseline) → no resurrect', () => {
+  it('deleted × modified with a regressed serverVersion (delete+recreate) → restore (download)', () => {
     const p = plan(
       new Map(),
-      new Map([['foo', remote('foo', 'h-stale', 4)]]),
+      new Map([['foo', remote('foo', 'h-recreated', 4)]]),
       { foo: baselineOf('h-cur', 5) },
     );
-    assert.equal(p.actions.length, 0);
+    assert.equal(p.actions.length, 1);
+    assert.equal(p.actions[0].kind, 'download');
   });
 
   it('deleted × modified with a genuinely newer remote → restore (download)', () => {
@@ -186,13 +193,18 @@ describe('plan() - 9-cell decision table', () => {
     assert.ok(p.actions[0].renamedLocalTo!.includes('conflict from'));
   });
 
-  it('modified × modified (shas happen to match) → noop', () => {
+  it('modified × modified (shas happen to match) → noop, adopts agreed baseline (FIX M1)', () => {
     const p = plan(
       new Map([['foo', local(100, 'h-new')]]),
       new Map([['foo', remote('foo', 'h-new', 6)]]),
       { foo: baselineOf('h-base', 5) },
     );
     assert.equal(p.actions.length, 0);
+    // Content agrees but the baseline is stale (h-base@5) - adopt the agreed state
+    // (h-new@6) so the pair is convergent and a later delete propagates.
+    assert.deepEqual(p.baselineAdopts, [
+      { path: 'foo', entry: { size: 100, mtime: '2024-01-01', sha256: 'h-new', serverVersion: 6 } },
+    ]);
   });
 
   it('modified × deleted → re-upload as new (expected=null)', () => {
@@ -217,13 +229,29 @@ describe('plan() - 9-cell decision table', () => {
     assert.equal(p.actions[0].expectedServerVersion, null);
   });
 
-  it('added × added (shas match) → noop', () => {
+  it('added × added (shas match) → noop, adopts into an empty baseline (FIX M1)', () => {
     const p = plan(
       new Map([['foo', local(100, 'h1')]]),
       new Map([['foo', remote('foo', 'h1', 1)]]),
       {},
     );
     assert.equal(p.actions.length, 0);
+    // No baseline entry existed - record the agreed pair so the file is a known
+    // synced pair (a later delete propagates instead of resurrecting).
+    assert.deepEqual(p.baselineAdopts, [
+      { path: 'foo', entry: { size: 100, mtime: '2024-01-01', sha256: 'h1', serverVersion: 1 } },
+    ]);
+  });
+
+  it('content-match with a baseline that already agrees → no adopt (FIX M1)', () => {
+    const p = plan(
+      new Map([['foo', local(100, 'h1')]]),
+      new Map([['foo', remote('foo', 'h1', 3)]]),
+      { foo: baselineOf('h1', 3) },
+    );
+    // This is unchanged×unchanged; baseline already matches, so nothing to adopt.
+    assert.equal(p.actions.length, 0);
+    assert.deepEqual(p.baselineAdopts, []);
   });
 
   it('added × added (shas differ) → conflict', () => {
@@ -257,9 +285,10 @@ describe('plan() - 9-cell decision table', () => {
     assert.equal(p.actions[0].kind, 'download');
   });
 
-  it('deleted × deleted → noop (baseline dropped silently)', () => {
+  it('deleted × deleted → noop, baseline entry pruned (FIX H7b)', () => {
     const p = plan(new Map(), new Map(), { foo: baselineOf('h1', 5) });
     assert.equal(p.actions.length, 0);
+    assert.deepEqual(p.baselineDrops, ['foo']);
   });
 
   it('absent × added → download (remote added since last sync)', () => {
