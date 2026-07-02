@@ -22,7 +22,7 @@ import type {
 export function resolveCommand(cmd: string): string {
   if (process.platform !== 'win32') return cmd;
   try {
-    const lines = execSync(`where ${cmd}`, { encoding: 'utf-8' })
+    const lines = execSync(`where ${cmd}`, { encoding: 'utf-8', windowsHide: true })
       .split(/\r?\n/)
       .map(l => l.trim())
       .filter(Boolean);
@@ -65,6 +65,10 @@ export function winBatchInvocation(
  * Drop-in `spawn` that survives Windows batch shims. When `cmd` is a `.cmd`/
  * `.bat` on win32, it is launched via cmd.exe with verbatim arguments;
  * otherwise this is a plain `spawn`. Use for anything from `resolveCommand`.
+ *
+ * `windowsHide: true` is the default so background/detached children (and the
+ * cmd.exe wrapper we use for batch shims) never flash a console window on
+ * Windows; a caller can still override it in `options`.
  */
 export function spawnCommand(
   cmd: string,
@@ -73,9 +77,9 @@ export function spawnCommand(
 ): ChildProcess {
   if (isBatchShim(cmd)) {
     const inv = winBatchInvocation(cmd, args);
-    return spawn(inv.file, inv.args, { ...options, windowsVerbatimArguments: true });
+    return spawn(inv.file, inv.args, { windowsHide: true, ...options, windowsVerbatimArguments: true });
   }
-  return spawn(cmd, [...args], options);
+  return spawn(cmd, [...args], { windowsHide: true, ...options });
 }
 
 /** Drop-in `spawnSync` counterpart of {@link spawnCommand}. */
@@ -86,7 +90,7 @@ export function spawnSyncCommand(
 ): SpawnSyncReturns<Buffer | string> {
   if (isBatchShim(cmd)) {
     const inv = winBatchInvocation(cmd, args);
-    return spawnSync(inv.file, inv.args, { ...options, windowsVerbatimArguments: true });
+    return spawnSync(inv.file, inv.args, { windowsHide: true, ...options, windowsVerbatimArguments: true });
   }
-  return spawnSync(cmd, [...args], options);
+  return spawnSync(cmd, [...args], { windowsHide: true, ...options });
 }

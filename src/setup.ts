@@ -4,7 +4,6 @@
 import { resolve, join, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { spawnSync } from 'child_process';
 import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 
@@ -269,10 +268,10 @@ export function userScopePluginCurrent(): boolean {
 }
 
 function claudeOnPath(): boolean {
-  const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['claude'], {
+  const probe = spawnSyncCommand(process.platform === 'win32' ? 'where' : 'which', ['claude'], {
     encoding: 'utf-8',
   });
-  return probe.status === 0 && !!probe.stdout?.trim();
+  return probe.status === 0 && !!probe.stdout?.toString().trim();
 }
 
 /** Materialize the Gipity plugin at USER scope via Claude Code's own plugin

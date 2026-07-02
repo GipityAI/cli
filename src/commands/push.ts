@@ -13,9 +13,13 @@ export const pushCommand = new Command('push')
       const fullPath = resolve(file);
 
       if (opts.background) {
-        // Fork to background - import child_process dynamically
-        const { fork } = await import('child_process');
-        const child = fork(process.argv[1], ['push', fullPath, '--quiet'], {
+        // Detach a background `gipity push` and exit immediately. Goes through
+        // spawnCommand (Node binary running our own entry script - no IPC
+        // channel is needed, so spawn beats fork), which defaults
+        // `windowsHide: true` so the detached child never flashes a console
+        // window on Windows.
+        const { spawnCommand } = await import('../platform.js');
+        const child = spawnCommand(process.execPath, [process.argv[1], 'push', fullPath, '--quiet'], {
           detached: true,
           stdio: 'ignore',
         });

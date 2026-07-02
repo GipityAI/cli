@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { spawn } from 'node:child_process';
+import { spawnCommand } from '../platform.js';
 import { get } from '../api.js';
 import { brand, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
@@ -15,7 +15,7 @@ function openInBrowser(url: string): void {
     process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] as const :
     ['xdg-open', [url]] as const;
   try {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    const child = spawnCommand(cmd, args, { stdio: 'ignore', detached: true });
     // A missing/non-executable launcher (ENOENT, or EACCES on WSL/minimal Linux
     // where xdg-open isn't runnable) is reported ASYNCHRONOUSLY via an 'error'
     // event - not a throw - so the try/catch alone can't stop it. With no

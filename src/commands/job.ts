@@ -184,7 +184,7 @@ jobCommand
   .action(async (name: string, opts) => {
     const { existsSync, statSync } = await import('node:fs');
     const { resolve, join } = await import('node:path');
-    const { spawn, spawnSync } = await import('node:child_process');
+    const { spawnCommand, spawnSyncCommand } = await import('../platform.js');
 
     const jobDir = resolve(process.cwd(), 'jobs', name);
     if (!existsSync(jobDir) || !statSync(jobDir).isDirectory()) {
@@ -207,7 +207,7 @@ jobCommand
     }
 
     // Confirm docker is reachable before bothering to build args.
-    const probe = spawnSync('docker', ['info'], { stdio: 'ignore' });
+    const probe = spawnSyncCommand('docker', ['info'], { stdio: 'ignore' });
     if (probe.status !== 0) {
       console.error(clrError('docker daemon not reachable. Start Docker Desktop / dockerd and retry.'));
       process.exit(1);
@@ -236,7 +236,7 @@ jobCommand
     }
 
     const runArgs = ['run', ...sharedArgs, '--entrypoint', 'sh', opts.image, '-c', shellCmd];
-    const child = spawn('docker', runArgs, { stdio: 'inherit' });
+    const child = spawnCommand('docker', runArgs, { stdio: 'inherit' });
     // A missing `docker` binary is reported asynchronously via 'error' (not a
     // throw), so a try/catch can't stop it - without this handler Node crashes
     // with a raw stack trace instead of a clear message.

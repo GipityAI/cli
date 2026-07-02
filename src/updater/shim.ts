@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Thin launcher. Resolves the user-local install at ~/.gipity/local/, exec's
 // it, and kicks off a detached background updater. Modeled on Claude Code.
-import { spawn, spawnSync } from 'child_process';
+import { spawnCommand, spawnSyncCommand } from '../platform.js';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve, join } from 'path';
@@ -25,7 +25,7 @@ const isDevLink = existsSync(join(pkgRoot, 'src'));
 function startBackgroundUpdater(): void {
   const checkScript = join(__dirname, 'check.js');
   try {
-    const child = spawn(process.execPath, [checkScript], {
+    const child = spawnCommand(process.execPath, [checkScript], {
       detached: true,
       stdio: 'ignore',
       env: process.env,
@@ -39,7 +39,7 @@ function startBackgroundUpdater(): void {
 
 function execLocal(): never {
   const args = process.argv.slice(2);
-  const res = spawnSync(process.execPath, [LOCAL_ENTRY, ...args], {
+  const res = spawnSyncCommand(process.execPath, [LOCAL_ENTRY, ...args], {
     stdio: 'inherit',
     env: process.env,
   });
@@ -52,7 +52,7 @@ function execSelf(): never {
   // so the user is never blocked (they can retry via `gipity update --force`).
   const ownEntry = resolve(__dirname, '..', 'index.js');
   const args = process.argv.slice(2);
-  const res = spawnSync(process.execPath, [ownEntry, ...args], {
+  const res = spawnSyncCommand(process.execPath, [ownEntry, ...args], {
     stdio: 'inherit',
     env: process.env,
   });

@@ -34,7 +34,7 @@ export function claudeInstallPlan(platformOverride?: string): ClaudeInstallPlan 
 /** Whether the `claude` binary resolves on PATH. */
 export function isClaudeInstalled(platformOverride?: string): boolean {
   try {
-    execSync(claudeInstallPlan(platformOverride).checkCmd, { stdio: 'ignore' });
+    execSync(claudeInstallPlan(platformOverride).checkCmd, { stdio: 'ignore', windowsHide: true });
     return true;
   } catch {
     return false;
@@ -68,6 +68,7 @@ export function probeClaudeAuthenticated(): boolean {
       timeout: 60_000,
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf-8',
+      windowsHide: true,
     });
     return typeof out === 'string' && out.trim().length > 0;
   } catch {
@@ -92,7 +93,7 @@ export function ensureClaudeInstalled(opts: { force?: boolean; quiet?: boolean }
   if (!opts.force && isClaudeInstalled()) return { installed: true, alreadyPresent: true };
   const { installArgv } = claudeInstallPlan();
   try {
-    execSync(installArgv.join(' '), { stdio: opts.quiet ? 'ignore' : 'inherit' });
+    execSync(installArgv.join(' '), { stdio: opts.quiet ? 'ignore' : 'inherit', windowsHide: true });
   } catch {
     // Fall through to a definitive PATH re-check rather than trusting the throw.
   }

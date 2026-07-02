@@ -12,7 +12,7 @@ import { Command } from 'commander';
 import { existsSync, rmSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
 import { homedir, platform as osPlatform } from 'os';
 import { join, resolve } from 'path';
-import { spawnSync } from 'child_process';
+import { spawnSyncCommand } from '../platform.js';
 import { post } from '../api.js';
 import { getAuth } from '../auth.js';
 import { confirm, getAutoConfirm } from '../utils.js';
@@ -80,7 +80,7 @@ function removeServiceUnit(): { ran: boolean; ok: boolean; note?: string } {
     // is fine if the service was never installed.
     let allOk = true;
     for (const argv of plan.disableCmds) {
-      const r = spawnSync(argv[0], argv.slice(1), { stdio: 'ignore' });
+      const r = spawnSyncCommand(argv[0], argv.slice(1), { stdio: 'ignore' });
       if (r.status !== 0) allOk = false;
     }
     if (existsSync(plan.path)) {

@@ -10,7 +10,7 @@
  * the interactive prompts that live in `onboarding.ts`. No `console` output
  * and no `process.exit` in this module: callers own all UX.
  */
-import { spawn, spawnSync } from 'child_process';
+import { spawnCommand, spawnSyncCommand } from '../platform.js';
 import { hostname, platform as osPlatform } from 'os';
 import { resolve, dirname } from 'path';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -101,7 +101,7 @@ export async function pairDevice(opts: { name?: string; force?: boolean } = {}):
 export function startDaemon(): void {
   if (state.isDaemonRunning()) return;
   try {
-    const child = spawn(process.execPath, [resolveCliPath(), 'relay', 'run'], {
+    const child = spawnCommand(process.execPath, [resolveCliPath(), 'relay', 'run'], {
       detached: true,
       stdio: 'ignore',
     });
@@ -142,7 +142,7 @@ export function installAutostart(opts: { stdio?: 'ignore' | 'inherit' } = {}): A
   writeFileSync(plan.path, plan.content);
   let ok = true;
   for (const argv of plan.enableCmds) {
-    const r = spawnSync(argv[0], argv.slice(1), { stdio });
+    const r = spawnSyncCommand(argv[0], argv.slice(1), { stdio });
     if (r.status !== 0) { ok = false; break; }
   }
   return { ok, summary: plan.summary, path: plan.path };
@@ -158,7 +158,7 @@ export function removeAutostart(opts: { stdio?: 'ignore' | 'inherit' } = {}): { 
   const plan = planFor({ cliPath: resolveCliPath() });
   let ok = true;
   for (const argv of plan.disableCmds) {
-    const r = spawnSync(argv[0], argv.slice(1), { stdio });
+    const r = spawnSyncCommand(argv[0], argv.slice(1), { stdio });
     if (r.status !== 0) ok = false;
   }
   return { ok, plan };
