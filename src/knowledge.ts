@@ -107,11 +107,29 @@ mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <s
 Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` — never hardcode keys), \`gipity email send --to <addr> --subject <s> --body <b>\` (sends as \`gipity@gipity.ai\`; omit \`--to\` to self-send), \`gipity skill read <name>\`.
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
+Hit a platform bug or friction? File it in real time: \`gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sandbox|other> --severity <S1|S2|S3|S4> --summary "<7 words max>" [--detail "<what failed + workaround>"]\` (see below).
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
 
 Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** - read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
 
 Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.fn.call\`/\`callAs\` at a throwaway copy of your database (your \`migrations/\` + \`seeds/\`), reset (truncate + reseed) before every run - so test rows never reach the deployed app and you don't write teardown. Functions see \`ctx.isTest === true\` during a run (use it to skip your own rate limiting); the platform also suppresses \`notify()\` push so a suite can't spam subscribers. Reference data tests need goes in seed files; a runtime-written settings table that isn't seeded goes under \`test.preserve\` in \`gipity.yaml\`. Build per-file fixtures in \`setup(fn)\` → \`ctx.fixtures\`, and namespace unique values with \`ctx.testId\`.
+
+## Hit friction on the platform? Report it in real time
+
+When *the Gipity platform itself* fights you — a CLI command errors or behaves unexpectedly, a doc/skill is wrong or missing, a deploy/template/kit/service/sandbox misbehaves — file a bug report the moment it happens, **even if you found a workaround and kept going.** Capturing it in the moment (with the real cause fresh) beats us mining it out of transcripts later.
+
+\`\`\`
+gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sandbox|other> \\
+                  --severity <S1|S2|S3|S4> \\
+                  --summary "one line, 7 words max" \\
+                  --detail "what you did, what failed, the workaround"
+\`\`\`
+
+- **Severity:** S1 blocker (no workaround) · S2 major (costly workaround) · S3 minor (easy workaround) · S4 friction (papercut).
+- **summary** ≤ 7 words; **detail** as succinct as possible (a few sentences, not a transcript).
+- **Never include PII or user data** (emails, names, secrets, tokens, prompt/file contents) — describe the platform problem in the abstract.
+- File it for *platform* problems, not your own mistakes or the app's own bugs. One report per distinct problem.
+- Reports go to a review queue for the team to triage into fixes; see what you've filed with \`gipity bug list\`.
 
 ## Tool output is complete and synchronous
 

@@ -38,6 +38,7 @@ import { fnCommand } from './commands/fn.js';
 import { serviceCommand } from './commands/service.js';
 import { secretsCommand } from './commands/secrets.js';
 import { notifyCommand } from './commands/notify.js';
+import { bugCommand } from './commands/bug.js';
 import { paymentsCommand } from './commands/payments.js';
 import { jobCommand } from './commands/job.js';
 import { rbacCommand } from './commands/rbac.js';
@@ -133,7 +134,7 @@ const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, storageCommand, syncCommand, pushCommand, uploadCommand];
 const appBuildingGroup = [testCommand, fnCommand, serviceCommand, secretsCommand, notifyCommand, paymentsCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
 const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand, textCommand];
-const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand];
+const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, bugCommand];
 const setupGroup       = [loginCommand, logoutCommand, tokenCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
