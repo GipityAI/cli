@@ -25,7 +25,6 @@ import { projectCommand } from './commands/project.js';
 import { agentCommand } from './commands/agent.js';
 import { workflowCommand } from './commands/workflow.js';
 import { creditsCommand } from './commands/credits.js';
-import { planCommand } from './commands/plan.js';
 import { fileCommand } from './commands/file.js';
 import { storageCommand } from './commands/storage.js';
 import { claudeCommand } from './commands/claude.js';
@@ -135,7 +134,7 @@ const filesGroup       = [fileCommand, storageCommand, syncCommand, pushCommand,
 const appBuildingGroup = [testCommand, fnCommand, serviceCommand, secretsCommand, notifyCommand, paymentsCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
 const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand, textCommand];
 const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, bugCommand];
-const setupGroup       = [loginCommand, logoutCommand, tokenCommand, creditsCommand, planCommand, doctorCommand, updateCommand, uninstallCommand];
+const setupGroup       = [loginCommand, logoutCommand, tokenCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Common',       cmds: commonGroup },
