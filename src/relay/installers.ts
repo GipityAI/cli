@@ -79,7 +79,15 @@ function launchdPlan(cliPath: string): InstallerPlan {
     <string>run</string>
   </array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <!-- Restart ONLY on a non-zero exit, mirroring systemd's Restart=on-failure.
+       The daemon exits 0 on a clean revoke/shutdown; a bare KeepAlive=true
+       would relaunch it anyway, and run() would then silently re-register a
+       new device - undoing the revoke. SuccessfulExit=false keeps crash
+       recovery without that re-pair loop. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key><false/>
+  </dict>
   <key>StandardOutPath</key><string>${join(logDir, 'relay.out.log')}</string>
   <key>StandardErrorPath</key><string>${join(logDir, 'relay.err.log')}</string>
   <key>ProcessType</key><string>Background</string>
@@ -99,7 +107,7 @@ function launchdPlan(cliPath: string): InstallerPlan {
     enableDisplay: display(enableCmds),
     disableDisplay: display(disableCmds),
     statusDisplay: statusCmd.join(' '),
-    summary: 'LaunchAgent at ~/Library/LaunchAgents/ai.gipity.relay.plist (starts at login, auto-restarts)',
+    summary: 'LaunchAgent at ~/Library/LaunchAgents/ai.gipity.relay.plist (starts at login, restarts on failure)',
   };
 }
 

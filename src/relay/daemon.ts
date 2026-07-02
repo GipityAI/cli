@@ -18,7 +18,7 @@
  *   - 401 from heartbeat or /next → device was revoked; exit 0.
  *   - Any other backend error → log and retry with exponential backoff.
  *
- * See docs/feature-backlog/gipity-relay-phases.md (Phase A Step 7).
+ * See platform/docs-team/product/specs/gipity-relay-protocol.md.
  */
 import { ChildProcess } from 'child_process';
 import { resolveCommand, spawnCommand } from '../platform.js';
@@ -155,9 +155,10 @@ let permsLocked = false;
 function lockLogPerms(dir: string, file: string): void {
   if (permsLocked) return;
   try { chmodSync(dir, 0o700); } catch { /* ignore - best-effort */ }
-  // Ensure file exists before chmod; open+close creates it if missing.
+  // Ensure file exists before chmod; open+close creates it if missing. Pass
+  // mode 0600 so it's owner-only from creation (no umask-default race window).
   if (!existsSync(file)) {
-    try { closeSync(openSync(file, 'a')); } catch { /* ignore */ }
+    try { closeSync(openSync(file, 'a', 0o600)); } catch { /* ignore */ }
   }
   try { chmodSync(file, 0o600); } catch { /* ignore */ }
   permsLocked = true;
@@ -478,9 +479,35 @@ function getRelaySecrets(): string[] {
  *  Every entry is run through `redactEntries` first: a dispatched
  *  `bypassPermissions` session can read the host's credentials, so this is
  *  the single chokepoint that keeps a leaked secret out of the transcript. */
+// Server-side per-entry length caps (remote-sessions.ts ingest schema). The
+// server rejects the ENTIRE batch with a 400 if any entry violates one, which
+// would drop good content (and, for the prompt echo, the "Running…" marker
+// batched with it). We clamp defensively here so a batch never 400s on length
+// - truncating an over-long value is strictly better than losing the batch.
+const INGEST_PROMPT_MAX = 200_000;
+const INGEST_ASSISTANT_MAX = 500_000;
+const INGEST_SYSTEM_MAX = 500;
+const TRUNCATE_SUFFIX = '… [truncated]';
+
+function clampText(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - TRUNCATE_SUFFIX.length) + TRUNCATE_SUFFIX;
+}
+
+/** Clamp the human-text fields that have server caps. Runs AFTER redaction so
+ *  truncation can't split a secret past the literal-match scrubber. Exported
+ *  for unit testing. */
+export function clampForIngest(entries: IngestEntry[]): IngestEntry[] {
+  return entries.map(e => {
+    if (e.kind === 'prompt') return { ...e, prompt: clampText(e.prompt, INGEST_PROMPT_MAX) };
+    if (e.kind === 'assistant') return { ...e, text: clampText(e.text, INGEST_ASSISTANT_MAX) };
+    if (e.kind === 'system') return { ...e, content: clampText(e.content, INGEST_SYSTEM_MAX) };
+    return e;
+  });
+}
+
 async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ ok: boolean }> {
   if (!entries.length) return { ok: true };
-  const safeEntries = redactEntries(entries, getRelaySecrets());
+  const safeEntries = clampForIngest(redactEntries(entries, getRelaySecrets()));
   try {
     const res = await deviceFetch('POST', `/remote-sessions/${encodeURIComponent(convGuid)}/ingest`, {
       entries: safeEntries,
@@ -607,10 +634,17 @@ function formatDuration(ms: number): string {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
+// The server's ack schema caps `error` at 2000 chars and 400s anything longer
+// - which would leave the dispatch stuck in `delivering` forever (no ack, no
+// broadcast, a permanent queue-cap slot). Some error strings we build embed an
+// arbitrary OS/spawn message, so clamp here to stay under the cap.
+const MAX_ACK_ERROR_CHARS = 2000;
+
 async function ack(shortGuid: string, status: 'done' | 'error' | 'cancelled', error?: string): Promise<void> {
+  const safeError = error != null ? error.slice(0, MAX_ACK_ERROR_CHARS) : null;
   try {
     const res = await deviceFetch('POST', `/remote-devices/dispatches/${encodeURIComponent(shortGuid)}/ack`, {
-      status, error: error ?? null,
+      status, error: safeError,
     }, 10_000);
     if (!res.ok) {
       // fetch() doesn't throw on 4xx/5xx - surface it ourselves so a
@@ -674,9 +708,9 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // the dispatch (the old in-process bootstrap sync could hang forever).
   if (bootstrapped) {
     await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Syncing project files…' }]);
+    let syncKilled = false;
     try {
-      await spawnSync(cwd, PROJECT_SYNC_TIMEOUT_MS);
-      await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Project files synced.' }]);
+      syncKilled = (await runDispatchSync(d, cwd)).killed;
     } catch (err: any) {
       const msg = `project sync ${err?.message || 'failed'}`;
       log('error', 'project sync failed - aborting dispatch', { id: d.short_guid, err: err?.message });
@@ -684,6 +718,16 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
       await ack(d.short_guid, 'error', msg);
       return;
     }
+    if (syncKilled) {
+      // The user cancelled (or a newer message for this conv superseded us)
+      // WHILE the pre-Claude sync was running. Before this was registered in
+      // `running`, a cancel was silently ignored until the 120s sync timeout.
+      log('info', 'dispatch cancelled during project sync', { id: d.short_guid });
+      await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Claude Code cancelled (during project sync)' }]);
+      await ack(d.short_guid, 'cancelled');
+      return;
+    }
+    await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Project files synced.' }]);
   }
 
   // Build argv for `gipity claude -p …` (or with --resume). No shell - argv
@@ -917,6 +961,12 @@ export function getRunningConvGuids(): string[] {
  *  cancelled marker). Used at the top of handleDispatch so a new message
  *  for a busy conv cleanly replaces the in-flight one. No-op if no child
  *  matches. */
+/** Grace period between SIGTERM and the SIGKILL escalation. A child that traps
+ *  or ignores SIGTERM (or is blocked in uninterruptible I/O) must not hang the
+ *  handler forever - that would permanently hold one of the concurrency slots.
+ *  Overridable for tests. */
+const KILL_GRACE_MS = parseInt(process.env.GIPITY_RELAY_KILL_GRACE_MS || '10000', 10);
+
 export async function killRunningForConv(convGuid: string): Promise<void> {
   const matches = [...running.values()].filter(e => e.convGuid === convGuid);
   if (matches.length === 0) return;
@@ -924,7 +974,25 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
     log('info', 'interrupting previous dispatch for conv', { conv: convGuid });
     try { e.child.kill('SIGTERM'); } catch { /* ignore - already exited */ }
   }
+  // Wait for a clean unwind, but escalate to SIGKILL if the grace period
+  // elapses so a stuck child can't wedge a slot. Whichever resolves first,
+  // we still await `exited` so the outgoing children post their cancelled
+  // markers + acks before the replacement spawns.
+  const graceTimers: NodeJS.Timeout[] = [];
+  const escalate = new Promise<void>(resolve => {
+    const t = setTimeout(() => {
+      for (const e of matches) {
+        log('warn', 'previous dispatch ignored SIGTERM - escalating to SIGKILL', { conv: convGuid });
+        try { e.child.kill('SIGKILL'); } catch { /* already gone */ }
+      }
+      resolve();
+    }, KILL_GRACE_MS);
+    graceTimers.push(t);
+  });
+  await Promise.race([Promise.all(matches.map(e => e.exited)), escalate]);
+  // Ensure every child has actually exited (SIGKILL fires the exit event too).
   await Promise.all(matches.map(e => e.exited));
+  for (const t of graceTimers) clearTimeout(t);
 }
 
 /** Spawn `gipity claude …` in `cwd` with `--output-format stream-json
@@ -940,7 +1008,7 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
  *  back to VFS. Runs as a child so we inherit sync's cwd-walk for config
  *  resolution (the daemon itself doesn't chdir into projects).
  *  Non-blocking on failure - caller catches and logs. */
-async function spawnSync(cwd: string, timeoutMs?: number): Promise<void> {
+async function spawnSync(cwd: string, timeoutMs?: number, onSpawn?: (child: ChildProcess) => void): Promise<void> {
   // resolveCommand: on Windows the bare `gipity` is a .cmd shim that spawn
   // can't launch without an explicit path. An explicit env override is used
   // verbatim (it may be a full path); only the default name is resolved.
@@ -951,6 +1019,9 @@ async function spawnSync(cwd: string, timeoutMs?: number): Promise<void> {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // Hand the child to the caller so it can register the sync in `running`,
+    // making it cancellable (the poller / kill-on-new-message can SIGTERM it).
+    onSpawn?.(child);
     // Drain pipes so the child doesn't stall on a full buffer.
     let stdoutLen = 0;
     let stderrBuf = '';
@@ -1101,6 +1172,35 @@ export async function spawnGipityClaude(
       resolve({ exitCode: code ?? 1, killed });
     });
   });
+}
+
+/** Run the pre-Claude `gipity sync` for a dispatch, registered in `running`
+ *  so it's cancellable. Without this the dispatch is invisible to the
+ *  cancellation poller and to kill-on-new-message during the sync, so a slow
+ *  sync couldn't be interrupted for up to PROJECT_SYNC_TIMEOUT_MS. Returns
+ *  `{ killed }` = true when the sync child was SIGTERMed externally (user
+ *  cancel or a newer message on the same conv), distinct from a genuine sync
+ *  failure (which throws) - the daemon's own timeout uses SIGKILL, so a
+ *  SIGTERM here can only be an external interrupt. */
+async function runDispatchSync(d: ClaimedDispatch, cwd: string): Promise<{ killed: boolean }> {
+  let killed = false;
+  try {
+    await spawnSync(cwd, PROJECT_SYNC_TIMEOUT_MS, (child) => {
+      const exited = new Promise<void>(resolve => {
+        child.once('exit', (_code, signal) => {
+          if (signal === 'SIGTERM') killed = true;
+          resolve();
+        });
+      });
+      running.set(d.short_guid, { child, convGuid: d.conversation_guid, exited });
+    });
+    return { killed: false };
+  } catch (err) {
+    if (killed) return { killed: true };
+    throw err;
+  } finally {
+    running.delete(d.short_guid);
+  }
 }
 
 /** SIGTERM a specific running dispatch. Returns true if one was killed,

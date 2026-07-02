@@ -114,3 +114,49 @@ describe('ingest contract: daemon entries match server-allowed keys', () => {
     }
   });
 });
+
+// ─── Length clamping (clampForIngest) ──────────────────────────────────────
+// The server rejects the WHOLE batch with a 400 if any entry exceeds its cap.
+// clampForIngest truncates over-long human-text fields so a batch never 400s
+// on length (losing the prompt/marker). Caps mirror remote-sessions.ts.
+describe('clampForIngest keeps entries under the server length caps', () => {
+  const PROMPT_MAX = 200_000;
+  const ASSISTANT_MAX = 500_000;
+  const SYSTEM_MAX = 500;
+
+  it('truncates an over-long prompt to the cap with a marker', async () => {
+    const { clampForIngest } = await import('../relay/daemon.js');
+    const [out] = clampForIngest([{ kind: 'prompt', prompt: 'x'.repeat(PROMPT_MAX + 5000) }]);
+    const prompt = (out as { prompt: string }).prompt;
+    assert.ok(prompt.length <= PROMPT_MAX, `prompt ${prompt.length} > ${PROMPT_MAX}`);
+    assert.ok(prompt.endsWith('… [truncated]'));
+  });
+
+  it('truncates an over-long system marker to 500 chars', async () => {
+    const { clampForIngest } = await import('../relay/daemon.js');
+    const [out] = clampForIngest([{ kind: 'system', content: 'e'.repeat(SYSTEM_MAX + 200) }]);
+    const content = (out as { content: string }).content;
+    assert.ok(content.length <= SYSTEM_MAX, `system ${content.length} > ${SYSTEM_MAX}`);
+    assert.ok(content.endsWith('… [truncated]'));
+  });
+
+  it('truncates an over-long assistant text', async () => {
+    const { clampForIngest } = await import('../relay/daemon.js');
+    const [out] = clampForIngest([{ kind: 'assistant', text: 'a'.repeat(ASSISTANT_MAX + 1000), blocks: [] }]);
+    const text = (out as { text: string }).text;
+    assert.ok(text.length <= ASSISTANT_MAX, `assistant ${text.length} > ${ASSISTANT_MAX}`);
+  });
+
+  it('leaves within-cap and non-text entries untouched', async () => {
+    const { clampForIngest } = await import('../relay/daemon.js');
+    const entries: IngestEntry[] = [
+      { kind: 'prompt', prompt: 'short and fine' },
+      { kind: 'tool_use', tool_use_id: 't1', tool_name: 'Bash', tool_input: { command: 'ls' } },
+      { kind: 'system', content: 'ok' },
+    ];
+    const out = clampForIngest(entries);
+    assert.equal((out[0] as { prompt: string }).prompt, 'short and fine');
+    assert.deepEqual((out[1] as any).tool_input, { command: 'ls' });
+    assert.equal((out[2] as { content: string }).content, 'ok');
+  });
+});

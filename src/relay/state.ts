@@ -70,9 +70,12 @@ export function loadState(): RelayState {
 
 export function saveState(state: RelayState): void {
   mkdirSync(RELAY_DIR, { recursive: true });
-  writeFileSync(RELAY_FILE, JSON.stringify(state, null, 2) + '\n');
-  // Token is inside - enforce owner-only even if the file existed with
-  // looser permissions before.
+  // `mode` on write means a NEWLY-created file is owner-only from the first
+  // byte - no window where it exists at the umask default (typically 0644)
+  // before a follow-up chmod tightens it. The chmodSync still runs to fix a
+  // file that already existed with looser permissions (mode is ignored for
+  // an existing file).
+  writeFileSync(RELAY_FILE, JSON.stringify(state, null, 2) + '\n', { mode: FILE_MODE });
   try { chmodSync(RELAY_FILE, FILE_MODE); } catch { /* Windows best-effort */ }
 }
 

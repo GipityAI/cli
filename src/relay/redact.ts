@@ -45,14 +45,37 @@ const JWT_RE = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
  *  credential, so over-redaction risk is negligible. */
 const ANTHROPIC_KEY_RE = /sk-ant-[A-Za-z0-9_-]{20,}/g;
 
-/** Replace every occurrence of each known secret - and any JWT- or
- *  Anthropic-key-shaped substring - in `text` with the marker. */
+/** Well-known third-party credential shapes. A `bypassPermissions` session can
+ *  read the host's environment and files, so a `cat .env` / `env` could echo
+ *  ANY of these into the transcript - not just the Gipity/Anthropic tokens on
+ *  the literal-secret list. Each pattern is a high-entropy, provider-specific
+ *  prefix that is effectively never a false positive in a relay transcript, so
+ *  the over-redaction risk is the same negligible trade-off already accepted
+ *  for the JWT and `sk-ant-` passes. Extend this list as new providers appear;
+ *  it is defense-in-depth, NOT a guarantee (a base64/chunked secret still
+ *  slips through - the real backstop remains an instantly-revocable
+ *  credential). */
+const THIRD_PARTY_KEY_RES: RegExp[] = [
+  /sk-[A-Za-z0-9_-]{20,}/g,                       // OpenAI (sk-, sk-proj-) + any sk- key
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b/g, // GitHub tokens
+  /\bgithub_pat_[A-Za-z0-9_]{60,}\b/g,            // GitHub fine-grained PAT
+  /\bAKIA[0-9A-Z]{16}\b/g,                        // AWS access key id
+  /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b/g,         // Stripe live secret/restricted key
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,            // Slack tokens
+  /\bAIza[A-Za-z0-9_-]{35}\b/g,                   // Google API key
+  /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g, // PEM private keys
+];
+
+/** Replace every occurrence of each known secret - plus any JWT-, Anthropic-,
+ *  or well-known-third-party-key-shaped substring - in `text` with the marker. */
 function redactString(text: string, secrets: string[]): string {
   let out = text;
   for (const secret of secrets) {
     if (out.includes(secret)) out = out.split(secret).join(REDACTION_MARKER);
   }
-  return out.replace(JWT_RE, REDACTION_MARKER).replace(ANTHROPIC_KEY_RE, REDACTION_MARKER);
+  out = out.replace(JWT_RE, REDACTION_MARKER).replace(ANTHROPIC_KEY_RE, REDACTION_MARKER);
+  for (const re of THIRD_PARTY_KEY_RES) out = out.replace(re, REDACTION_MARKER);
+  return out;
 }
 
 /** Deep-walk any JSON-ish value, redacting every string. Returns a new

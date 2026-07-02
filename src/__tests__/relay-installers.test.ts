@@ -42,7 +42,11 @@ describe('installers: content renders CLI path correctly', () => {
     assert.match(p.content, /<string>relay<\/string>/);
     assert.match(p.content, /<string>run<\/string>/);
     assert.match(p.content, /<key>RunAtLoad<\/key><true\/>/);
-    assert.match(p.content, /<key>KeepAlive<\/key><true\/>/);
+    // KeepAlive must restart ONLY on failure (SuccessfulExit=false), matching
+    // systemd's Restart=on-failure. A bare KeepAlive=true would relaunch the
+    // daemon after a clean revoke/exit-0 and silently re-register a new device.
+    assert.match(p.content, /<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key><false\/>\s*<\/dict>/);
+    assert.doesNotMatch(p.content, /<key>KeepAlive<\/key><true\/>/);
   });
 
   it('systemd unit embeds ExecStart with the CLI path + relay run', () => {

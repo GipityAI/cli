@@ -16,7 +16,7 @@ import {
 import * as state from '../relay/state.js';
 import * as daemon from '../relay/daemon.js';
 import { UnsupportedPlatformError } from '../relay/installers.js';
-import { pairDevice, startDaemon, installAutostart } from '../relay/setup.js';
+import { pairDevice, startDaemon, installAutostart, removeAutostart } from '../relay/setup.js';
 import { registerInstallCommands } from './relay-install.js';
 
 export const relayCommand = new Command('relay')
@@ -268,8 +268,29 @@ relayCommand
       console.error(muted('Local token cleared anyway. Visit the web CLI to confirm the server-side revoke.'));
     }
     state.clearDevice();
+
+    // Remove the OS autostart unit too. Otherwise the login service relaunches
+    // `relay run`, which - finding no device but a valid login - silently
+    // re-registers a NEW device, undoing this revoke (on macOS the old
+    // KeepAlive=true even relaunched on the clean exit). Best-effort: an
+    // unsupported OS or a missing unit is fine.
+    let autostartRemoved = false;
+    try {
+      autostartRemoved = removeAutostart().ok;
+    } catch { /* unsupported platform / no unit - ignore */ }
+
+    // Stop the currently-running daemon now rather than waiting for it to
+    // notice via a 401 on its next poll (~up to a hold cycle).
+    const pidPath = state.getDaemonPidPath();
+    if (existsSync(pidPath)) {
+      const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
+      if (pid && !isNaN(pid)) { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } }
+    }
+
     console.log(success('Device revoked + local state cleared.'));
-    console.log(muted('Any running background service will notice and exit within ~30s.'));
+    console.log(muted(autostartRemoved
+      ? 'Auto-start removed and the background service was signalled to stop.'
+      : 'The background service was signalled to stop.'));
   });
 
 // ─── gipity relay log ──────────────────────────────────────────────────

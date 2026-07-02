@@ -60,8 +60,11 @@ export async function maybeOfferRelayOn(): Promise<void> {
     device = await pairDevice({ name });
   } catch (err: any) {
     console.error(`\n  ${clrError(`Could not create device: ${err?.message || err}`)}`);
-    console.error(`  ${dim('Skipping relay setup. Try later with `gipity relay install`.')}`);
-    state.setRelayEnabled(false);
+    console.error(`  ${dim('Skipping for now - we\'ll offer again next time. Or turn it on with `gipity relay install`.')}`);
+    // Deliberately DON'T persist relay_enabled here: the user SAID YES, and
+    // this is a transient failure (network blip, server down). Leaving the
+    // tri-state unset means onboarding re-offers on the next `gipity claude`
+    // run instead of silently opting the user out forever.
     return;
   }
 
