@@ -203,13 +203,17 @@ creditsCommand
   // commander binds to the parent - read merged opts so --json is seen here.
   .action((_opts, cmd: Command) => run('Plans', async () => {
     const opts = cmd.optsWithGlobals();
-    const [plansRes, productsRes, subRes] = await Promise.all([
+    // Plans + subscription are required; credit packs are best-effort - the plan
+    // comparison must still render if /credits/products is unavailable (e.g.
+    // credit packs aren't configured in this environment).
+    const [plansRes, subRes] = await Promise.all([
       get<{ data: PlanRow[] }>('/plans'),
-      get<{ data: ProductEntry[] }>('/credits/products'),
       get<{ data: SubscriptionData }>('/credits/subscription'),
     ]);
+    const products = await get<{ data: ProductEntry[] }>('/credits/products')
+      .then(r => r.data).catch(() => [] as ProductEntry[]);
     if (opts.json) {
-      console.log(JSON.stringify({ currentTier: subRes.data.tier, plans: plansRes.data, products: productsRes.data }));
+      console.log(JSON.stringify({ currentTier: subRes.data.tier, plans: plansRes.data, products }));
       return;
     }
     const currentTier = subRes.data.tier;
@@ -230,7 +234,7 @@ creditsCommand
       console.log('');
     }
 
-    const packs = productsRes.data.filter(p => p.type === 'one_time');
+    const packs = products.filter(p => p.type === 'one_time');
     if (packs.length > 0) {
       console.log(bold('Credit packs') + muted('  (require an active Pro subscription)'));
       for (const pack of packs) {
@@ -256,11 +260,12 @@ creditsCommand
   // commander binds to the parent - read merged opts so --json/--open are seen here.
   .action((target: string | undefined, _opts, cmd: Command) => run('Buy', async () => {
     const opts = cmd.optsWithGlobals();
-    const [productsRes, subRes] = await Promise.all([
-      get<{ data: ProductEntry[] }>('/credits/products'),
-      get<{ data: SubscriptionData }>('/credits/subscription'),
-    ]);
-    const products = productsRes.data;
+    const subRes = await get<{ data: SubscriptionData }>('/credits/subscription');
+    // Products are best-effort: if the catalog is unavailable we can't build a
+    // direct checkout link, so we fall back to the pricing page below rather
+    // than erroring out.
+    const products = await get<{ data: ProductEntry[] }>('/credits/products')
+      .then(r => r.data).catch(() => [] as ProductEntry[]);
     const currentTier = subRes.data.tier;
 
     // Resolve the target product. With no arg, default to the first available
