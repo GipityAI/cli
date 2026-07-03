@@ -7,7 +7,7 @@
  *
  * Not a user-facing `gipity` subcommand by design: users never invoke
  * this directly. The Gipity Claude Code plugin's capture hook script
- * (claude-plugin hooks/scripts/capture.cjs) resolves this file inside the
+ * (skills repo hooks/scripts/capture.cjs) resolves this file inside the
  * installed CLI at fire time and runs it - so the capture logic versions
  * with the CLI, not the plugin.
  *

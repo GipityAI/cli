@@ -2,7 +2,7 @@
  * setupClaudeHooks / ensureGipityPlugin - the Claude Code integration written
  * by the CLI.
  *
- * Hooks ship in the Gipity plugin now (GipityAI/claude-plugin). The CLI's job
+ * Hooks ship in the Gipity plugin now (GipityAI/skills). The CLI's job
  * inverted: instead of writing hook blocks into settings files, it (1) enables
  * the plugin declaratively at user scope, (2) strips the legacy hook blocks
  * older CLI versions wrote into project and user settings - preserving the
@@ -25,6 +25,7 @@ import {
   GIPITY_PLUGIN_VERSION,
   GIPITY_MARKETPLACE_NAME,
   GIPITY_MARKETPLACE_REPO,
+  LEGACY_MARKETPLACE_REPO,
 } from '../setup.js';
 
 /** Run `fn` with cwd inside a temp project dir and $HOME pointed at a sibling
@@ -141,6 +142,43 @@ test('setupClaudeHooks enables the plugin at user scope and strips legacy global
     assert.equal(userSettings.hooks.PostToolUse, undefined, 'legacy global capture/push hooks stripped');
     const stopCmds = (userSettings.hooks?.Stop ?? []).flatMap((g: any) => g.hooks.map((h: any) => h.command));
     assert.deepEqual(stopCmds, ['say done'], 'user global hook survived');
+  });
+});
+
+test('a marketplace entry pointing at the pre-rename repo is migrated; other repos are left alone', () => {
+  withTempDirs((_project, home) => {
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude', 'settings.json'),
+      JSON.stringify({
+        extraKnownMarketplaces: {
+          [GIPITY_MARKETPLACE_NAME]: { source: { source: 'github', repo: LEGACY_MARKETPLACE_REPO } },
+        },
+      }),
+    );
+
+    ensureGipityPlugin();
+    assert.equal(
+      readSettings(home).extraKnownMarketplaces[GIPITY_MARKETPLACE_NAME].source.repo,
+      GIPITY_MARKETPLACE_REPO,
+      'legacy repo name rewritten',
+    );
+
+    // A user-pointed fork is not ours to rewrite.
+    writeFileSync(
+      join(home, '.claude', 'settings.json'),
+      JSON.stringify({
+        extraKnownMarketplaces: {
+          [GIPITY_MARKETPLACE_NAME]: { source: { source: 'github', repo: 'someone/fork' } },
+        },
+      }),
+    );
+    ensureGipityPlugin();
+    assert.equal(
+      readSettings(home).extraKnownMarketplaces[GIPITY_MARKETPLACE_NAME].source.repo,
+      'someone/fork',
+      'non-legacy repo untouched',
+    );
   });
 });
 

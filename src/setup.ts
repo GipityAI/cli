@@ -116,7 +116,7 @@ export const PERMISSIONS_SETTINGS = {
   },
 };
 
-// Hooks now ship in the Gipity Claude Code plugin (GipityAI/claude-plugin,
+// Hooks now ship in the Gipity Claude Code plugin (GipityAI/skills,
 // which doubles as its own marketplace): file sync (push on edit, pull on
 // prompt) and `gipity claude` session capture, every script guarded to no-op
 // outside Gipity projects. Past CLI versions wrote these hook blocks directly
@@ -137,10 +137,14 @@ export const PERMISSIONS_SETTINGS = {
 //     plugin (often nowhere), silently taking capture + file-sync down.
 export const GIPITY_PLUGIN_ID = 'gipity@gipity';
 export const GIPITY_MARKETPLACE_NAME = 'gipity';
-export const GIPITY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
+export const GIPITY_MARKETPLACE_REPO = 'GipityAI/skills';
+// Pre-rename name of the skills repo. GitHub redirects it, but settings
+// written by older CLIs carry it verbatim - ensureGipityPlugin() migrates
+// those so nothing keeps depending on the redirect.
+export const LEGACY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
 
 // The plugin version this CLI requires. Bump in lockstep with
-// claude-plugin/.claude-plugin/plugin.json: Claude Code does NOT auto-upgrade
+// the skills repo's .claude-plugin/plugin.json: Claude Code does NOT auto-upgrade
 // an installed plugin when the marketplace advances - only an explicit
 // `plugin install`/`update` does - so this constant is how a CLI upgrade tells
 // ensureGipityPluginInstalled() to refresh a stale user-scope install.
@@ -214,7 +218,8 @@ export function ensureGipityPlugin(force = false): void {
   let changed = stripGipityHooks(settings);
 
   const marketplaces = settings.extraKnownMarketplaces ?? (settings.extraKnownMarketplaces = {});
-  if (!marketplaces[GIPITY_MARKETPLACE_NAME]) {
+  const registered = marketplaces[GIPITY_MARKETPLACE_NAME];
+  if (!registered || registered.source?.repo === LEGACY_MARKETPLACE_REPO) {
     marketplaces[GIPITY_MARKETPLACE_NAME] = {
       source: { source: 'github', repo: GIPITY_MARKETPLACE_REPO },
     };
