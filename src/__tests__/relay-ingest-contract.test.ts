@@ -21,22 +21,27 @@ import { mapEventToEntries, type IngestEntry } from '../relay/stream-json.js';
  *  platform/server/src/routes/remote-sessions.ts. Keep in sync. */
 // Every kind also allows the optional `ts` event-time hint (stored in
 // the server's untrusted `event_at` column).
+// Every kind also allows the optional `source_uuid` idempotency key
+// (server dedup via the partial unique index on (conversation_id,
+// source_uuid) - what makes the ingest queue's retries safe).
 const ALLOWED_KEYS_BY_KIND: Record<IngestEntry['kind'], readonly string[]> = {
-  attach:      ['kind', 'session_id', 'cwd', 'source', 'ts'],
-  prompt:      ['kind', 'prompt', 'ts'],
-  tool_use:    ['kind', 'tool_use_id', 'tool_name', 'tool_input', 'ts'],
-  tool_result: ['kind', 'tool_use_id', 'tool_name', 'content', 'is_error', 'ts'],
-  assistant:   ['kind', 'text', 'blocks', 'input_tokens', 'output_tokens', 'model', 'stop_reason', 'ts'],
-  compact:     ['kind', 'trigger', 'ts'],
-  system:      ['kind', 'content', 'ts'],
-  result:      ['kind', 'total_cost_usd', 'num_turns', 'duration_ms', 'ts'],
+  attach:      ['kind', 'session_id', 'cwd', 'source', 'model', 'tools_count', 'mcp_count', 'api_key_source', 'ts', 'source_uuid'],
+  prompt:      ['kind', 'prompt', 'ts', 'source_uuid'],
+  tool_use:    ['kind', 'tool_use_id', 'tool_name', 'tool_input', 'ts', 'source_uuid', 'parent_tool_use_id'],
+  tool_result: ['kind', 'tool_use_id', 'tool_name', 'content', 'is_error', 'ts', 'source_uuid', 'parent_tool_use_id'],
+  assistant:   ['kind', 'text', 'blocks', 'input_tokens', 'output_tokens', 'model', 'stop_reason', 'ts', 'source_uuid', 'parent_tool_use_id'],
+  compact:     ['kind', 'trigger', 'ts', 'source_uuid'],
+  system:      ['kind', 'content', 'ts', 'source_uuid'],
+  result:      ['kind', 'total_cost_usd', 'num_turns', 'duration_ms', 'ts', 'source_uuid'],
 };
 
 /** Sample stream-json events covering every branch of mapEventToEntries.
  *  When mapEventToEntries grows a new branch, add a sample here. */
 const SAMPLE_EVENTS: any[] = [
-  // attach
-  { type: 'system', subtype: 'init', session_id: 'sess-abc', cwd: '/tmp/demo' },
+  // attach (with init metadata: model + tool/mcp counts)
+  { type: 'system', subtype: 'init', session_id: 'sess-abc', cwd: '/tmp/demo', model: 'claude-x', tools: ['Bash', 'Read'], mcp_servers: [{ name: 'pg' }] },
+  // compact boundary
+  { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } },
   // assistant text only
   { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } },
   // assistant with a tool_use block (yields both an assistant entry and a tool_use entry)

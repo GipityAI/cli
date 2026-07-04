@@ -59,6 +59,11 @@ export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', '.gipityscratch/'];
 
 export const DEFAULT_SYNC_IGNORE = [
   'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', AIDER_CONF_FILE,
+  // Home-directory junk: a project created inside a real home dir (or one that
+  // shells out) sweeps in a cache dir + shell dotfiles that are never app
+  // files. `.cache/` alone can be gigabytes (it was 2.4 GB on one project),
+  // and reconciling it stalls every relay dispatch's pre-spawn sync.
+  '.cache/', '.bash_history', '.bash_logout',
   ...SCRATCH_IGNORE,
   ...new Set(Object.values(PRIMER_FILES)),
 ];

@@ -68,7 +68,7 @@ const THIRD_PARTY_KEY_RES: RegExp[] = [
 
 /** Replace every occurrence of each known secret - plus any JWT-, Anthropic-,
  *  or well-known-third-party-key-shaped substring - in `text` with the marker. */
-function redactString(text: string, secrets: string[]): string {
+export function redactString(text: string, secrets: string[]): string {
   let out = text;
   for (const secret of secrets) {
     if (out.includes(secret)) out = out.split(secret).join(REDACTION_MARKER);

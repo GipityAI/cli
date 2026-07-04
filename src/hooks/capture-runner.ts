@@ -14,7 +14,7 @@
  * Usage:
  *   node capture-runner.js <source> <event>
  *   source: 'claude-code' (today) | future: 'codex', …
- *   event:  'session-start' | 'stop' | 'subagent-stop' | 'session-end' | 'post-tool-use'
+ *   event:  'session-start' | 'stop' | 'subagent-stop' | 'session-end' | 'post-tool-use' | 'pre-compact'
  *
  * Graceful no-ops (exit 0 silently):
  *   - GIPITY_CONVERSATION_GUID env var unset (hook fired from a bare
@@ -323,6 +323,19 @@ async function main(): Promise<void> {
       case 'session-end':
         await handleSessionEnd(convGuid, hook, source);
         break;
+      case 'pre-compact': {
+        // Flush the transcript tail BEFORE compaction rewrites it (the
+        // watermark replay after a rewrite relies on server dedup, but
+        // flushing first keeps ordering clean), then record the boundary.
+        await handleStopFamily(convGuid, hook, false);
+        const trigger = typeof (hook as any).trigger === 'string' ? (hook as any).trigger : 'auto';
+        await postEntries(convGuid, [{
+          kind: 'compact',
+          trigger,
+          source_uuid: `${hook.session_id ?? 'unknown'}-compact-${Date.now()}`,
+        }]);
+        break;
+      }
       default:
         return; // unknown event - silent no-op
     }

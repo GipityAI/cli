@@ -205,3 +205,109 @@ describe('mapEventToEntries - round trip shape matches IngestEntry union', () =>
     for (const e of sample) assert.ok(validKinds.includes(e.kind));
   });
 });
+
+describe('mapEventToEntries - Phase 2 capture additions', () => {
+  it('attach carries model/tools_count/mcp_count from the init event', () => {
+    const [attach] = mapEventToEntries({
+      type: 'system', subtype: 'init', session_id: 's1', cwd: '/p',
+      model: 'claude-x', tools: ['Bash', 'Read', 'Write'], mcp_servers: [{ name: 'pg' }],
+    } as any);
+    assert.equal(attach.kind, 'attach');
+    assert.equal((attach as any).model, 'claude-x');
+    assert.equal((attach as any).tools_count, 3);
+    assert.equal((attach as any).mcp_count, 1);
+  });
+
+  it('system/compact_boundary → compact entry with trigger', () => {
+    const entries = mapEventToEntries({
+      type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' },
+    } as any);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].kind, 'compact');
+    assert.equal((entries[0] as any).trigger, 'auto');
+  });
+
+  it('assistant source_uuid sequences per-block events sharing a message id', () => {
+    // Assistant events arrive per content block with the SAME message id
+    // (verified against claude CLI v2.1.199); a bare-id dedup key would
+    // drop every block after the first.
+    const msgSeq = new Map<string, number>();
+    const [first] = mapEventToEntries({
+      type: 'assistant',
+      message: { id: 'msg_1', content: [{ type: 'thinking', thinking: 'hmm' }] },
+    } as any, { msgSeq });
+    const [second] = mapEventToEntries({
+      type: 'assistant',
+      message: { id: 'msg_1', content: [{ type: 'text', text: 'answer' }] },
+    } as any, { msgSeq });
+    assert.equal((first as any).source_uuid, 'msg_1#0');
+    assert.equal((second as any).source_uuid, 'msg_1#1');
+  });
+
+  it('tool_use entries always carry their tool_use_id as source_uuid', () => {
+    const entries = mapEventToEntries({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id: 'toolu_z', name: 'Bash', input: {} }] },
+    } as any);
+    const tu = entries.find(e => e.kind === 'tool_use');
+    assert.equal((tu as any).source_uuid, 'toolu_z');
+  });
+
+  it('onUnmapped fires for unknown events but not for known noise', () => {
+    const seen: string[] = [];
+    const ctx = { onUnmapped: (t: string, s?: string) => seen.push(s ? `${t}/${s}` : t) };
+    mapEventToEntries({ type: 'system', subtype: 'brand_new_thing' } as any, ctx);
+    mapEventToEntries({ type: 'mystery_event' } as any, ctx);
+    mapEventToEntries({ type: 'system', subtype: 'thinking_tokens' } as any, ctx);
+    mapEventToEntries({ type: 'system', subtype: 'hook_started' } as any, ctx);
+    mapEventToEntries({ type: 'rate_limit_event' } as any, ctx);
+    assert.deepEqual(seen, ['system/brand_new_thing', 'mystery_event']);
+  });
+
+  it('back-compat: a bare toolNames Map still threads tool names', () => {
+    const toolNames = new Map<string, string>();
+    mapEventToEntries({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id: 't9', name: 'Grep', input: {} }] },
+    } as any, toolNames);
+    const [result] = mapEventToEntries({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 't9', content: 'x' }] },
+    } as any, toolNames);
+    assert.equal((result as any).tool_name, 'Grep');
+  });
+});
+
+describe('mapEventToEntries - subagent attribution (Phase 6)', () => {
+  it('stamps parent_tool_use_id on subagent assistant + tool_use entries', () => {
+    const entries = mapEventToEntries({
+      type: 'assistant',
+      parent_tool_use_id: 'toolu_parent99',
+      message: { id: 'msg_sub', content: [
+        { type: 'text', text: 'working' },
+        { type: 'tool_use', id: 'toolu_child', name: 'Bash', input: { command: 'pwd' } },
+      ] },
+    } as any);
+    const assistant = entries.find(e => e.kind === 'assistant');
+    const toolUse = entries.find(e => e.kind === 'tool_use');
+    assert.equal((assistant as any).parent_tool_use_id, 'toolu_parent99');
+    assert.equal((toolUse as any).parent_tool_use_id, 'toolu_parent99');
+  });
+
+  it('stamps parent_tool_use_id on subagent tool_result entries', () => {
+    const [result] = mapEventToEntries({
+      type: 'user',
+      parent_tool_use_id: 'toolu_parent99',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_child', content: '/x' }] },
+    } as any);
+    assert.equal((result as any).parent_tool_use_id, 'toolu_parent99');
+  });
+
+  it('top-level (no parent) entries leave parent_tool_use_id undefined', () => {
+    const entries = mapEventToEntries({
+      type: 'assistant',
+      message: { id: 'msg_top', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
+    } as any);
+    for (const e of entries) assert.equal((e as any).parent_tool_use_id, undefined);
+  });
+});

@@ -18,18 +18,33 @@
 // moment it reads the event off the stream). The server stores it in the
 // untrusted `messages.event_at` column for per-event timing; `created_at`
 // stays server-authoritative (NOW()), so a hint can't backdate history.
+// `source_uuid` is the server-side dedup key (partial unique index on
+// (conversation_id, source_uuid)), which is what makes retrying a failed
+// ingest POST safe: a replayed entry collapses instead of duplicating.
+// Stream-path stamping rules: assistant → `${message.id}#${n}` (assistant
+// events arrive PER CONTENT BLOCK, several sharing one message id, so a
+// bare id would dedup-drop later blocks); tool_use → its tool_use_id;
+// daemon-authored prompt/system/result entries → a random UUID minted at
+// creation. tool_result needs none (it's an idempotent UPDATE by id).
 export type IngestEntry =
-  | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; ts?: string }
-  | { kind: 'prompt'; prompt: string; ts?: string }
-  | { kind: 'assistant'; text: string; blocks: any[]; input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string; ts?: string }
-  | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; ts?: string }
-  | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; ts?: string }
-  | { kind: 'compact'; trigger?: string; ts?: string }
-  | { kind: 'system'; content: string; ts?: string }
+  | { kind: 'attach'; session_id: string; cwd?: string; source?: 'startup' | 'resume' | 'clear' | 'compact'; model?: string; tools_count?: number; mcp_count?: number; api_key_source?: string; ts?: string; source_uuid?: string }
+  | { kind: 'prompt'; prompt: string; ts?: string; source_uuid?: string }
+  // `parent_tool_use_id`: set on subagent-internal rows (a Task/Agent
+  // spawn). Claude Code emits the subagent's events on the parent stdout
+  // tagged with the spawning tool_use id; the web CLI nests them under
+  // that Task block. NULL/absent for top-level messages.
+  | { kind: 'assistant'; text: string; blocks: any[]; input_tokens?: number; output_tokens?: number; model?: string; stop_reason?: string; ts?: string; source_uuid?: string; parent_tool_use_id?: string }
+  | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; ts?: string; source_uuid?: string; parent_tool_use_id?: string }
+  | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; ts?: string; source_uuid?: string; parent_tool_use_id?: string }
+  | { kind: 'compact'; trigger?: string; ts?: string; source_uuid?: string }
+  | { kind: 'system'; content: string; ts?: string; source_uuid?: string }
   // The stream's final `result` footer: a session-level total. Only the daemon
   // (stream) path sees this; the hook/transcript path never does (cost isn't in
   // the transcript). Carries cost so the server can record it on the conversation.
-  | { kind: 'result'; total_cost_usd?: number; num_turns?: number; duration_ms?: number; ts?: string };
+  // NOTE: a spawn with background subagents can emit SEVERAL result events
+  // (the loop re-invokes when a task completes; cost on later ones is
+  // cumulative) - the daemon buffers and posts only the last.
+  | { kind: 'result'; total_cost_usd?: number; num_turns?: number; duration_ms?: number; ts?: string; source_uuid?: string };
 
 // ─── Stream-json event shapes ──────────────────────────────────────────
 // Only the fields we actually read are typed - everything else is passed
@@ -43,6 +58,11 @@ export interface StreamJsonSystemInit {
   cwd?: string;
   model?: string;
   tools?: string[];
+  mcp_servers?: any[];
+  /** How Claude Code is authenticating: 'none' = OAuth/subscription login;
+   *  an api-key source = pay-per-token API billing. Drives sub-vs-API cost
+   *  labeling in the web CLI. */
+  apiKeySource?: string;
 }
 
 export interface StreamJsonAssistant {
@@ -146,21 +166,77 @@ function joinAssistantText(content: any[] | undefined): string {
  *  each tool call's name, the later user event with the paired
  *  `tool_result` reads it back so the server can denormalize `tool_name`
  *  onto the tool row even when the result lands as a stub. */
-export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, string>): IngestEntry[] {
+export interface MapContext {
+  /** Per-dispatch tool_use_id → tool_name (see doc above). */
+  toolNames?: Map<string, string>;
+  /** Per-dispatch assistant-event counter per message id. Assistant events
+   *  arrive per content block with the same message id; the sequence
+   *  number disambiguates the dedup key (`msg_x#0`, `msg_x#1`, …). */
+  msgSeq?: Map<string, number>;
+  /** Called once per unrecognized event so the daemon can account for
+   *  what a newer Claude Code emitted that we silently skip. */
+  onUnmapped?: (type: string, subtype?: string) => void;
+}
+
+export function mapEventToEntries(evt: StreamJsonEvent, ctx?: MapContext | Map<string, string>): IngestEntry[] {
+  // Back-compat: older call sites (and tests) pass the bare toolNames map.
+  const c: MapContext = ctx instanceof Map ? { toolNames: ctx } : (ctx ?? {});
+  const toolNames = c.toolNames;
   const out: IngestEntry[] = [];
 
   if (evt.type === 'system' && (evt as StreamJsonSystemInit).subtype === 'init') {
     const s = evt as StreamJsonSystemInit;
-    if (s.session_id) out.push({ kind: 'attach', session_id: s.session_id, cwd: s.cwd, source: 'startup' });
+    if (s.session_id) {
+      out.push({
+        kind: 'attach',
+        session_id: s.session_id,
+        cwd: s.cwd,
+        source: 'startup',
+        model: typeof s.model === 'string' ? s.model : undefined,
+        tools_count: Array.isArray(s.tools) ? s.tools.length : undefined,
+        mcp_count: Array.isArray(s.mcp_servers) ? s.mcp_servers.length : undefined,
+        api_key_source: typeof s.apiKeySource === 'string' ? s.apiKeySource : undefined,
+      });
+    }
     return out;
   }
+
+  // Context compaction boundary - the server has a `compact` kind for this
+  // (renders as a "context compacted" marker); nothing emitted it before.
+  if (evt.type === 'system' && (evt as any).subtype === 'compact_boundary') {
+    const trigger = (evt as any).compact_metadata?.trigger ?? (evt as any).trigger;
+    out.push({ kind: 'compact', trigger: typeof trigger === 'string' ? trigger : undefined });
+    return out;
+  }
+
+  // Subagent attribution: the envelope carries the spawning Task/Agent
+  // tool_use id on every event from that subagent's turn.
+  const parentToolUseId = typeof (evt as any).parent_tool_use_id === 'string'
+    ? (evt as any).parent_tool_use_id : undefined;
 
   if (evt.type === 'assistant') {
     const msg = (evt as StreamJsonAssistant).message ?? {};
     const content = Array.isArray(msg.content) ? msg.content : [];
     const text = joinAssistantText(content);
     if (text || content.length) {
-      out.push({ kind: 'assistant', text, blocks: content, ...usageFields(msg) });
+      const entry: IngestEntry = { kind: 'assistant', text, blocks: content, ...usageFields(msg), parent_tool_use_id: parentToolUseId };
+      // source_uuid = `${msg.id}#${eventSeq}`. The client's stream-zone
+      // finalize-swap matches this against its block key `${msg.id}:${block_index}`,
+      // i.e. it relies on eventSeq === block_index. That holds because
+      // Claude Code (with --include-partial-messages) emits exactly ONE
+      // assistant event per content block, in index order (verified
+      // against CLI v2.1.199 in the Phase 0 spike: a thinking block and a
+      // text block arrived as two separate assistant events, seq 0 and 1,
+      // matching block indices 0 and 1). If a future CLI ever packs two
+      // blocks into one assistant event, seq lags index for later blocks
+      // and those streamed blocks aren't removed until the ack wipes the
+      // zone - a cosmetic, self-healing duplication, not data loss.
+      if (typeof msg.id === 'string' && msg.id && c.msgSeq) {
+        const n = c.msgSeq.get(msg.id) ?? 0;
+        c.msgSeq.set(msg.id, n + 1);
+        entry.source_uuid = `${msg.id}#${n}`;
+      }
+      out.push(entry);
     }
     for (const block of content) {
       if (block?.type === 'tool_use' && typeof block.id === 'string') {
@@ -171,6 +247,8 @@ export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, 
           tool_use_id: block.id,
           tool_name: toolName,
           tool_input: block.input ?? null,
+          source_uuid: block.id,
+          parent_tool_use_id: parentToolUseId,
         });
       }
     }
@@ -188,6 +266,7 @@ export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, 
           tool_name: toolNames?.get(block.tool_use_id),
           content: block.content ?? null,
           is_error: Boolean(block.is_error),
+          parent_tool_use_id: parentToolUseId,
         });
       }
     }
@@ -211,6 +290,19 @@ export function mapEventToEntries(evt: StreamJsonEvent, toolNames?: Map<string, 
     return out;
   }
 
+  // Deliberately unmapped chatter (hook lifecycle, per-chunk thinking
+  // token counts, rate-limit notices, and stream_event token deltas -
+  // the latter are handled by the separate stream-delta pipeline) -
+  // skipped without accounting so a normal session doesn't log dozens of
+  // "unmapped" entries. Everything else unknown IS accounted via
+  // onUnmapped so a new Claude Code event type shows up in the daemon
+  // log instead of vanishing silently.
+  const subtype = (evt as any).subtype as string | undefined;
+  const KNOWN_NOISE = new Set(['hook_started', 'hook_response', 'thinking_tokens', 'status', 'task_started', 'task_progress', 'task_updated', 'task_notification']);
+  if (!(evt.type === 'system' && subtype && KNOWN_NOISE.has(subtype))
+      && evt.type !== 'rate_limit_event' && evt.type !== 'stream_event') {
+    c.onUnmapped?.(evt.type, subtype);
+  }
   return out;
 }
 

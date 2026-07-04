@@ -25,7 +25,7 @@ import { resolveCommand, spawnCommand } from '../platform.js';
 import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, closeSync, openSync, unlinkSync } from 'fs';
 import { stat, readFile } from 'fs/promises';
 import { createInterface } from 'readline';
-import { homedir, hostname, platform as osPlatform } from 'os';
+import { homedir, hostname, platform as osPlatform, loadavg, freemem, totalmem, cpus } from 'os';
 import { join } from 'path';
 import { getApiBaseOverride, DEFAULT_API_BASE } from '../config.js';
 import { getProjectsRoot } from './paths.js';
@@ -39,8 +39,12 @@ import {
   parseEvent,
   mapEventToEntries,
 } from './stream-json.js';
+import { IngestQueue } from './ingest-queue.js';
+import { DeltaAccumulator, DeltaBatcher } from './stream-delta.js';
+import type { DeltaFlush } from './stream-delta.js';
+import { randomUUID } from 'crypto';
 import { deviceFetch, bridgeAbort as bridgeAbortImpl } from './device-http.js';
-import { redactEntries, normalizeSecrets } from './redact.js';
+import { redactEntries, redactString, normalizeSecrets } from './redact.js';
 import { getMachineId } from './machine-id.js';
 
 // Re-exported so the existing `relay-bridge-abort.test.ts` keeps working.
@@ -63,6 +67,22 @@ const MAX_CONCURRENT_DISPATCHES = Math.max(1, parseInt(process.env.GIPITY_RELAY_
 // Cap how long the pre-Claude project sync (and the post-dispatch push-back) may
 // run before we kill it - a stalled sync must never hang a dispatch forever.
 const PROJECT_SYNC_TIMEOUT_MS = parseInt(process.env.GIPITY_RELAY_SYNC_TIMEOUT_MS || '120000', 10);
+
+/** System-prompt addendum enabling the interactive question card on the
+ *  relay path (AskUserQuestion is unavailable in -p mode). The model emits
+ *  a fenced `gipity-question` JSON block instead of asking in prose; the
+ *  web CLI swaps it for a clickable card. Kept directive because a soft
+ *  "you may" framing let weaker models fall back to prose (Phase 5 spike). */
+const GIPITY_QUESTION_PROTOCOL = [
+  'INTERACTIVE QUESTIONS: You are running without an interactive terminal, so the user answers you through a web UI.',
+  'Whenever you would ask the user a clarifying question or offer them a choice, DO NOT write it as prose.',
+  'Instead output ONLY a fenced code block tagged `gipity-question` containing JSON of exactly this shape, then end your turn:',
+  '```gipity-question',
+  '{"questions":[{"header":"Short label","question":"The question?","options":[{"label":"Choice A","description":"what it means"},{"label":"Choice B","description":"what it means"}],"multiSelect":false}]}',
+  '```',
+  'Rules: keep option labels short; add a one-line description each; set "multiSelect":true only when several choices can apply; you may include multiple questions in the array; the user can always type a custom answer, so you need not add an "Other" option.',
+  'This block is the only way the user can answer, so never ask in plain text when a decision is needed to proceed.',
+].join('\n');
 
 // ─── HTTP helpers ──────────────────────────────────────────────────────
 // Device-auth fetch lives in ./device-http.ts - shared with the capture
@@ -454,21 +474,31 @@ async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
 /** Collect the secret strings the daemon must scrub from every captured
  *  entry before it reaches the web CLI: the shared Claude credential
  *  (whichever of the two env vars Claude Code is using) and this host's own
- *  Gipity + device tokens. Recomputed per batch - cheap, and picks up a
- *  token refresh without a daemon restart. */
+ *  Gipity + device tokens.
+ *
+ *  Cached with a 1s TTL: the stream-delta path calls this for EVERY emitted
+ *  span (tens/sec during fast generation), and each call does two sync
+ *  file reads (auth.json + device state). A 1s staleness window is well
+ *  within the tokens' ~15min lifetime, and the JWT/sk-ant pattern passes in
+ *  redactString are the backstop if a refresh lands mid-window. */
+let relaySecretsCache: { secrets: string[]; at: number } | null = null;
+const RELAY_SECRETS_TTL_MS = 1000;
 function getRelaySecrets(): string[] {
-  // Read auth.json fresh - a child process may have refreshed the tokens
-  // since the daemon's cached getAuth(). (The JWT-pattern pass in
-  // redactEntries is the backstop if this still races a refresh.)
+  const now = Date.now();
+  if (relaySecretsCache && now - relaySecretsCache.at < RELAY_SECRETS_TTL_MS) {
+    return relaySecretsCache.secrets;
+  }
   const auth = readAuthFresh();
   const device = state.getDevice();
-  return normalizeSecrets([
+  const secrets = normalizeSecrets([
     process.env.CLAUDE_CODE_OAUTH_TOKEN,
     process.env.ANTHROPIC_API_KEY,
     auth?.accessToken,
     auth?.refreshToken,
     device?.token,
   ]);
+  relaySecretsCache = { secrets, at: now };
+  return secrets;
 }
 
 /** Post a batch of ingest entries with the daemon's device bearer. Returns
@@ -505,7 +535,7 @@ export function clampForIngest(entries: IngestEntry[]): IngestEntry[] {
   });
 }
 
-async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ ok: boolean }> {
+async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ ok: boolean; retryable?: boolean }> {
   if (!entries.length) return { ok: true };
   const safeEntries = clampForIngest(redactEntries(entries, getRelaySecrets()));
   try {
@@ -515,12 +545,15 @@ async function postIngest(convGuid: string, entries: IngestEntry[]): Promise<{ o
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       log('warn', 'ingest post non-2xx', { convGuid, httpStatus: res.status, body: body.slice(0, 200) });
-      return { ok: false };
+      // 5xx/429 are transient - worth the queue retrying. A definitive 4xx
+      // (schema rejection, missing conv) can never succeed on replay;
+      // retrying it would just stall the queue behind a poisoned batch.
+      return { ok: false, retryable: res.status >= 500 || res.status === 429 };
     }
     return { ok: true };
   } catch (err: any) {
     log('warn', 'ingest post network error', { convGuid, err: err?.message });
-    return { ok: false };
+    return { ok: false, retryable: true };
   }
 }
 
@@ -537,12 +570,121 @@ async function postProgress(
     stdout_bytes_delta: number;
     stdout_idle_ms: number;
     uptime_ms: number;
+    // Phase enrichment (mirrors @easyclaw/shared DispatchProgressPayload;
+    // the packages don't share code, the server schema is the contract).
+    phase?: 'starting' | 'thinking' | 'responding' | 'tool' | 'retry' | 'finishing';
+    current_tool?: string;
+    current_tool_hint?: string;
+    tool_elapsed_ms?: number;
+    last_event_ms?: number;
+    retry?: { attempt: number; max?: number };
   },
 ): Promise<void> {
   try {
     await deviceFetch('POST', `/remote-sessions/${encodeURIComponent(convGuid)}/progress`, payload, 5_000);
   } catch {
     /* best-effort */
+  }
+}
+
+/** Fire-and-forget token-delta flush. Ephemeral by design (no DB write
+ *  server-side, no retry here): a lost flush shows as a small `…` gap and
+ *  the next refresh replaces the streamed view with the stored message. */
+async function postStreamDelta(convGuid: string, dispatchGuid: string, flush: DeltaFlush): Promise<void> {
+  try {
+    await deviceFetch('POST', `/remote-sessions/${encodeURIComponent(convGuid)}/stream-delta`, {
+      dispatch_guid: dispatchGuid,
+      seq: flush.seq,
+      events: flush.events,
+    }, 5_000);
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ─── Dispatch phase tracker ─────────────────────────────────────────────
+// Derives "what is Claude doing right now" purely from events the daemon
+// already parses - no extra child instrumentation. Drives the progress
+// line's phase enrichment ("⚒ Bash · 0:45 · npm run build" instead of
+// the byte-based Working/Quiet guess).
+
+type DispatchPhase = 'starting' | 'thinking' | 'responding' | 'tool' | 'retry' | 'finishing';
+
+/** Short human hint for a tool call shown on the progress line. */
+export function toolHint(name: string, input: any): string | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  if (name === 'Bash' && typeof input.command === 'string') return input.command;
+  const path = input.file_path ?? input.path ?? input.pattern ?? input.query ?? input.url ?? input.description;
+  return typeof path === 'string' ? path : undefined;
+}
+
+export class PhaseTracker {
+  phase: DispatchPhase = 'starting';
+  lastEventAt = Date.now();
+  retry: { attempt: number; max?: number } | null = null;
+  /** Insertion-ordered open tool calls (tool_use seen, no tool_result yet). */
+  private openTools = new Map<string, { name: string; hint?: string; startedAt: number }>();
+
+  note(evt: { type: string; [k: string]: any }): void {
+    this.lastEventAt = Date.now();
+    // Token deltas refine the phase in real time: thinking fragments mean
+    // thinking, text fragments mean responding. Subagent streams
+    // (parent_tool_use_id) don't perturb the main phase - the open Task
+    // tool_use already puts us in the 'tool' phase.
+    if (evt.type === 'stream_event') {
+      if (evt.parent_tool_use_id) return;
+      const d = evt.event?.delta;
+      if (this.openTools.size === 0 && d) {
+        if (typeof d.thinking === 'string') this.phase = 'thinking';
+        else if (typeof d.text === 'string') this.phase = 'responding';
+      }
+      return;
+    }
+    if (evt.type === 'system') {
+      // thinking_tokens fires per thinking chunk - the only signal we get
+      // during long extended thinking without partial messages.
+      if (evt.subtype === 'thinking_tokens' && this.openTools.size === 0) this.phase = 'thinking';
+      else if (evt.subtype === 'api_retry') {
+        this.retry = {
+          attempt: typeof evt.attempt === 'number' ? evt.attempt : 1,
+          max: typeof evt.max_retries === 'number' ? evt.max_retries : undefined,
+        };
+        this.phase = 'retry';
+      }
+      return;
+    }
+    if (evt.type === 'assistant') {
+      this.retry = null;
+      const content = Array.isArray(evt.message?.content) ? evt.message.content : [];
+      for (const b of content) {
+        if (b?.type === 'tool_use' && typeof b.id === 'string') {
+          this.openTools.set(b.id, {
+            name: typeof b.name === 'string' ? b.name : 'tool',
+            hint: toolHint(b.name, b.input),
+            startedAt: Date.now(),
+          });
+        }
+      }
+      this.phase = this.openTools.size > 0 ? 'tool' : 'responding';
+      return;
+    }
+    if (evt.type === 'user') {
+      const content = Array.isArray(evt.message?.content) ? evt.message.content : [];
+      for (const b of content) {
+        if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') this.openTools.delete(b.tool_use_id);
+      }
+      // Tool results feed the next model turn - thinking until proven otherwise.
+      if (this.openTools.size === 0 && this.phase === 'tool') this.phase = 'thinking';
+      return;
+    }
+    if (evt.type === 'result') this.phase = 'finishing';
+  }
+
+  /** The most recently started still-open tool, if any. */
+  currentTool(): { name: string; hint?: string; startedAt: number } | null {
+    let last: { name: string; hint?: string; startedAt: number } | null = null;
+    for (const t of this.openTools.values()) last = t;
+    return last;
   }
 }
 
@@ -640,11 +782,19 @@ function formatDuration(ms: number): string {
 // arbitrary OS/spawn message, so clamp here to stay under the cap.
 const MAX_ACK_ERROR_CHARS = 2000;
 
-async function ack(shortGuid: string, status: 'done' | 'error' | 'cancelled', error?: string): Promise<void> {
-  const safeError = error != null ? error.slice(0, MAX_ACK_ERROR_CHARS) : null;
+async function ack(shortGuid: string, status: 'done' | 'error' | 'cancelled', error?: string, metrics?: Record<string, number>): Promise<void> {
+  // Redact BEFORE clamping (truncation must not split a secret past the
+  // literal-match scrubber). The ack `error` is broadcast to the web CLI
+  // and rendered - it can embed a spawn message or the child's stderr
+  // tail, which on a hosted relay could echo a host credential. The twin
+  // ingest system-marker is already redacted via redactEntries; this
+  // path was the redaction hole (findings: security review 2026-07-03).
+  const safeError = error != null
+    ? redactString(error, getRelaySecrets()).slice(0, MAX_ACK_ERROR_CHARS)
+    : null;
   try {
     const res = await deviceFetch('POST', `/remote-devices/dispatches/${encodeURIComponent(shortGuid)}/ack`, {
-      status, error: safeError,
+      status, error: safeError, ...(metrics ? { metrics } : {}),
     }, 10_000);
     if (!res.ok) {
       // fetch() doesn't throw on 4xx/5xx - surface it ourselves so a
@@ -690,6 +840,22 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // serialization point that prevents that.
   await killRunningForConv(d.conversation_guid);
 
+  // One ordered ingest queue per dispatch: markers, prompt echo, stream
+  // entries, and the tail all flow through it in order, with backoff
+  // retry instead of the old fire-and-forget loss on network errors.
+  // Daemon-authored entries get a random source_uuid so retried batches
+  // dedup server-side.
+  const queue = new IngestQueue(
+    (entries) => postIngest(d.conversation_guid, entries),
+    { onWarn: (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }) },
+  );
+  const pushSystem = (content: string) => {
+    queue.push({ kind: 'system', content, ts: new Date().toISOString(), source_uuid: randomUUID() });
+  };
+  /** Drain the queue (bounded) so content lands before the ack that
+   *  closes the web CLI's live view. */
+  const flushQueue = async () => { await queue.close(30_000); };
+
   let cwd: string;
   let bootstrapped: boolean;
   try {
@@ -707,14 +873,15 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // is killed at PROJECT_SYNC_TIMEOUT_MS and reported instead of silently stalling
   // the dispatch (the old in-process bootstrap sync could hang forever).
   if (bootstrapped) {
-    await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Syncing project files…' }]);
+    pushSystem('Syncing project files…');
     let syncKilled = false;
     try {
       syncKilled = (await runDispatchSync(d, cwd)).killed;
     } catch (err: any) {
       const msg = `project sync ${err?.message || 'failed'}`;
       log('error', 'project sync failed - aborting dispatch', { id: d.short_guid, err: err?.message });
-      await postIngest(d.conversation_guid, [{ kind: 'system', content: `Claude Code not started - ${msg}` }]);
+      pushSystem(`Claude Code not started - ${msg}`);
+      await flushQueue();
       await ack(d.short_guid, 'error', msg);
       return;
     }
@@ -723,11 +890,12 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
       // WHILE the pre-Claude sync was running. Before this was registered in
       // `running`, a cancel was silently ignored until the 120s sync timeout.
       log('info', 'dispatch cancelled during project sync', { id: d.short_guid });
-      await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Claude Code cancelled (during project sync)' }]);
+      pushSystem('Claude Code cancelled (during project sync)');
+      await flushQueue();
       await ack(d.short_guid, 'cancelled');
       return;
     }
-    await postIngest(d.conversation_guid, [{ kind: 'system', content: 'Project files synced.' }]);
+    pushSystem('Project files synced.');
   }
 
   // Build argv for `gipity claude -p …` (or with --resume). No shell - argv
@@ -740,6 +908,13 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // prompt is correct (same authority as running `claude -p` in a local
   // terminal yourself).
   const args = ['claude', '-p', d.message, '--permission-mode', 'bypassPermissions'];
+  // Relay sessions run in -p mode, where Claude Code's AskUserQuestion tool
+  // is unavailable - so without help the model would ask clarifying
+  // questions as prose the user just types back. This system-prompt
+  // addendum gives it a structured channel: emit a fenced gipity-question
+  // block, which the web CLI renders as an interactive card (clickable
+  // options + free-text). Verified to work down to Haiku (Phase 5 spike).
+  args.push('--append-system-prompt', GIPITY_QUESTION_PROTOCOL);
   // Per-chat model: the user picked it with `/model` in the web CLI. `gipity
   // claude` forwards --model straight through to the `claude` binary, which
   // honors it on both a fresh session and a --resume. null => agent default.
@@ -805,19 +980,26 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
     }
   }
   const header = `Running Claude Code - ${counts.join(' + ')} words${resumeNote}`;
-  await postIngest(d.conversation_guid, [
-    { kind: 'prompt', prompt: d.message },
-    { kind: 'system', content: header },
-  ]);
+  const ts = new Date().toISOString();
+  queue.push(
+    { kind: 'prompt', prompt: d.message, ts, source_uuid: randomUUID() },
+    { kind: 'system', content: header, ts, source_uuid: randomUUID() },
+  );
 
   const t0 = Date.now();
   let exitCode = 1;
   let spawnErr: string | null = null;
   let killed = false;
+  let runtimeLimit = false;
+  let stderrTail = '';
+  let startupMs: number | undefined;
   try {
-    const result = await spawnGipityClaude(args, cwd, d);
+    const result = await spawnGipityClaude(args, cwd, d, queue, { resumeWords: transcript?.words });
     exitCode = result.exitCode;
     killed = result.killed;
+    runtimeLimit = result.runtimeLimit ?? false;
+    stderrTail = result.stderrTail ?? '';
+    startupMs = result.startupMs;
   } catch (err: any) {
     spawnErr = err?.message || String(err);
     log('error', 'dispatch spawn failed', { id: d.short_guid, err: spawnErr });
@@ -847,26 +1029,42 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
       log('warn', 'sync after dispatch failed', { id: d.short_guid, err: err?.message });
     }
   }
-  const tail = killed
-    ? `cancelled (${dur})`
-    : spawnErr
-      ? `failed (${dur}: ${spawnErr})`
-      : exitCode === 0
-        ? `finished (${dur})`
-        : `failed (${dur}, exit ${exitCode})`;
-  await postIngest(d.conversation_guid, [{ kind: 'system', content: `Claude Code ${tail}` }]);
+  // Nonzero exit with no useful message: include the child's last few
+  // stderr lines so the visible marker carries the real error instead of
+  // just an exit code (previously stderr only reached the daemon's log).
+  const stderrNote = stderrTail ? `: ${stderrTail.slice(0, 300)}` : '';
+  const tail = runtimeLimit
+    ? `stopped after ${dur} (runtime limit)`
+    : killed
+      ? `cancelled (${dur})`
+      : spawnErr
+        ? `failed (${dur}: ${spawnErr})`
+        : exitCode === 0
+          ? `finished (${dur})`
+          : `failed (${dur}, exit ${exitCode}${stderrNote})`;
+  pushSystem(`Claude Code ${tail}`);
+  await flushQueue();
 
-  if (killed) {
+  // Observability: how long the relay took before the agent produced its
+  // first output (project sync + Claude Code cold start + MCP). Recorded on
+  // the dispatch row; tracked, not enforced. Undefined if the child never
+  // emitted an event (spawn failure).
+  const metrics = startupMs !== undefined ? { startup_ms: startupMs } : undefined;
+
+  if (runtimeLimit) {
+    log('warn', 'dispatch hit runtime limit', { id: d.short_guid, ms });
+    await ack(d.short_guid, 'error', `Claude Code stopped after ${dur} (runtime limit)`, metrics);
+  } else if (killed) {
     log('info', 'dispatch cancelled by user', { id: d.short_guid, ms });
     await ack(d.short_guid, 'cancelled');
   } else if (spawnErr) {
     await ack(d.short_guid, 'error', spawnErr);
   } else if (exitCode === 0) {
-    log('info', 'dispatch done', { id: d.short_guid, ms });
-    await ack(d.short_guid, 'done');
+    log('info', 'dispatch done', { id: d.short_guid, ms, startupMs });
+    await ack(d.short_guid, 'done', undefined, metrics);
   } else {
     log('warn', 'dispatch child exited nonzero', { id: d.short_guid, exitCode, ms });
-    await ack(d.short_guid, 'error', `gipity claude exited with code ${exitCode}`);
+    await ack(d.short_guid, 'error', `gipity claude exited with code ${exitCode}${stderrNote}`);
   }
 }
 
@@ -1056,7 +1254,9 @@ export async function spawnGipityClaude(
   args: string[],
   cwd: string,
   d: ClaimedDispatch,
-): Promise<{ exitCode: number; killed: boolean }> {
+  queue?: IngestQueue,
+  meta?: { resumeWords?: number },
+): Promise<{ exitCode: number; killed: boolean; runtimeLimit?: boolean; stderrTail?: string; startupMs?: number }> {
   // resolveCommand: on Windows the bare `gipity` is a .cmd shim that spawn
   // can't launch without an explicit path. An explicit env override is used
   // verbatim (it may be a full path); only the default name is resolved.
@@ -1064,7 +1264,10 @@ export async function spawnGipityClaude(
   // Inject stream-json flags here rather than at the call site so every
   // relay spawn path gets the same protocol. `--verbose` is required by
   // Claude Code when combining `-p` with `--output-format stream-json`.
-  const fullArgs = [...args, '--output-format', 'stream-json', '--verbose'];
+  // `--include-partial-messages` adds stream_event token deltas, which
+  // feed the ephemeral live-typing channel (see stream-delta.ts); whole
+  // assistant/tool events still arrive unchanged for the persistent path.
+  const fullArgs = [...args, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
   const env = { ...process.env, GIPITY_CONVERSATION_GUID: d.conversation_guid };
 
   return new Promise((resolve, reject) => {
@@ -1078,10 +1281,16 @@ export async function spawnGipityClaude(
     const exited = new Promise<void>(r => { resolveExited = r; });
     running.set(d.short_guid, { child, convGuid: d.conversation_guid, exited });
 
-    // Track in-flight ingest POSTs for this spawn. On exit we await them
-    // before resolving the outer promise so `handleDispatch` doesn't
-    // move on to its tail marker while the last batch is still in flight.
-    const pendingPosts = new Set<Promise<void>>();
+    // Ordered per-dispatch ingest queue. Entries flow through it in
+    // arrival order with backoff retry - a transient network/server error
+    // no longer drops stream content permanently (source_uuid dedup makes
+    // the retries safe). Falls back to a local queue when the caller
+    // didn't pass one (tests, direct invocation).
+    const q = queue ?? new IngestQueue(
+      (entries) => postIngest(d.conversation_guid, entries),
+      { onWarn: (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }) },
+    );
+    const ownQueue = !queue;
 
     // Progress heartbeat state. Measured at the daemon boundary - this is
     // what we actually observe, not anything the child self-reports. These
@@ -1091,48 +1300,158 @@ export async function spawnGipityClaude(
     let stdoutBytesTotal = 0;
     let lastStdoutByteAt = dispatchStartedAt;
     let stdoutBytesAtLastTick = 0;
+    const phases = new PhaseTracker();
 
-    const progressTimer = setInterval(() => {
+    // Rich-heartbeat state, updated from the stream: the agent's current
+    // context size (latest input_tokens off a usage-bearing event) so the
+    // client can show context-window fill. Machine stats are read fresh per
+    // tick (os.* are in-memory kernel values - instant, no I/O).
+    let contextTokens: number | undefined;
+    let firstEventAt: number | undefined; // for the startup-latency metric
+    const CPU_COUNT = cpus().length;
+    const TOTAL_MEM = totalmem();
+
+    const buildProgressPayload = (procAlive: boolean) => {
       const now = Date.now();
       const delta = stdoutBytesTotal - stdoutBytesAtLastTick;
       stdoutBytesAtLastTick = stdoutBytesTotal;
-      void postProgress(d.conversation_guid, {
+      const tool = phases.currentTool();
+      // The hint (Bash command / file path / URL) comes straight from
+      // tool input, so it can contain a secret the agent echoed - this
+      // liveness channel must scrub it, exactly like the ingest and delta
+      // channels do (it's the third path the same tool_use fans out to).
+      // `current_tool` is clamped to the server's max(100) so a long MCP
+      // tool name (`mcp__server__tool`) can't 400 every tick and starve
+      // the client's liveness stream.
+      const hint = tool?.hint ? redactString(tool.hint, getRelaySecrets()).slice(0, 200) : undefined;
+      return {
         dispatch_guid: d.short_guid,
-        proc_alive: child.exitCode === null,
+        proc_alive: procAlive,
         stdout_bytes_total: stdoutBytesTotal,
         stdout_bytes_delta: delta,
         stdout_idle_ms: Math.max(0, now - lastStdoutByteAt),
         uptime_ms: Math.max(0, now - dispatchStartedAt),
-      });
+        phase: phases.phase,
+        current_tool: tool?.name?.slice(0, 100),
+        current_tool_hint: hint,
+        tool_elapsed_ms: tool ? Math.max(0, now - tool.startedAt) : undefined,
+        last_event_ms: Math.max(0, now - phases.lastEventAt),
+        retry: phases.retry ?? undefined,
+        // Rich heartbeat: real host + session telemetry.
+        machine_load1: Math.round(loadavg()[0] * 100) / 100,
+        machine_free_mem: freemem(),
+        machine_total_mem: TOTAL_MEM,
+        machine_cpus: CPU_COUNT,
+        context_tokens: contextTokens,
+        resume_words: meta?.resumeWords,
+      };
+    };
+
+    // Immediate first tick: don't make the user stare at a static "Running
+    // Claude Code" line for the first ~2s. Fire one heartbeat right away so
+    // the spinner + machine/id readout appears the moment we spawn.
+    void postProgress(d.conversation_guid, buildProgressPayload(true));
+    const progressTimer = setInterval(() => {
+      void postProgress(d.conversation_guid, buildProgressPayload(child.exitCode === null));
     }, 2000);
 
-    // Stdout: NDJSON stream → parse → POST each event's ingest entries
+    // Max-runtime guard: a wedged child (hung tool, upstream stall) must
+    // not tick `proc_alive:true` forever - after the limit, terminate it
+    // with the same SIGTERM→SIGKILL escalation the cancel path uses and
+    // surface a visible marker + error ack (via `runtimeLimit`).
+    let runtimeLimit = false;
+    const maxRuntimeMs = parseInt(process.env.GIPITY_RELAY_MAX_RUNTIME_MS || String(45 * 60_000), 10);
+    const maxRuntimeTimer = maxRuntimeMs > 0 ? setTimeout(() => {
+      runtimeLimit = true;
+      log('warn', 'dispatch hit max runtime - terminating child', { id: d.short_guid, maxRuntimeMs });
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        }
+      }, KILL_GRACE_MS).unref();
+    }, maxRuntimeMs) : null;
+    maxRuntimeTimer?.unref();
+
+    // Stdout: NDJSON stream → parse → enqueue each event's ingest entries
     // as they arrive. That's the live-streaming path - every assistant
     // message and tool call appears in the web CLI within a second of
     // Claude emitting it.
     // Per-dispatch tool_use_id → tool_name map so a `tool_result` event can
-    // be denormalized with its tool's name (the result block omits it).
+    // be denormalized with its tool's name (the result block omits it);
+    // msgSeq disambiguates per-block assistant events sharing a message id
+    // (their source_uuid becomes `msg_x#0`, `msg_x#1`, …).
     const toolNames = new Map<string, string>();
+    const msgSeq = new Map<string, number>();
+    const unmapped = new Map<string, number>();
+    // Token-delta pipeline: accumulate stream_event fragments, emit
+    // redaction-safe spans, batch every 150ms/4KB to /stream-delta.
+    const deltaAcc = new DeltaAccumulator(getRelaySecrets);
+    const deltaBatcher = new DeltaBatcher((flush) => {
+      void postStreamDelta(d.conversation_guid, d.short_guid, flush);
+    });
+    // A spawn with background subagents can emit several init and result
+    // events (the loop re-invokes when a task completes). Attach once;
+    // buffer results and post only the last (its cost is cumulative).
+    let attached = false;
+    let finalResult: IngestEntry | null = null;
     const splitter = createLineSplitter((line) => {
       const evt = parseEvent(line, (reason, snippet) => {
         log('warn', 'stream-json parse skipped line', { id: d.short_guid, reason, snippet });
       });
       if (!evt) return;
-      const entries = mapEventToEntries(evt, toolNames);
+      phases.note(evt);
+      // Startup-latency metric: the FIRST stream event means Claude Code has
+      // finished the pre-spawn work (project sync + cold start + MCP connect)
+      // and is now producing output. Time from dispatch start to here is what
+      // the user waits through before anything happens - the thing we want to
+      // track per-dispatch (see remote_dispatches.metrics).
+      if (firstEventAt === undefined) firstEventAt = Date.now();
+      // Track the agent's live context size for the heartbeat: an assistant
+      // (or result) event's usage.input_tokens IS the context loaded for that
+      // turn. Take the max seen so the readout doesn't jump around between
+      // a small cache-read turn and the full-context turn.
+      const usageIn = (evt as any)?.message?.usage?.input_tokens;
+      if (typeof usageIn === 'number' && usageIn > (contextTokens ?? 0)) contextTokens = usageIn;
+      deltaBatcher.push(deltaAcc.note(evt));
+      let entries = mapEventToEntries(evt, {
+        toolNames, msgSeq,
+        onUnmapped: (type, subtype) => {
+          const key = subtype ? `${type}/${subtype}` : type;
+          unmapped.set(key, (unmapped.get(key) ?? 0) + 1);
+        },
+      });
+      if (entries.length === 0) return;
+      entries = entries.filter(e => {
+        if (e.kind === 'attach') {
+          if (attached) return false;
+          attached = true;
+          return true;
+        }
+        if (e.kind === 'result') {
+          finalResult = e;
+          return false;
+        }
+        return true;
+      });
       if (entries.length === 0) return;
       // Stamp the read time as the event-time hint (event_at). Stream-json
       // carries no per-event timestamp; the daemon reads events as Claude
       // emits them, so receipt time is a close, per-event proxy - far
       // better than the single flush-time created_at on the whole batch.
       const ts = new Date().toISOString();
-      for (const e of entries) e.ts = ts;
-      // Fire-and-forget POST but tracked so the drain on exit can
-      // `allSettled` the set before we claim the spawn is done.
-      const p: Promise<void> = postIngest(d.conversation_guid, entries)
-        .then(() => {})
-        .catch(() => {})
-        .finally(() => { pendingPosts.delete(p); });
-      pendingPosts.add(p);
+      for (const e of entries) {
+        e.ts = ts;
+        // Every entry needs a dedup key so a queue re-POST after a partial
+        // server success can't double-insert. assistant/tool_use already
+        // carry one (msg_id#n / tool_use_id); compact and any future
+        // keyless kind get a stable UUID here - stable because the daemon
+        // maps each stream line exactly once and the queue retries the
+        // same object (the stream path never re-maps, unlike a transcript
+        // replay), so the same uuid reaches the server on every retry.
+        if (!e.source_uuid) e.source_uuid = randomUUID();
+      }
+      q.push(...entries);
     });
     child.stdout?.on('data', (chunk) => {
       stdoutBytesTotal += chunk.length;
@@ -1142,12 +1461,21 @@ export async function spawnGipityClaude(
     child.stdout?.on('end', () => splitter.flush());
 
     // Stderr: human-readable only (Claude's progress bars, errors).
-    // Kept on the daemon's own stderr for `gipity relay log`. The
-    // readline interface is closed in the error/exit handler so the
-    // listener doesn't outlive the child.
+    // Kept on the daemon's own stderr for `gipity relay log`, plus a
+    // small tail ring so a crash with no stream output can include the
+    // real error in the visible failure marker instead of just an exit
+    // code. The readline interface is closed in the error/exit handler
+    // so the listener doesn't outlive the child.
     const errPrefix = C.dim('│ ');
+    const stderrTail: string[] = [];
     const errRl = child.stderr ? createInterface({ input: child.stderr }) : null;
-    errRl?.on('line', (line) => process.stderr.write(errPrefix + line + '\n'));
+    errRl?.on('line', (line) => {
+      process.stderr.write(errPrefix + line + '\n');
+      if (line.trim()) {
+        stderrTail.push(line.trim());
+        if (stderrTail.length > 3) stderrTail.shift();
+      }
+    });
 
     let killed = false;
     const cleanup = () => {
@@ -1160,16 +1488,45 @@ export async function spawnGipityClaude(
       cleanup();
       reject(err);
     });
-    child.on('exit', async (code, signal) => {
+    // Finalize on 'close', NOT 'exit': 'exit' fires when the process dies,
+    // which can be BEFORE the last stdout chunks drain. Claude emits the
+    // `result` footer (with cumulative cost) immediately before exiting,
+    // so finalizing on 'exit' races that line - `finalResult` would be
+    // parsed by the splitter's `'end'` flush AFTER we'd already resolved,
+    // silently losing the session footer + cost. 'close' fires only once
+    // all stdio is closed (after `'end'` → `splitter.flush()`), so every
+    // event is mapped by the time we get here. Carries the same (code,
+    // signal) as 'exit'.
+    child.on('close', async (code, signal) => {
       if (signal === 'SIGTERM' || signal === 'SIGKILL') killed = true;
-      // Wait for the last in-flight POSTs so the tail marker lands
-      // after all content from this spawn. Safe: pendingPosts always
-      // settle (catch + finally), so allSettled never hangs.
-      if (pendingPosts.size > 0) {
-        await Promise.allSettled([...pendingPosts]);
+      // Post the buffered session footer now that we know it's final (a
+      // spawn with background subagents emits several result events; the
+      // last carries the cumulative cost).
+      if (finalResult) {
+        finalResult.ts = new Date().toISOString();
+        finalResult.source_uuid = randomUUID();
+        q.push(finalResult);
       }
+      if (unmapped.size > 0) {
+        log('info', 'unmapped stream events this dispatch', {
+          id: d.short_guid,
+          counts: Object.fromEntries(unmapped),
+        });
+      }
+      if (maxRuntimeTimer) clearTimeout(maxRuntimeTimer);
+      deltaBatcher.close();
+      // Final heartbeat with proc_alive:false so the web CLI's progress
+      // line flips to Exited even if the 2s interval just missed the
+      // exit (the interval is cleared in cleanup()).
+      void postProgress(d.conversation_guid, buildProgressPayload(false));
+      // Only drain here when we own the queue; otherwise handleDispatch
+      // closes it after pushing its tail marker (order preserved).
+      if (ownQueue) await q.close();
       cleanup();
-      resolve({ exitCode: code ?? 1, killed });
+      resolve({
+        exitCode: code ?? 1, killed, runtimeLimit, stderrTail: stderrTail.join(' | '),
+        startupMs: firstEventAt !== undefined ? Math.max(0, firstEventAt - dispatchStartedAt) : undefined,
+      });
     });
   });
 }
