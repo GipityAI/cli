@@ -44,6 +44,7 @@ import { DeltaAccumulator, DeltaBatcher } from './stream-delta.js';
 import type { DeltaFlush } from './stream-delta.js';
 import { randomUUID } from 'crypto';
 import { deviceFetch, bridgeAbort as bridgeAbortImpl } from './device-http.js';
+import { ensureRelayAgentToken } from './agent-token.js';
 import { redactEntries, redactString, normalizeSecrets } from './redact.js';
 import { getMachineId } from './machine-id.js';
 
@@ -122,6 +123,21 @@ async function registerDevice(): Promise<state.RelayDevice> {
 // so routine runs don't spam the log, but `gipity relay run --verbose`
 // surfaces every dispatch decision for live troubleshooting.
 let verboseMode = process.env.GIPITY_RELAY_VERBOSE === '1';
+
+// Agent token exported to spawned children as GIPITY_TOKEN (see agent-token.ts).
+// Resolved once at daemon startup; null = fall back to shared session auth.
+let relayAgentToken: string | null = null;
+
+/** Environment for relay-spawned `gipity` children. Adds GIPITY_TOKEN when the
+ *  daemon holds an agent token so children authenticate statelessly instead of
+ *  racing siblings on the session's single-use refresh token. */
+function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...(relayAgentToken ? { GIPITY_TOKEN: relayAgentToken } : {}),
+    ...extra,
+  };
+}
 function setVerbose(on: boolean): void { verboseMode = verboseMode || on; }
 
 // ANSI helpers - only colorize when stderr is a TTY.
@@ -287,6 +303,18 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
   process.on('exit', releasePid);
   // Also release on our shutdown signals (exit handler sometimes doesn't fire).
   ctx.abort.signal.addEventListener('abort', releasePid, { once: true });
+
+  // Long-lived agent token for spawned children (gipity sync / gipity claude).
+  // With it, children authenticate via GIPITY_TOKEN - stateless, no refresh -
+  // instead of racing sibling processes on the session's single-use refresh
+  // token. Minting needs a live session; on failure children fall back to
+  // session auth (the old behavior), so the daemon still runs.
+  relayAgentToken = await ensureRelayAgentToken();
+  if (relayAgentToken) {
+    log('info', 'agent token ready - spawned children use GIPITY_TOKEN');
+  } else {
+    log('warn', 'no agent token (mint failed or session dead) - children fall back to session auth');
+  }
 
   log('info', 'relay started', { device: device.guid, name: device.name, pid: process.pid });
 
@@ -1248,7 +1276,7 @@ async function spawnSync(cwd: string, timeoutMs?: number, onSpawn?: (child: Chil
   return new Promise((resolve, reject) => {
     const child = spawnCommand(cmd, ['sync', '--json'], {
       cwd,
-      env: process.env,
+      env: childEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Hand the child to the caller so it can register the sync in `running`,
@@ -1302,7 +1330,7 @@ export async function spawnGipityClaude(
   // feed the ephemeral live-typing channel (see stream-delta.ts); whole
   // assistant/tool events still arrive unchanged for the persistent path.
   const fullArgs = [...args, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
-  const env = { ...process.env, GIPITY_CONVERSATION_GUID: d.conversation_guid };
+  const env = childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid });
 
   return new Promise((resolve, reject) => {
     const child: ChildProcess = spawnCommand(cmd, fullArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });

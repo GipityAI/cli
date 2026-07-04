@@ -71,6 +71,41 @@ describe('relay state: device round-trip', () => {
   });
 });
 
+describe('relay state: agent token (GIPITY_TOKEN for spawned children)', () => {
+  it('setAgentToken / getAgentToken round-trips token + guid', async () => {
+    const { state } = await fresh();
+    assert.equal(state.getAgentToken(), null);
+
+    state.setAgentToken('gip_at_secret123', 'tok_abc12345');
+    const t = state.getAgentToken();
+    assert.equal(t?.token, 'gip_at_secret123');
+    assert.equal(t?.guid, 'tok_abc12345');
+
+    state.setAgentToken(null, null);
+    assert.equal(state.getAgentToken(), null);
+  });
+
+  it('clearDevice also clears the agent token (scoped to the device)', async () => {
+    const { state } = await fresh();
+    state.setDevice({
+      guid: 'rd_x', name: 'x', platform: 'linux', token: 't', paired_at: '2026-04-14',
+    });
+    state.setAgentToken('gip_at_secret123', 'tok_abc12345');
+
+    state.clearDevice();
+
+    assert.equal(state.getDevice(), null);
+    assert.equal(state.getAgentToken(), null);
+  });
+
+  it('agent token survives a load/save cycle through unrelated mutations', async () => {
+    const { state } = await fresh();
+    state.setAgentToken('gip_at_keepme', 'tok_keep0001');
+    state.setPaused(true); // unrelated mutate() must not drop the token
+    assert.equal(state.getAgentToken()?.token, 'gip_at_keepme');
+  });
+});
+
 describe('relay state: pause flag', () => {
   it('setPaused / isPaused round-trip', async () => {
     const { state } = await fresh();

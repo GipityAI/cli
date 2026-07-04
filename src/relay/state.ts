@@ -36,6 +36,13 @@ export interface RelayState {
   relay_enabled?: boolean;
   /** True once the first-run onboarding prompt has been shown. */
   onboard_shown?: boolean;
+  /** Long-lived gip_at_* agent API token the daemon exports (as GIPITY_TOKEN)
+   *  to spawned children (`gipity sync`, `gipity claude -p`). Children then
+   *  authenticate statelessly instead of racing sibling processes on the
+   *  shared session's single-use refresh token. Minted by the daemon at
+   *  startup; guid kept for best-effort revocation on unpair. */
+  agent_token?: string | null;
+  agent_token_guid?: string | null;
 }
 
 // GIPITY_DIR scopes the relay/device state the same way it scopes auth.json (see
@@ -61,6 +68,8 @@ export function loadState(): RelayState {
       paused: Boolean(raw.paused),
       relay_enabled: typeof raw.relay_enabled === 'boolean' ? raw.relay_enabled : undefined,
       onboard_shown: Boolean(raw.onboard_shown),
+      agent_token: typeof raw.agent_token === 'string' ? raw.agent_token : null,
+      agent_token_guid: typeof raw.agent_token_guid === 'string' ? raw.agent_token_guid : null,
     };
   } catch {
     // Corrupted file - bail out to empty so the caller can rewrite cleanly.
@@ -98,8 +107,21 @@ export function setDevice(device: RelayDevice): void {
 }
 
 export function clearDevice(): void {
-  // Forget the device → also clear pause flag (scoped to the device).
-  mutate(s => { s.device = null; s.paused = false; });
+  // Forget the device → also clear the pause flag and the agent token
+  // (both scoped to the device). Server-side token revocation is the
+  // caller's job (best-effort, see revokeRelayAgentToken).
+  mutate(s => { s.device = null; s.paused = false; s.agent_token = null; s.agent_token_guid = null; });
+}
+
+// ─── Agent token (exported to spawned children as GIPITY_TOKEN) ────────
+
+export function getAgentToken(): { token: string; guid: string | null } | null {
+  const s = loadState();
+  return s.agent_token ? { token: s.agent_token, guid: s.agent_token_guid ?? null } : null;
+}
+
+export function setAgentToken(token: string | null, guid: string | null): void {
+  mutate(s => { s.agent_token = token; s.agent_token_guid = guid; });
 }
 
 // ─── Pause ─────────────────────────────────────────────────────────────

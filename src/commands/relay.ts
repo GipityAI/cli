@@ -15,6 +15,7 @@ import {
 } from '../colors.js';
 import * as state from '../relay/state.js';
 import * as daemon from '../relay/daemon.js';
+import { revokeRelayAgentToken } from '../relay/agent-token.js';
 import { UnsupportedPlatformError } from '../relay/installers.js';
 import { pairDevice, startDaemon, installAutostart, removeAutostart } from '../relay/setup.js';
 import { registerInstallCommands } from './relay-install.js';
@@ -266,6 +267,12 @@ relayCommand
       // worse than double-revoking. Warn loudly though.
       console.error(clrError(`Server revoke failed: ${err?.message || err}`));
       console.error(muted('Local token cleared anyway. Visit the web CLI to confirm the server-side revoke.'));
+    }
+    // Also revoke the relay's agent token (minted for spawned children).
+    // Best-effort: on failure it stays visible in `gipity token list`.
+    const agentTokenRevoked = await revokeRelayAgentToken();
+    if (!agentTokenRevoked && state.getAgentToken()) {
+      console.error(muted('Could not revoke the relay agent token - check `gipity token list`.'));
     }
     state.clearDevice();
 

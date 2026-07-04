@@ -157,6 +157,17 @@ export async function refreshTokenIfNeeded(force = false): Promise<void> {
   const fresh = (a: AuthData) => Date.now() <= new Date(a.expiresAt).getTime() - buffer;
   if (!force && fresh(auth)) return;   // fast path: token still good, no lock needed
 
+  // The specific access token the caller saw (the one the server just rejected on the
+  // force path). A locally-"fresh" token EQUAL to this can't be trusted - it's exactly
+  // what got a 401 - but a DIFFERENT fresh token means a sibling successfully rotated
+  // while we waited, and we should adopt it instead of re-refreshing with the (now
+  // single-use-consumed) refresh token. Without this, N concurrent relay dispatches
+  // that all 401 at once serialize on the lock, the first refreshes, and every other
+  // one re-tries the consumed token and hard-fails with "Session expired".
+  const rejectedAccess = auth.accessToken;
+  const adoptable = (a: AuthData | null): boolean =>
+    !!a && fresh(a) && (!force || a.accessToken !== rejectedAccess);
+
   // If the refresh token itself has expired, re-login is genuinely required; leave the
   // expired auth in place so the caller's existing 401 path prompts `gipity login`.
   const refreshExp = decodeJwtExp(auth.refreshToken);
@@ -166,17 +177,17 @@ export async function refreshTokenIfNeeded(force = false): Promise<void> {
   const release = await acquireRefreshLock();
   try {
     // Re-check under the lock: a sibling may have refreshed while we waited. Under
-    // force we skip this adopt — a locally-"fresh" token is exactly what the server
-    // just rejected, so we must actually refresh rather than re-adopt it.
+    // force we adopt only a token DIFFERENT from the one that was just rejected (a
+    // sibling's freshly-rotated token), never the rejected one itself.
     const held = readAuthFresh();
-    if (!force && held && fresh(held)) { cached = held; return; }
+    if (adoptable(held)) { cached = held!; return; }
 
     const { resolveApiBase } = await import('./config.js');
     const apiBase = resolveApiBase();
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       const cur = readAuthFresh();     // a sibling may have just refreshed for us
-      if (!force && cur && fresh(cur)) { cached = cur; return; }
+      if (adoptable(cur)) { cached = cur!; return; }
       const refreshToken = cur?.refreshToken ?? auth.refreshToken;
 
       let res: Response;
@@ -203,7 +214,7 @@ export async function refreshTokenIfNeeded(force = false): Promise<void> {
       // sibling's fresh token just landed; otherwise stop and let the caller re-login.
       if (res.status === 401 || res.status === 403) {
         const after = readAuthFresh();
-        if (after && fresh(after)) { cached = after; return; }
+        if (adoptable(after)) { cached = after!; return; }
         return;
       }
 
