@@ -30,7 +30,7 @@ import { join } from 'path';
 import { getApiBaseOverride, DEFAULT_API_BASE } from '../config.js';
 import { getProjectsRoot } from './paths.js';
 import { setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
-import { getAuth, readAuthFresh } from '../auth.js';
+import { getAuth, readAuthFresh, refreshTokenIfNeeded, accessTokenExpired } from '../auth.js';
 import { post } from '../api.js';
 import * as state from './state.js';
 import {
@@ -308,6 +308,9 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
 
 async function heartbeatLoop(ctx: Ctx): Promise<number> {
   let backoff = 0;
+  // Log the "session expired" warning only on the transition into that state,
+  // not every 60s, so a genuinely-lapsed session doesn't spam the relay log.
+  let sessionWarnLogged = false;
   while (!ctx.abort.signal.aborted) {
     try {
       const r = await deviceFetch('POST', '/remote-devices/heartbeat', {}, 10_000, ctx.abort.signal);
@@ -318,6 +321,37 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
       }
       if (!r.ok) throw new Error(`heartbeat ${r.status}`);
       backoff = 0;
+
+      // Keep the USER session warm alongside the device heartbeat. The device
+      // token (used for this heartbeat and to claim dispatches) is a SEPARATE,
+      // long-lived credential from the user's OAuth session in auth.json — a
+      // healthy heartbeat says nothing about whether `gipity sync` / `gipity
+      // claude` can authenticate. The relay is long-lived but the access token
+      // lives only ~1h and the refresh token ~7d; left idle between dispatches
+      // the session lapses and the next dispatch's child scrambles to refresh
+      // (or finds it dead). Refreshing here — in the long-lived PARENT (never
+      // SIGKILL'd mid-rotate the way a per-dispatch child can be), under the
+      // shared cross-process auth lock — renews BOTH tokens well inside their
+      // windows (each refresh mints a fresh 7-day token), so a continuously
+      // running relay never gets bumped out from disuse, and dispatch children
+      // hit refreshTokenIfNeeded's fast path instead of racing to rotate the
+      // single-use token. Best-effort: it no-ops while the token is still fresh
+      // and never throws. If it can't renew, the session is genuinely dead —
+      // log it once so `gipity relay log` shows why dispatches will fail until
+      // the user re-logs in (nothing here can revive it without a TTY).
+      if (getAuth()) {
+        try {
+          await refreshTokenIfNeeded();
+          if (accessTokenExpired() && !sessionWarnLogged) {
+            log('warn', 'user session expired - dispatches will fail to sync until re-login (run: gipity login)');
+            sessionWarnLogged = true;
+          } else if (!accessTokenExpired()) {
+            sessionWarnLogged = false;
+          }
+        } catch (err: any) {
+          log('debug', 'session warm failed', { err: err?.message });
+        }
+      }
     } catch (err: any) {
       if (ctx.abort.signal.aborted) return 0;
       log('warn', 'heartbeat failed', { err: err?.message });

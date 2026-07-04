@@ -357,27 +357,44 @@ export const claudeCommand = new Command('claude')
       // warn about expiry in that case.
       const hasEnvToken = Boolean(process.env.GIPITY_TOKEN?.trim());
 
-      // For an interactive saved-session run, renew the access token UP FRONT so
-      // the login line we're about to print is actually true. A saved session
-      // can look valid locally (refresh token not past its JWT expiry, so
-      // sessionExpired() is false) yet be dead on the server — most often because
-      // a sibling process sharing this auth.json already consumed the single-use
-      // refresh token (GipRunner runs many gipity processes against one auth dir).
-      // refreshTokenIfNeeded() attempts the rotation here; if it fails, the
-      // access token stays expired and accessTokenExpired() catches it below.
-      if (auth && !hasEnvToken && !nonInteractive && !sessionExpired()) {
+      // Renew the access token UP FRONT so the login line we're about to print is
+      // actually true — in BOTH interactive and headless/relay runs. A saved
+      // session can look valid locally (refresh token not past its 7-day JWT
+      // expiry, so sessionExpired() is false) yet be dead on the server: a sibling
+      // process sharing this auth.json already consumed the single-use refresh
+      // token (GipRunner and the relay run many gipity processes against one auth
+      // dir), the user logged in elsewhere, or — in dev — the server's session
+      // store was flushed/restarted. refreshTokenIfNeeded() round-trips to the
+      // server and adopts any freshly-rotated token; if it fails, the access token
+      // stays expired and accessTokenExpired() catches it below. Headless runs
+      // USED to skip this and print "Logged in" off the cheap local check alone —
+      // then the very next sync would 401 with "Session expired" and the relay
+      // would run Claude anyway against a tree it could neither pull nor push.
+      if (auth && !hasEnvToken && !sessionExpired()) {
         await refreshTokenIfNeeded();
         auth = getAuth();
       }
 
       // Re-login is genuinely required when the refresh token has lapsed, OR the
       // proactive renewal above could not produce a still-valid access token
-      // (refresh token rejected/rotated away). The access-token check is gated to
-      // interactive runs: headless runs can't prompt, and their downstream API
-      // call renews the token itself. Never triggered while a GIPITY_TOKEN env
+      // (refresh token rejected — rotated away, revoked, or the server forgot it).
+      // Checked identically for headless and interactive now: a dead session must
+      // not silently proceed in either. Never triggered while a GIPITY_TOKEN env
       // token is supplying auth.
       const reloginRequired = auth != null && !hasEnvToken &&
-        (sessionExpired() || (!nonInteractive && accessTokenExpired()));
+        (sessionExpired() || accessTokenExpired());
+
+      if (auth && reloginRequired && nonInteractive) {
+        // Headless (relay dispatch, CI): we can't prompt for a re-login, and
+        // running Claude now would work against a project tree we can neither pull
+        // nor push (every authenticated call 401s). Fail fast with the actionable
+        // message instead of printing "Logged in" and silently losing the user's
+        // changes. The relay surfaces this stderr line to the web CLI as the
+        // dispatch error, so the user sees "run: gipity login" instead of a run
+        // that appeared to work but synced nothing.
+        console.error(`  ${clrError('Your Gipity session has expired. Run: gipity login')}`);
+        process.exit(1);
+      }
 
       if (auth && reloginRequired) {
         // The saved session is dead (refresh token lapsed, or rotated away by a
