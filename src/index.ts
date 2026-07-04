@@ -52,6 +52,7 @@ import { locationCommand } from './commands/location.js';
 import { doctorCommand } from './commands/doctor.js';
 import { updateCommand } from './commands/update.js';
 import { relayCommand } from './commands/relay.js';
+import { setupCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { approvalCommand } from './commands/approval.js';
 import { gmailCommand } from './commands/gmail.js';
@@ -128,7 +129,7 @@ program.enablePositionalOptions();
 
 // ── Command groups (logical ordering within each) ──────────────────────
 const commonGroup      = [skillCommand, projectCommand, addCommand, removeCommand, deployCommand];
-const connectGroup     = [claudeCommand, relayCommand];
+const connectGroup     = [claudeCommand, setupCommand, relayCommand];
 const projectGroup     = [domainCommand, statusCommand, initCommand];
 const filesGroup       = [fileCommand, storageCommand, syncCommand, pushCommand, uploadCommand];
 const appBuildingGroup = [testCommand, fnCommand, serviceCommand, secretsCommand, notifyCommand, paymentsCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
@@ -190,6 +191,7 @@ program.configureHelp({
     lines.push(bold('Quick start:'));
     lines.push(`  ${brand('gipity login')}    ${dim('- authenticate first if you haven\'t already')}`);
     lines.push(`  ${brand('gipity init')}     ${dim('- link this dir + write CLAUDE.md/AGENTS.md primers for your AI tool')}`);
+    lines.push(`  ${brand('gipity setup')}    ${dim('- set up this computer as a relay to drive from gipity.ai (no launch)')}`);
     lines.push(`  ${brand('gipity claude')}   ${dim('- or launch Claude Code with Gipity tools wired in')}`);
     lines.push('');
 

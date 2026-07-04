@@ -4,8 +4,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdir
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { resolveCommand, spawnCommand } from '../platform.js';
-import { getAuth, saveAuth, sessionExpired, accessTokenExpired, refreshTokenIfNeeded, type AuthData } from '../auth.js';
-import { get, post, publicPost, ApiError, getAccountSlug } from '../api.js';
+import { getAuth, sessionExpired, accessTokenExpired, refreshTokenIfNeeded } from '../auth.js';
+import { get, post, ApiError, getAccountSlug } from '../api.js';
+import { interactiveLogin } from '../login-flow.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync, type SyncResult } from '../sync.js';
 import { slugify, setupClaudeHooks, ensureGipityPluginInstalled, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
@@ -17,7 +18,7 @@ import {
 } from '../prompts.js';
 import * as relayState from '../relay/state.js';
 import { maybeOfferRelayOn, ensureDaemonRunning } from '../relay/onboarding.js';
-import { prompt, promptBoxed, pickOne, decodeJwtExp, confirm } from '../utils.js';
+import { prompt, promptBoxed, pickOne, confirm } from '../utils.js';
 import { brand, bold, faint, info, success, warning, error as clrError, muted } from '../colors.js';
 import { createProgressReporter } from '../progress.js';
 import { printBanner } from '../banner.js';
@@ -162,33 +163,9 @@ async function buildProjectContextBlock(opts: LocalCtxOpts): Promise<string> {
   return buildProjectContextBlockText({ ...opts, ...stats });
 }
 
-/** Interactive email+code login flow. Used on first login and when the
- *  server returns 401 mid-command (session expired). Writes the new auth
- *  to disk and returns it. */
-async function interactiveLogin(): Promise<AuthData> {
-  const email = await prompt('  Email: ');
-  if (!email) { console.error(`\n  ${clrError('Email required.')}`); process.exit(1); }
-
-  await publicPost('/auth/login', { email });
-  console.log('  Check your email for a 6-digit code.\n');
-
-  const code = await prompt('  Code: ');
-  if (!code) { console.error(`\n  ${clrError('Code required.')}`); process.exit(1); }
-
-  const res = await publicPost<{
-    accessToken: string;
-    refreshToken: string;
-    isNewUser: boolean;
-  }>('/auth/verify', { email, code });
-
-  const exp = decodeJwtExp(res.accessToken);
-  if (!exp) { console.error(`\n  ${clrError('Invalid token received.')}`); process.exit(1); }
-  const expiresAt = new Date(exp * 1000).toISOString();
-
-  saveAuth({ accessToken: res.accessToken, refreshToken: res.refreshToken, email, expiresAt });
-  console.log(`  ${success(`Logged in (${email}).`)}`);
-  return getAuth()!;
-}
+// Interactive email+code login now lives in `login-flow.ts` (shared with
+// `gipity setup`). Used on first login and when the server returns 401
+// mid-command (session expired).
 
 // First-run relay onboarding now lives in `relay/onboarding.ts`
 // (`maybeOfferRelayOn`). `gipity claude` invokes it after project

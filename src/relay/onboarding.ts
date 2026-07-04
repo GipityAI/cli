@@ -1,13 +1,20 @@
 /**
- * One-time first-run relay onboarding. Called from `gipity claude` after
- * auth + project selection. Asks up to four Y/n questions (all default Y);
- * pressing Enter four times leaves the user with a paired + running
- * daemon that auto-starts on every subsequent `gipity claude` invocation,
- * and - if they said yes to the last question - also starts at OS login.
+ * Interactive relay setup — the single flow that pairs this computer as a
+ * relay, starts the daemon, and (optionally) installs the OS login service.
+ * ONE implementation, shared by both entry points:
+ *
+ *   - `gipity claude`  → `maybeOfferRelayOn()`  (mode 'offer-once': runs on the
+ *                        very first launch, then never nags again).
+ *   - `gipity setup`   → `runRelaySetup({ mode: 'run-now' })` (the user asked
+ *                        for it explicitly, so always run — even to re-pair or
+ *                        fix autostart on a machine that already answered).
+ *
+ * All the non-interactive primitives live in `setup.ts` (`pairDevice`,
+ * `startDaemon`, `installAutostart`); this module is only the prompts + copy.
  */
 import { hostname } from 'os';
 import { prompt, confirm } from '../utils.js';
-import { bold, brand, dim, success, error as clrError, muted, info } from '../colors.js';
+import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
 import * as state from './state.js';
 import { UnsupportedPlatformError } from './installers.js';
 import { pairDevice, startDaemon, installAutostart } from './setup.js';
@@ -17,30 +24,54 @@ import { pairDevice, startDaemon, installAutostart } from './setup.js';
  *  keep their import path. */
 export const ensureDaemonRunning = startDaemon;
 
+export interface RelaySetupOpts {
+  /**
+   * `offer-once`  — first-run behavior for `gipity claude`. If the user has
+   *                 already answered (`relay_enabled` is a boolean), this is a
+   *                 no-op beyond ensuring the daemon is running.
+   * `run-now`     — the user ran `gipity setup` on purpose, so always run the
+   *                 full interactive flow regardless of a previous answer.
+   */
+  mode: 'offer-once' | 'run-now';
+}
+
 /**
- * First-run prompt block. Idempotent: if the user has already answered
- * (`relay_enabled` is a boolean), this is a no-op. Non-interactive flows
- * (e.g. `gipity claude -p`) should skip calling this.
+ * Pair this computer as a relay and get it running. Returns `true` if the relay
+ * ended up enabled (or was already), `false` if the user declined or a step
+ * failed. Non-interactive flows (e.g. `gipity claude -p`) must not call this.
  */
-export async function maybeOfferRelayOn(): Promise<void> {
-  if (state.getRelayEnabled() !== undefined) {
-    // Already answered - just ensure the daemon is running if they're opted in.
+export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
+  const alreadyAnswered = state.getRelayEnabled() !== undefined;
+
+  // `gipity claude` first-run: honor the user's prior choice and don't re-ask.
+  if (opts.mode === 'offer-once' && alreadyAnswered) {
     if (state.isRelayEnabled() && !state.isPaused()) ensureDaemonRunning();
-    return;
+    return state.isRelayEnabled();
   }
 
-  console.log(`  ${bold('Remote control of Claude Code')}`);
-  console.log(`  ${dim('Drive this Claude Code from the web (')}${brand('gipity.ai')}${dim(') on any browser (desktop or phone).')}`);
-  console.log('');
-  console.log(`  ${dim('Enable now (takes 2 seconds) or turn on later with')} ${brand('gipity relay install')}`);
+  // Header. `gipity setup` frames it as the deliberate action it is; the
+  // `gipity claude` first-run frames it as an optional add-on it's offering.
+  if (opts.mode === 'run-now') {
+    console.log(`  ${bold('Set up this computer as a relay')}`);
+    console.log(`  ${dim('A relay runs Claude Code (or Codex) here so you can drive it from the web (')}${brand('gipity.ai')}${dim(') on any browser.')}`);
+    console.log(`  ${dim('It uses your Claude or Codex subscription — the cheapest way to pay for tokens.')}`);
+  } else {
+    console.log(`  ${bold('Remote control of Claude Code')}`);
+    console.log(`  ${dim('Drive this Claude Code from the web (')}${brand('gipity.ai')}${dim(') on any browser (desktop or phone).')}`);
+    console.log('');
+    console.log(`  ${dim('Enable now (takes 2 seconds) or turn on later with')} ${brand('gipity setup')}`);
+  }
   console.log('');
 
-  const enable = await confirm('  Enable remote control?', { default: 'yes' });
+  const promptText = opts.mode === 'run-now'
+    ? '  Set up remote control on this computer?'
+    : '  Enable remote control?';
+  const enable = await confirm(promptText, { default: 'yes' });
   if (!enable) {
     state.setRelayEnabled(false);
     console.log(`  ${muted('Skipped.')}`);
     console.log('');
-    return;
+    return false;
   }
 
   // Device name - show hostname as the default; Enter accepts.
@@ -50,7 +81,7 @@ export async function maybeOfferRelayOn(): Promise<void> {
   if (!name || name.length > 100) {
     console.error(`  ${clrError('Device name must be 1–100 non-whitespace characters. Skipping.')}`);
     state.setRelayEnabled(false);
-    return;
+    return false;
   }
 
   // Create the device directly (user-auth, no pair code). `pairDevice` writes
@@ -60,12 +91,12 @@ export async function maybeOfferRelayOn(): Promise<void> {
     device = await pairDevice({ name });
   } catch (err: any) {
     console.error(`\n  ${clrError(`Could not create device: ${err?.message || err}`)}`);
-    console.error(`  ${dim('Skipping for now - we\'ll offer again next time. Or turn it on with `gipity relay install`.')}`);
+    console.error(`  ${dim('Skipping for now - we\'ll offer again next time. Or turn it on with `gipity setup`.')}`);
     // Deliberately DON'T persist relay_enabled here: the user SAID YES, and
     // this is a transient failure (network blip, server down). Leaving the
     // tri-state unset means onboarding re-offers on the next `gipity claude`
     // run instead of silently opting the user out forever.
-    return;
+    return false;
   }
 
   // Start the daemon for this session.
@@ -97,5 +128,14 @@ export async function maybeOfferRelayOn(): Promise<void> {
   console.log(`  ${success(`Registered as ${bold(device.name)} (${device.guid}).`)}`);
   console.log(`  ${dim('In the Gipity web CLI, type `/claude` to dispatch messages to this PC.')}`);
   console.log('');
-  void info;
+  return true;
+}
+
+/**
+ * First-run prompt block for `gipity claude`. Idempotent: if the user has
+ * already answered, this is a no-op (beyond keeping the daemon alive).
+ * Non-interactive flows (e.g. `gipity claude -p`) should skip calling this.
+ */
+export async function maybeOfferRelayOn(): Promise<void> {
+  await runRelaySetup({ mode: 'offer-once' });
 }
