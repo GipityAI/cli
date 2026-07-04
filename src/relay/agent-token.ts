@@ -20,6 +20,12 @@ import { post, del } from '../api.js';
 import { resolveApiBase } from '../config.js';
 import * as state from './state.js';
 
+/** Relay agent tokens carry a finite expiry so an orphaned one - left behind
+ *  when a user deletes ~/.gipity by hand, losing the guid we'd revoke it with -
+ *  self-expires instead of living forever. A live relay is unaffected:
+ *  ensureRelayAgentToken() re-mints on the first 401 after expiry. */
+const RELAY_AGENT_TOKEN_EXPIRY_DAYS = 60;
+
 /** Validate a stored token against the API. Only a definitive 401 counts as
  *  invalid - transient failures (network, 5xx) must not discard a good token
  *  and trigger a re-mint storm. */
@@ -51,7 +57,7 @@ export async function ensureRelayAgentToken(): Promise<string | null> {
     const name = `Relay on ${state.getDevice()?.name ?? hostname()}`;
     const res = await post<{ data: { token: string; shortGuid: string } }>(
       '/auth/agent-tokens',
-      { name },
+      { name, expiresInDays: RELAY_AGENT_TOKEN_EXPIRY_DAYS },
     );
     state.setAgentToken(res.data.token, res.data.shortGuid);
     return res.data.token;
