@@ -5,7 +5,7 @@ import { homedir } from 'os';
 import { getAuth, sessionExpired } from '../auth.js';
 import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
-import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopePluginCurrent } from '../setup.js';
+import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopeInstallState } from '../setup.js';
 
 /** Hooks ship in the Gipity Claude Code plugin now. "Installed" means three
  *  things must all hold: the user-scope settings register the marketplace and
@@ -14,7 +14,7 @@ import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipi
  *  CC >=2.1.x does not materialize a user-scope install from enablement alone -
  *  without it the hooks never load and capture/file-sync silently die, so
  *  reporting "ok" on the declarative keys alone would be a false green. */
-function checkGipityPlugin(): { missing: string[]; ok: boolean } {
+function checkGipityPlugin(): { missing: string[]; ok: boolean; stale: boolean } {
   const path = join(homedir(), '.claude', 'settings.json');
   let settings: any = {};
   if (existsSync(path)) {
@@ -23,8 +23,14 @@ function checkGipityPlugin(): { missing: string[]; ok: boolean } {
   const missing: string[] = [];
   if (!settings?.extraKnownMarketplaces?.[GIPITY_MARKETPLACE_NAME]) missing.push('marketplace');
   if (settings?.enabledPlugins?.[GIPITY_PLUGIN_ID] !== true) missing.push('plugin');
-  if (!userScopePluginCurrent()) missing.push('install');
-  return { missing, ok: missing.length === 0 };
+  const install = userScopeInstallState();
+  if (!install.current) missing.push('install');
+  // "stale" = declaratively enabled AND a user-scope install exists; it's just
+  // behind the version this CLI needs. The hooks still LOAD (at the old
+  // version), so this is a version-lag update, not a dead plugin - don't warn
+  // as if files aren't syncing at all. Only true when `install` is the sole gap.
+  const stale = missing.length === 1 && missing[0] === 'install' && install.exists;
+  return { missing, ok: missing.length === 0, stale };
 }
 
 export const statusCommand = new Command('status')
@@ -84,12 +90,25 @@ export const statusCommand = new Command('status')
         ensureGipityPlugin(true);
         setupClaudeHooks();
         // Re-enabling the declarative keys isn't enough on CC >=2.1.x - also
-        // materialize the user-scope install so the hooks actually load.
+        // materialize (or update) the user-scope install so the hooks load.
         ensureGipityPluginInstalled();
-        console.log(`${muted('Hooks:')}   ${success('repaired - Gipity plugin re-enabled')}`);
+        // Re-check rather than claim success blindly: a stale user-scope
+        // install only advances via `plugin update`, and if `claude` is off
+        // PATH nothing changed at all - reporting "repaired" then would be a
+        // lie the next `gipity status` immediately contradicts.
+        const after = checkGipityPlugin();
+        if (after.ok) {
+          console.log(`${muted('Hooks:')}   ${success('repaired - Gipity plugin enabled')}`);
+        } else {
+          console.log(`${muted('Hooks:')}   ${warning(`repair incomplete (still missing: ${after.missing.join(', ')})`)}`);
+          console.log(muted('Ensure `claude` is on PATH, then re-run. Restart Claude Code to load the update.'));
+        }
+      } else if (hookCheck.stale) {
+        console.log(`${muted('Hooks:')}   ${warning('Gipity plugin out of date (an update is available)')}`);
+        console.log(muted('Hooks still load, but run `gipity status --repair-hooks` to update to the latest.'));
       } else {
         console.log(`${muted('Hooks:')}   ${warning(`Gipity plugin not enabled (missing: ${hookCheck.missing.join(', ')})`)}`);
-        console.log(muted('Run `gipity status --repair-hooks` to re-enable.'));
+        console.log(muted('Run `gipity status --repair-hooks` to enable.'));
         console.log(muted('Without it, files don\'t auto-sync and web CLI dispatches can\'t show Claude Code output.'));
       }
     }

@@ -254,6 +254,31 @@ function versionGte(have: string, want: string): boolean {
   return true;
 }
 
+/** Parsed user-scope install state for the Gipity plugin, read straight from
+ *  installed_plugins.json (no subprocess). `exists` is true when Claude Code
+ *  records ANY user-scope install; `current` narrows that to one at >= the
+ *  version this CLI needs. The two differ exactly when a stale install lags a
+ *  plugin-version bump - the case that must be UPGRADED, not freshly installed
+ *  (a bare `claude plugin install` no-ops on an already-present user install
+ *  and never advances its version). */
+export function userScopeInstallState(): { exists: boolean; current: boolean } {
+  try {
+    const p = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    const data = JSON.parse(readFileSync(p, 'utf-8'));
+    const entries = data?.plugins?.[GIPITY_PLUGIN_ID];
+    if (!Array.isArray(entries)) return { exists: false, current: false };
+    const userEntries = entries.filter((e: any) => e?.scope === 'user');
+    return {
+      exists: userEntries.length > 0,
+      current: userEntries.some(
+        (e: any) => typeof e?.version === 'string' && versionGte(e.version, GIPITY_PLUGIN_VERSION),
+      ),
+    };
+  } catch {
+    return { exists: false, current: false };
+  }
+}
+
 /** True when Claude Code already records a USER-scope install of the Gipity
  *  plugin at >= the version this CLI needs - the common case, letting the
  *  caller skip the (slow) reinstall. Reads installed_plugins.json directly so
@@ -261,20 +286,7 @@ function versionGte(have: string, want: string): boolean {
  *  actually-loaded plugin apart from one that's merely enabled-but-uninstalled
  *  (which would otherwise read as a false-green "hooks enabled"). */
 export function userScopePluginCurrent(): boolean {
-  try {
-    const p = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
-    const data = JSON.parse(readFileSync(p, 'utf-8'));
-    const entries = data?.plugins?.[GIPITY_PLUGIN_ID];
-    if (!Array.isArray(entries)) return false;
-    return entries.some(
-      (e: any) =>
-        e?.scope === 'user' &&
-        typeof e?.version === 'string' &&
-        versionGte(e.version, GIPITY_PLUGIN_VERSION),
-    );
-  } catch {
-    return false;
-  }
+  return userScopeInstallState().current;
 }
 
 function claudeOnPath(): boolean {
@@ -299,20 +311,29 @@ function claudeOnPath(): boolean {
  *  never break `gipity claude`. Skips entirely when the user-scope install is
  *  already current, so it shells out at most once per plugin-version bump. */
 export function ensureGipityPluginInstalled(): void {
-  if (userScopePluginCurrent()) return;
+  const state = userScopeInstallState();
+  if (state.current) return;
   if (!claudeOnPath()) return;
-  // Refresh the marketplace clone so `install` resolves the current version,
-  // then (re)install at user scope - idempotent, and upgrades an older or
-  // project-scoped install to the current one at user scope.
+  // Refresh the marketplace clone so install/update resolves the current version.
   // resolveCommand: on Windows `claude` is a .cmd shim that spawn can't launch
-  // without an explicit path, so resolve it (otherwise the install silently
+  // without an explicit path, so resolve it (otherwise the command silently
   // ENOENTs and the plugin's hooks never land at user scope).
   const claudeCmd = resolveCommand('claude');
   spawnSyncCommand(claudeCmd, ['plugin', 'marketplace', 'update', GIPITY_MARKETPLACE_NAME], {
     stdio: 'ignore',
     timeout: 120_000,
   });
-  spawnSyncCommand(claudeCmd, ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'], {
+  // A bare `plugin install` only materializes a MISSING install - on an
+  // already-present but stale user-scope install (the version this CLI just
+  // bumped past) it no-ops and leaves the old version registered, so
+  // userScopePluginCurrent() stays false forever and `gipity status` reports
+  // `missing: install` on every run. `plugin update` is the command that
+  // actually advances a registered user-scope install to the marketplace's
+  // current version; `install` is only right when nothing is installed yet.
+  const verb = state.exists
+    ? ['plugin', 'update', GIPITY_PLUGIN_ID, '--scope', 'user']
+    : ['plugin', 'install', GIPITY_PLUGIN_ID, '--scope', 'user'];
+  spawnSyncCommand(claudeCmd, verb, {
     stdio: 'ignore',
     timeout: 120_000,
   });

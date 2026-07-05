@@ -21,6 +21,7 @@ import {
   stripGipityHooks,
   isGipityManagedHookCommand,
   userScopePluginCurrent,
+  userScopeInstallState,
   GIPITY_PLUGIN_ID,
   GIPITY_PLUGIN_VERSION,
   GIPITY_MARKETPLACE_NAME,
@@ -299,6 +300,38 @@ test('userScopePluginCurrent is true for a current-or-newer user-scope install',
       { scope: 'user', version: '9.9.9' },
     ]);
     assert.equal(userScopePluginCurrent(), true, 'newer user install wins past a stale project one');
+  });
+});
+
+test('userScopeInstallState separates "exists" from "current" so a stale install upgrades not reinstalls', () => {
+  // No install file: neither exists nor current - the fresh-machine state that
+  // must `plugin install`, not `plugin update`.
+  withTempDirs((_p, _home) => {
+    assert.deepEqual(userScopeInstallState(), { exists: false, current: false });
+  });
+
+  // A user-scope install that lags the required version: the exact regression
+  // that stuck `gipity status` on `missing: install` forever. It EXISTS, so the
+  // fix must `plugin update` it (a bare `install` no-ops on a present install
+  // and never advances the version); it is NOT current, so callers still act.
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [{ scope: 'user', version: '0.1.0' }]);
+    assert.deepEqual(userScopeInstallState(), { exists: true, current: false },
+      'stale user-scope install -> exists but not current');
+  });
+
+  // A project-scoped install does not count as a user-scope install existing:
+  // must still `install --scope user`, not `update`.
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [{ scope: 'project', version: '0.1.0', projectPath: '/x' }]);
+    assert.deepEqual(userScopeInstallState(), { exists: false, current: false },
+      'project scope only -> no user-scope install exists');
+  });
+
+  // Current user-scope install: nothing to do.
+  withTempDirs((_p, home) => {
+    writeInstalledPlugins(home, [{ scope: 'user', version: GIPITY_PLUGIN_VERSION }]);
+    assert.deepEqual(userScopeInstallState(), { exists: true, current: true });
   });
 });
 
