@@ -110,6 +110,7 @@ mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <s
 
 Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` — never hardcode keys), \`gipity email send --to <addr> --subject <s> --body <b>\` (sends as \`gipity@gipity.ai\`; omit \`--to\` to self-send), \`gipity skill read <name>\`.
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
+Move whole apps in/out: \`gipity save\` (export this project as a portable \`.gip\` bundle), \`gipity load <file.gip | github:owner/repo>\` (import as a NEW project; \`--inspect\` to preview), \`gipity github connect\` (1-2 click GitHub access for imports). Porting a Vercel/Replit/Lovable app? Load the \`app-import\` skill first.
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
 Hit a platform bug or friction? File it in real time: \`gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sandbox|other> --severity <S1|S2|S3|S4> --summary "<7 words max>" [--detail "<what failed + workaround>"]\` (see below).
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
@@ -182,6 +183,7 @@ App development skills:
 - \`app-database\` - app Postgres database: migrations, the db helper, transactions, table permissions
 - \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
+- \`app-import\` - import apps from GitHub/.gip bundles (incl. Vercel/Replit/Lovable porting) and export any project as a portable .gip - app_import tool, gipity save/load
 - \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the isolated test DB)
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
 - \`jobs\` - long-running CPU + GPU compute jobs (Python / Node / bash)

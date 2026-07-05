@@ -245,6 +245,66 @@ export async function download(path: string, retried = false): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** Download raw bytes plus the response headers - for binary endpoints whose
+ *  metadata rides headers (e.g. `GET /projects/:guid/export`, where
+ *  `X-Gip-Skipped` and the Content-Disposition filename matter to the caller).
+ *  Non-2xx responses are parsed as standard JSON errors. */
+export async function downloadWithHeaders(
+  path: string,
+  retried = false,
+): Promise<{ buffer: Buffer; headers: Headers }> {
+  const url = `${baseUrl()}${path}`;
+  const res = await fetch(url, {
+    headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
+  });
+
+  if (await shouldRetryAfter401(res.status, retried)) {
+    return downloadWithHeaders(path, true);
+  }
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
+    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
+    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
+  }
+
+  return { buffer: Buffer.from(await res.arrayBuffer()), headers: res.headers };
+}
+
+/** POST raw bytes (e.g. a .gip bundle) and parse the JSON response, returning
+ *  the HTTP status alongside it so callers can tell a clean 201 from a 207
+ *  partial success. The timeout scales with the body size (same policy as the
+ *  presigned PUT path) so a large-but-progressing upload isn't cut off. */
+export async function postBinary<T>(
+  path: string,
+  body: Buffer,
+  contentType = 'application/zip',
+  retried = false,
+): Promise<{ status: number; json: T }> {
+  const url = `${baseUrl()}${path}`;
+  const headers = {
+    ...clientHeaders(),
+    'Authorization': `Bearer ${await bearerToken()}`,
+    'Content-Type': contentType,
+  };
+
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers,
+    body: new Uint8Array(body),
+  }, putTimeoutMs(body.length), `POST ${path}`);
+
+  if (await shouldRetryAfter401(res.status, retried)) {
+    return postBinary<T>(path, body, contentType, true);
+  }
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
+    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
+    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
+  }
+
+  return { status: res.status, json: await res.json() as T };
+}
+
 /** Download a response as a Node.js Readable stream */
 export async function downloadStream(path: string, retried = false): Promise<import('stream').Readable> {
   const { Readable } = await import('stream');
