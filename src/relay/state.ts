@@ -36,6 +36,11 @@ export interface RelayState {
   relay_enabled?: boolean;
   /** True once the first-run onboarding prompt has been shown. */
   onboard_shown?: boolean;
+  /** Tri-state consent for reporting non-PII host/version diagnostics on the
+   *  heartbeat: `undefined` = never asked (treated as on), `true` = opted in,
+   *  `false` = opted out. Default-on; user can decline at setup or later via
+   *  `gipity relay diagnostics off`. See {@link diagnosticsConsented}. */
+  diagnostics_consent?: boolean;
   /** Long-lived gip_at_* agent API token the daemon exports (as GIPITY_TOKEN)
    *  to spawned children (`gipity sync`, `gipity claude -p`). Children then
    *  authenticate statelessly instead of racing sibling processes on the
@@ -68,6 +73,7 @@ export function loadState(): RelayState {
       paused: Boolean(raw.paused),
       relay_enabled: typeof raw.relay_enabled === 'boolean' ? raw.relay_enabled : undefined,
       onboard_shown: Boolean(raw.onboard_shown),
+      diagnostics_consent: typeof raw.diagnostics_consent === 'boolean' ? raw.diagnostics_consent : undefined,
       agent_token: typeof raw.agent_token === 'string' ? raw.agent_token : null,
       agent_token_guid: typeof raw.agent_token_guid === 'string' ? raw.agent_token_guid : null,
     };
@@ -157,6 +163,26 @@ export function isRelayEnabled(): boolean {
 
 export function setRelayEnabled(enabled: boolean): void {
   mutate(s => { s.relay_enabled = enabled; });
+}
+
+// ─── Diagnostics consent (tri-state, default-on) ───────────────────────
+
+/** Stored preference: `undefined` = never asked; `true`/`false` = explicit. */
+export function getDiagnosticsConsent(): boolean | undefined {
+  return loadState().diagnostics_consent;
+}
+
+export function setDiagnosticsConsent(consent: boolean): void {
+  mutate(s => { s.diagnostics_consent = consent; });
+}
+
+/** Effective consent used by the daemon: default-on unless the user explicitly
+ *  opted out OR a headless opt-out env var (GIPITY_NO_DIAGNOSTICS / DO_NOT_TRACK)
+ *  is set. Truthy env value ("1"/"true"/anything non-empty) disables. */
+export function diagnosticsConsented(): boolean {
+  const env = process.env.GIPITY_NO_DIAGNOSTICS ?? process.env.DO_NOT_TRACK;
+  if (env && env !== '0' && env.toLowerCase() !== 'false') return false;
+  return loadState().diagnostics_consent !== false;
 }
 
 // ─── Daemon PID file (lives at ~/.gipity/relay.pid) ────────────────────

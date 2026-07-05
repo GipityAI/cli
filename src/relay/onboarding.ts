@@ -124,6 +124,18 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
     }
   }
 
+  // Diagnostics consent - default on, clearly opt-out. Only ask once.
+  if (state.getDiagnosticsConsent() === undefined) {
+    const diag = await confirm(
+      '  Share anonymous diagnostics (CPU/GPU/memory/disk/versions) to improve reliability?',
+      { default: 'yes' },
+    );
+    state.setDiagnosticsConsent(diag);
+    console.log(`  ${dim(diag
+      ? 'Thanks - no personal data or file paths are ever sent. Turn off anytime with `gipity relay diagnostics off`.'
+      : 'Diagnostics off. Turn on anytime with `gipity relay diagnostics on`.')}`);
+  }
+
   console.log('');
   console.log(`  ${success(`Registered as ${bold(device.name)} (${device.guid}).`)}`);
   console.log(`  ${dim('In the Gipity web CLI, type `/claude` to dispatch messages to this PC.')}`);

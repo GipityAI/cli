@@ -24,7 +24,7 @@ export interface ClientContext {
   ci?: boolean;
 }
 
-function cliVersion(): string {
+export function cliVersion(): string {
   try {
     const dir = dirname(fileURLToPath(import.meta.url));
     const pkg = JSON.parse(readFileSync(resolve(dir, '../package.json'), 'utf-8'));

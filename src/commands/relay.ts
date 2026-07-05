@@ -223,6 +223,37 @@ relayCommand
     console.log(success('Resumed.'));
   });
 
+// ─── gipity relay diagnostics [on|off] ─────────────────────────────────
+
+relayCommand
+  .command('diagnostics [state]')
+  .description('View or set sharing of anonymous host/version diagnostics (on|off)')
+  .action((arg?: string) => {
+    if (arg === undefined) {
+      const stored = state.getDiagnosticsConsent();
+      const effective = state.diagnosticsConsented();
+      const label = stored === undefined ? 'on (default, not yet chosen)' : stored ? 'on' : 'off';
+      console.log(`Diagnostics sharing: ${effective ? success(label) : muted(label)}`);
+      if (effective !== (stored !== false)) {
+        console.log(muted('  (overridden off by GIPITY_NO_DIAGNOSTICS / DO_NOT_TRACK)'));
+      }
+      console.log(muted('  Non-PII only: CPU/GPU/memory/disk specs, OS + tool versions. No file paths, hostname, or username.'));
+      console.log(muted('  Set with `gipity relay diagnostics on` / `gipity relay diagnostics off`.'));
+      return;
+    }
+    const on = /^(on|true|yes|1|enable)$/i.test(arg);
+    const off = /^(off|false|no|0|disable)$/i.test(arg);
+    if (!on && !off) {
+      console.log(clrError("Expected 'on' or 'off'."));
+      process.exitCode = 1;
+      return;
+    }
+    state.setDiagnosticsConsent(on);
+    console.log(on
+      ? `${success('Diagnostics sharing on.')} ${muted('Reported on the next daily heartbeat.')}`
+      : `${success('Diagnostics sharing off.')} ${muted('No host/version data will be sent.')}`);
+  });
+
 // ─── gipity relay rename <name> ────────────────────────────────────────
 
 relayCommand

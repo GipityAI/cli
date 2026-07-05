@@ -31,6 +31,9 @@ let apiBase: string;
 // Queue of dispatches the /next handler will hand out in order.
 let pending: Dispatch[] = [];
 let heartbeats = 0;
+// Most recent heartbeat body that carried a diagnostics snapshot (the daily
+// refresh tick). Bare 60s pings send `{}` and leave this untouched.
+let lastDiagnosticsBody: any = null;
 const acks: Array<{ guid: string; status: string; error?: string | null }> = [];
 let nextStatusOverride: number | null = null;
 let heartbeatStatusOverride: number | null = null;
@@ -44,6 +47,7 @@ async function readJson(req: IncomingMessage): Promise<any> {
 function resetMock(): void {
   pending = [];
   heartbeats = 0;
+  lastDiagnosticsBody = null;
   acks.length = 0;
   nextStatusOverride = null;
   heartbeatStatusOverride = null;
@@ -61,6 +65,8 @@ before(async () => {
 
     if (req.method === 'POST' && url === '/remote-devices/heartbeat') {
       heartbeats++;
+      const hb = await readJson(req).catch(() => ({}));
+      if (hb && hb.diagnostics) lastDiagnosticsBody = hb;
       if (heartbeatStatusOverride != null) {
         res.statusCode = heartbeatStatusOverride;
         return res.end(JSON.stringify({ error: { code: 'X', message: 'override' } }));
@@ -207,6 +213,44 @@ describe('daemon: dispatch happy path', () => {
     assert.equal(acks[0].guid, 'rds_abc123');
     assert.equal(acks[0].status, 'done');
     assert.ok(heartbeats >= 1, 'should have heartbeated at least once');
+  });
+
+  it('sends a diagnostics snapshot on the first heartbeat (consent defaults on)', async () => {
+    resetMock();
+    const { home } = freshHome();
+
+    await runDaemon(home, 'true');
+
+    assert.ok(lastDiagnosticsBody, 'a heartbeat should have carried a diagnostics snapshot');
+    const d = lastDiagnosticsBody.diagnostics;
+    assert.equal(typeof d.gipity_version, 'string', 'diagnostics.gipity_version should be present');
+    assert.equal(d.os?.platform, process.platform, 'diagnostics.os.platform should match the host');
+    assert.ok((d.cpu?.count ?? 0) > 0, 'diagnostics.cpu.count should be a positive core count');
+  });
+
+  it('sends NO diagnostics when the user has opted out', async () => {
+    resetMock();
+    const { home } = freshHome();
+
+    await runCliAsync(
+      ['--api-base', apiBase, 'relay', 'run'],
+      {
+        env: {
+          HOME: home,
+          GIPITY_RELAY_CLAUDE_CMD: 'true',
+          GIPITY_RELAY_HEARTBEAT_MS: '150',
+          GIPITY_RELAY_POLL_TIMEOUT_MS: '300',
+          GIPITY_RELAY_MAX_RUN_MS: '1500',
+          // Headless opt-out gate honored by state.diagnosticsConsented().
+          GIPITY_NO_DIAGNOSTICS: '1',
+        },
+        cwd: home,
+        timeout: 10_000,
+      },
+    );
+
+    assert.ok(heartbeats >= 1, 'should still send bare liveness heartbeats');
+    assert.equal(lastDiagnosticsBody, null, 'opted-out relay must not send diagnostics');
   });
 
   it('acks error when the child exits nonzero', async () => {

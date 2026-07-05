@@ -47,6 +47,7 @@ import { deviceFetch, bridgeAbort as bridgeAbortImpl } from './device-http.js';
 import { ensureRelayAgentToken } from './agent-token.js';
 import { redactEntries, redactString, normalizeSecrets } from './redact.js';
 import { getMachineId } from './machine-id.js';
+import { collectDiagnostics } from './diagnostics.js';
 
 // Re-exported so the existing `relay-bridge-abort.test.ts` keeps working.
 // New callers should import from device-http.js directly.
@@ -60,6 +61,10 @@ export const RELAY_LOG_PATH = join(homedir(), '.gipity', 'relay.log');
 // slightly after its own deadline; we accept that. Values can be overridden
 // by env for tests.
 const HEARTBEAT_INTERVAL_MS   = parseInt(process.env.GIPITY_RELAY_HEARTBEAT_MS || '60000', 10);
+// How often the heartbeat carries a fresh diagnostics snapshot (host specs +
+// versions). The 60s liveness ping stays bare; only this cadence runs the
+// costlier version/GPU probes. First tick fires immediately at daemon start.
+const DIAGNOSTICS_INTERVAL_MS = parseInt(process.env.GIPITY_RELAY_DIAGNOSTICS_MS || String(24 * 60 * 60 * 1000), 10);
 const LONG_POLL_TIMEOUT_MS    = parseInt(process.env.GIPITY_RELAY_POLL_TIMEOUT_MS || '35000', 10);
 const BACKOFF_BASE_MS         = parseInt(process.env.GIPITY_RELAY_BACKOFF_BASE_MS || '1000', 10);
 const BACKOFF_MAX_MS          = parseInt(process.env.GIPITY_RELAY_BACKOFF_MAX_MS || '30000', 10);
@@ -339,9 +344,23 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
   // Log the "session expired" warning only on the transition into that state,
   // not every 60s, so a genuinely-lapsed session doesn't spam the relay log.
   let sessionWarnLogged = false;
+  // Diagnostics: attach a fresh snapshot on the first heartbeat and every
+  // DIAGNOSTICS_INTERVAL_MS after, but only if the user consented. Between
+  // refreshes the heartbeat is a bare liveness ping.
+  let lastDiagnosticsAt = 0;
   while (!ctx.abort.signal.aborted) {
     try {
-      const r = await deviceFetch('POST', '/remote-devices/heartbeat', {}, 10_000, ctx.abort.signal);
+      let body: Record<string, unknown> = {};
+      if (state.diagnosticsConsented() && Date.now() - lastDiagnosticsAt >= DIAGNOSTICS_INTERVAL_MS) {
+        try {
+          body = { diagnostics: await collectDiagnostics() };
+          lastDiagnosticsAt = Date.now();
+        } catch (err: any) {
+          // Never let a diagnostics probe failure block the liveness ping.
+          log('debug', 'diagnostics collection failed', { err: err?.message });
+        }
+      }
+      const r = await deviceFetch('POST', '/remote-devices/heartbeat', body, 10_000, ctx.abort.signal);
       if (r.status === 401) {
         log('warn', 'heartbeat 401 - device revoked, exiting clean');
         ctx.abort.abort('revoked');
