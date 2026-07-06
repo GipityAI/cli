@@ -12,6 +12,7 @@
  * All the non-interactive primitives live in `setup.ts` (`pairDevice`,
  * `startDaemon`, `installAutostart`); this module is only the prompts + copy.
  */
+import { readFileSync } from 'node:fs';
 import { hostname } from 'os';
 import { prompt, confirm } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
@@ -40,6 +41,19 @@ export interface RelaySetupOpts {
  * ended up enabled (or was already), `false` if the user declined or a step
  * failed. Non-interactive flows (e.g. `gipity claude -p`) must not call this.
  */
+/** True inside Windows Subsystem for Linux (either env marker or kernel
+ *  string). Used to explain autostart failures accurately - WSL ships without
+ *  a systemd user session unless the user opts in via /etc/wsl.conf. */
+function isWsl(): boolean {
+  if (process.platform !== 'linux') return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
+  try {
+    return /microsoft/i.test(readFileSync('/proc/version', 'utf-8'));
+  } catch {
+    return false;
+  }
+}
+
 export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   const alreadyAnswered = state.getRelayEnabled() !== undefined;
 
@@ -111,7 +125,17 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
     try {
       const res = installAutostart();
       if (!res.ok) {
-        console.log(`  ${muted('Autostart install returned non-zero - you can run')} ${brand('gipity relay install')} ${muted('later.')}`);
+        if (isWsl()) {
+          // WSL: `systemctl --user` fails unless systemd is enabled in
+          // /etc/wsl.conf, so name the actual cause + the fix instead of a
+          // generic non-zero. The relay itself is unaffected (it's already
+          // running this session, and `gipity claude` restarts it).
+          console.log(`  ${muted('Auto-start needs systemd, which this WSL distro has off. The relay still runs -')}`);
+          console.log(`  ${muted('it started just now and `gipity claude` restarts it. For boot-time auto-start:')}`);
+          console.log(`  ${muted('add [boot] systemd=true to /etc/wsl.conf, restart WSL, then run')} ${brand('gipity relay install')}${muted('.')}`);
+        } else {
+          console.log(`  ${muted('Autostart install returned non-zero - you can run')} ${brand('gipity relay install')} ${muted('later.')}`);
+        }
       } else {
         console.log(`  ${success('Auto-start installed.')} ${dim(res.summary)}`);
       }

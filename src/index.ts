@@ -147,8 +147,8 @@ const connectGroup   = [loginCommand, logoutCommand, claudeCommand, setupCommand
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Start here',        cmds: startGroup },
-  { title: 'Build & ship',      cmds: buildGroup },
-  { title: 'Backend',           cmds: backendGroup },
+  { title: 'App build & ship',  cmds: buildGroup },
+  { title: 'App backend',       cmds: backendGroup },
   { title: 'App services',      cmds: servicesGroup },
   { title: 'Files',             cmds: filesGroup },
   { title: 'Gip (cloud agent)', cmds: gipGroup },

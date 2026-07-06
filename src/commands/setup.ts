@@ -21,7 +21,7 @@ export const setupCommand = new Command('setup')
   .description('Set up this computer as a relay (no project, no launch)')
   .action(async () => {
     try {
-      console.log('');
+      // Leading blank comes from the central output frame (installOutputFrame).
       console.log(`  ${bold('Gipity setup')} ${muted('- get this computer ready as a relay')}`);
       console.log('');
 
