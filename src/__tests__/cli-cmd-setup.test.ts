@@ -38,9 +38,9 @@ test('gipity setup --help describes the relay-only setup', async () => {
   assert.match(r.stdout, /Set up this computer as a relay/);
 });
 
-test('gipity --help lists setup in the Connect group', async () => {
+test('gipity --help lists setup in the Connect & setup group', async () => {
   const home = makeAuthedHome();
   const r = await run(['--help'], home);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Connect:[\s\S]*\bsetup\b/);
+  assert.match(r.stdout, /Connect & setup:[\s\S]*\bsetup\b/);
 });

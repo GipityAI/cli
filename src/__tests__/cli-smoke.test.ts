@@ -27,7 +27,7 @@ describe('cli-smoke: --version and --help', () => {
     // Cross-agent positioning line surfaces in top-level help.
     assert.match(out, /no MCP server needed/);
 
-    const sections = ['Common:', 'Connect:', 'Project:', 'Files:', 'App building:', 'Utilities:', 'Agent:', 'Setup:'];
+    const sections = ['Start here:', 'Build & ship:', 'Backend:', 'App services:', 'Files:', 'Gip (cloud agent):', 'Utilities:', 'Connect & setup:'];
     let lastIdx = -1;
     for (const s of sections) {
       const idx = out.indexOf(s);
@@ -37,9 +37,9 @@ describe('cli-smoke: --version and --help', () => {
     }
   });
 
-  it('--help lists doctor and update under Setup', () => {
+  it('--help lists doctor and update under Connect & setup', () => {
     const r = runCli(['--help']);
-    const setup = r.stdout.split('Setup:')[1] ?? '';
+    const setup = r.stdout.split('Connect & setup:')[1] ?? '';
     assert.match(setup, /\bdoctor\b/);
     assert.match(setup, /\bupdate\b/);
   });
