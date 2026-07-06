@@ -41,13 +41,21 @@ test('gipity project <name> switches to that project', async () => {
   assert.match(r.stdout, /Switched to Beta/);
 });
 
-test('gipity project rename PUTs new name', async () => {
+test('gipity project rename <name> PUTs the current project', async () => {
   mock.reset();
-  mock.on('GET /projects', { body: { data: [PROJ_A, PROJ_B], totalCount: 2 } });
   mock.on('PUT /projects/p_ProjA00n0', { body: { data: { ...PROJ_A, name: 'AlphaRenamed' } } });
-  const r = await inProject(['project', 'rename', 'alpha', 'AlphaRenamed']);
+  const r = await inProject(['project', 'rename', 'AlphaRenamed']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Renamed.*AlphaRenamed/);
+});
+
+test('gipity project rename --project <target> resolves and PUTs that project', async () => {
+  mock.reset();
+  mock.on('GET /projects', { body: { data: [PROJ_A, PROJ_B], totalCount: 2 } });
+  mock.on('PUT /projects/p_ProjB00n0', { body: { data: { ...PROJ_B, name: 'BetaRenamed' } } });
+  const r = await inProject(['project', 'rename', '--project', 'beta', 'BetaRenamed']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Renamed.*BetaRenamed/);
 });
 
 test('gipity project info shows fields from /projects/:guid', async () => {

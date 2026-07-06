@@ -55,6 +55,32 @@ export const projectCommand = new Command('project')
   }));
 
 projectCommand
+  .command('rename <name...>')
+  .description('Rename the current project (display name only; slug and URLs unchanged)')
+  .option('--project <target>', 'Project name, slug, or guid to rename (defaults to the current project)')
+  .option('--json', 'Output as JSON')
+  .action((nameParts: string[], opts) => run('Rename', async () => {
+    const name = nameParts.join(' ');
+    const config = requireConfig();
+    let guid = config.projectGuid;
+    if (opts.project) {
+      const res = await get<{ data: ProjectData[]; totalCount: number }>('/projects?limit=1000');
+      const match = res.data.find(p => p.slug === opts.project || p.name === opts.project || p.short_guid === opts.project);
+      if (!match) {
+        console.error(clrError(`Project "${opts.project}" not found.`));
+        process.exit(1);
+      }
+      guid = match.short_guid;
+    }
+    if (!guid) {
+      console.error(clrError('No current project. Link one first, or pass --project <name>.'));
+      process.exit(1);
+    }
+    await put(`/projects/${guid}`, { name });
+    printResult(success(`Renamed project → "${name}".`), opts, { guid, name });
+  }));
+
+projectCommand
   .command('create <name>')
   .description('Create a project')
   .option('--slug <slug>', 'Project slug')
@@ -157,21 +183,6 @@ projectCommand
     }
     await del(`/projects/${match.short_guid}`);
     printResult(`Deleted "${match.name}".`, opts, { deleted: match.slug });
-  }));
-
-projectCommand
-  .command('rename <name> <new-name>')
-  .description('Rename a project')
-  .option('--json', 'Output as JSON')
-  .action((name: string, newName: string, opts) => run('Rename', async () => {
-    const res = await get<{ data: ProjectData[] }>('/projects?limit=1000');
-    const match = res.data.find(p => p.slug === name || p.name === name || p.short_guid === name);
-    if (!match) {
-      console.error(clrError(`Project "${name}" not found.`));
-      process.exit(1);
-    }
-    await put(`/projects/${match.short_guid}`, { name: newName });
-    printResult(`Renamed "${match.name}" → "${newName}".`, opts, { renamed: match.slug, from: match.name, to: newName });
   }));
 
 projectCommand

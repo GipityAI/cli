@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
-import { resolveProjectContext, saveConfig } from '../config.js';
+import { resolveProjectContext, requireConfig, saveConfig } from '../config.js';
 import { sync } from '../sync.js';
 import { error as clrError, muted, success } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
@@ -134,13 +134,19 @@ chatCommand
   }));
 
 chatCommand
-  .command('rename <guid> <title...>')
-  .description('Rename a chat')
+  .command('rename <title...>')
+  .description('Rename a chat (the current chat by default; changes the tab title only)')
+  .option('--guid <guid>', 'Chat guid to rename (defaults to the current chat)')
   .option('--json', 'Output as JSON')
-  .action((guid: string, titleParts: string[], opts) => run('Rename', async () => {
+  .action((titleParts: string[], opts) => run('Rename', async () => {
     const title = titleParts.join(' ');
+    const guid = opts.guid || requireConfig().conversationGuid;
+    if (!guid) {
+      console.error(clrError('No current chat. Start a chat first, or pass --guid <guid>.'));
+      process.exit(1);
+    }
     await put(`/conversations/${guid}`, { title });
-    printResult(success(`Renamed ${guid} → "${title}".`), opts, { guid, title });
+    printResult(success(`Renamed chat → "${title}".`), opts, { guid, title });
   }));
 
 chatCommand

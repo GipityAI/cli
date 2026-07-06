@@ -48,12 +48,19 @@ test('gipity chat list shows recent conversations', async () => {
   assert.match(r.stdout, /\(untitled\)/);
 });
 
-test('gipity chat rename <guid> <title> sends PUT and prints renamed', async () => {
+test('gipity chat rename --guid <guid> <title> sends PUT and prints renamed', async () => {
   mock.reset();
   mock.on('PUT /conversations/c_Conv00001', { body: { data: { renamed: true } } });
-  const r = await fresh(['chat', 'rename', 'c_Conv00001', 'New', 'title']);
+  const r = await fresh(['chat', 'rename', '--guid', 'c_Conv00001', 'New', 'title']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Renamed c_Conv00001/);
+  assert.match(r.stdout, /Renamed chat/);
+});
+
+test('gipity chat rename with no current chat and no --guid errors', async () => {
+  mock.reset();
+  const r = await fresh(['chat', 'rename', 'New', 'title']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /No current chat/);
 });
 
 test('gipity chat archive <guid> sends PUT', async () => {
