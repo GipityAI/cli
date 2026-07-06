@@ -10,7 +10,7 @@ import { confirm } from '../utils.js';
 // Records API is the only records surface that exists server-side; there is no
 // /projects/<guid>/records mirror.)
 export const recordsCommand = new Command('records')
-  .description('Manage records');
+  .description('Manage records-kit data (registry-driven CRUD)');
 
 recordsCommand
   .command('list')

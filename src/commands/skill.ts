@@ -29,7 +29,7 @@ interface SkillDetail extends SkillSummary {
 }
 
 export const skillCommand = new Command('skill')
-  .description('Read platform docs');
+  .description('Task docs - read the matching skill before building');
 
 skillCommand
   .command('list')

@@ -130,26 +130,57 @@ const program = new Command();
 // --from Y`). enablePositionalOptions draws the boundary at the first command.
 program.enablePositionalOptions();
 
-// ── Command groups (logical ordering within each) ──────────────────────
-const commonGroup      = [skillCommand, projectCommand, addCommand, removeCommand, saveCommand, loadCommand, deployCommand];
-const connectGroup     = [claudeCommand, setupCommand, relayCommand];
-const projectGroup     = [domainCommand, statusCommand, initCommand];
-const filesGroup       = [fileCommand, storageCommand, syncCommand, pushCommand, uploadCommand];
-const appBuildingGroup = [testCommand, fnCommand, serviceCommand, secretsCommand, notifyCommand, paymentsCommand, githubCommand, jobCommand, dbCommand, logsCommand, workflowCommand, realtimeCommand, rbacCommand, auditCommand, recordsCommand];
-const utilitiesGroup   = [pageCommand, sandboxCommand, generateCommand, emailCommand, gmailCommand, locationCommand, textCommand];
-const agentGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, bugCommand];
-const setupGroup       = [loginCommand, logoutCommand, tokenCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
+// ── Command groups (lifecycle order; logical ordering within each) ─────
+// Section names deliberately match the vocabulary of the generated CLAUDE.md
+// primer and the skill docs ("build loop: add → edit → deploy → page
+// inspect"), so an agent's first `--help` reads in the same terms as the rest
+// of its context. Humans get the same win: sections follow the order you
+// actually use them - orient, build, wire the backend, then everything else.
+const startGroup     = [statusCommand, initCommand, skillCommand, projectCommand];
+const buildGroup     = [addCommand, removeCommand, saveCommand, loadCommand, deployCommand, pageCommand, testCommand];
+const backendGroup   = [dbCommand, fnCommand, secretsCommand, logsCommand, jobCommand, workflowCommand];
+const servicesGroup  = [serviceCommand, generateCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
+const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
+const gipGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, gmailCommand];
+const utilitiesGroup = [sandboxCommand, emailCommand, locationCommand, textCommand, bugCommand];
+const connectGroup   = [loginCommand, logoutCommand, claudeCommand, setupCommand, relayCommand, githubCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
-  { title: 'Common',       cmds: commonGroup },
-  { title: 'Connect',      cmds: connectGroup },
-  { title: 'Project',      cmds: projectGroup },
-  { title: 'Files',        cmds: filesGroup },
-  { title: 'App building', cmds: appBuildingGroup },
-  { title: 'Utilities',    cmds: utilitiesGroup },
-  { title: 'Agent',        cmds: agentGroup },
-  { title: 'Setup',        cmds: setupGroup },
+  { title: 'Start here',        cmds: startGroup },
+  { title: 'Build & ship',      cmds: buildGroup },
+  { title: 'Backend',           cmds: backendGroup },
+  { title: 'App services',      cmds: servicesGroup },
+  { title: 'Files',             cmds: filesGroup },
+  { title: 'Gip (cloud agent)', cmds: gipGroup },
+  { title: 'Utilities',         cmds: utilitiesGroup },
+  { title: 'Connect & setup',   cmds: connectGroup },
 ];
+
+// Per-command deep-docs cross-links, rendered as a "Docs:" epilog on each
+// command's --help AND carried in the `help --json` manifest. This is the
+// bridge agents actually need - from "found the command" to "know the API
+// pattern" - without duplicating skill content in help text (skills stay the
+// single source of truth; this maps names only). Keys must be real skill
+// names (`gipity skill list`).
+const SKILL_DOCS: Record<string, string> = {
+  save: 'app-import',
+  load: 'app-import',
+  github: 'app-import',
+  deploy: 'deploy',
+  page: 'app-debugging',
+  test: 'app-testing',
+  db: 'app-database',
+  fn: 'app-development',
+  service: 'service-call',
+  notify: 'app-notify',
+  payments: 'app-payments',
+  realtime: 'app-realtime',
+  job: 'jobs',
+  sandbox: 'sandbox-tools',
+  gmail: 'google-services',
+  email: 'email',
+  location: 'location',
+};
 
 program
   .name('gipity')
@@ -221,6 +252,7 @@ program.configureHelp({
     }
 
     lines.push(dim(`Run "${cmd.name()} <command> --help" for details on a specific command.`));
+    lines.push(dim(`Deep docs: "${cmd.name()} skill list". Machine-readable manifest: "${cmd.name()} help --json".`));
     lines.push('');
     return lines.join('\n');
   },
@@ -228,8 +260,76 @@ program.configureHelp({
 
 for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
   configureHelp(cmd);
+  // "Docs:" epilog bridging this command's --help to its skill doc.
+  const skill = SKILL_DOCS[cmd.name()];
+  if (skill) cmd.addHelpText('after', `Docs: gipity skill read ${skill}\n`);
   program.addCommand(cmd);
 }
+
+// ── `gipity help [command]` + `help --json` machine-readable manifest ───
+// The JSON manifest is generated from the SAME commander registry that
+// renders human help, so it cannot drift: name, args, options, subcommands,
+// group, and the skill cross-link per command. Meant for agents and tooling
+// that want the full surface in one parseable shot instead of N --help calls.
+program.helpCommand(false); // replace the builtin so we can add --json
+interface ManifestOption { flags: string; description: string }
+interface ManifestCommand {
+  name: string;
+  aliases: string[];
+  description: string;
+  usage: string;
+  args: Array<{ name: string; required: boolean; description: string }>;
+  options: ManifestOption[];
+  subcommands: ManifestCommand[];
+  skill: string | null;
+}
+function manifestCommand(c: Command): ManifestCommand {
+  return {
+    name: c.name(),
+    aliases: c.aliases().slice(),
+    description: c.description(),
+    usage: `gipity ${fullCommandPath(c)} ${c.usage()}`.trim(),
+    args: c.registeredArguments.map(a => ({
+      name: a.name(),
+      required: a.required,
+      description: a.description || '',
+    })),
+    options: c.options.filter(o => !o.hidden).map(o => ({ flags: o.flags, description: o.description })),
+    subcommands: c.commands.filter(sc => !(sc as Command & { _hidden?: boolean })._hidden).map(manifestCommand),
+    skill: SKILL_DOCS[c.name()] ?? null,
+  };
+}
+function fullCommandPath(c: Command): string {
+  const parts: string[] = [];
+  for (let cur: Command | null = c; cur && cur.parent; cur = cur.parent) parts.unshift(cur.name());
+  return parts.join(' ');
+}
+program.addCommand(
+  new Command('help')
+    .description('Show help; --json emits the full command manifest for agents/tools')
+    .argument('[command]', 'Show help for this command')
+    .option('--json', 'Output every command (args, options, subcommands, docs links) as JSON')
+    .action((name: string | undefined, opts: { json?: boolean }) => {
+      if (opts.json) {
+        const manifest = {
+          name: 'gipity',
+          version: pkg.version,
+          docs: 'Run `gipity skill list` for deep task docs; each command may carry a `skill` cross-link.',
+          sections: HELP_SECTIONS.map(s => ({
+            title: s.title,
+            commands: s.cmds.map(manifestCommand),
+          })),
+        };
+        console.log(JSON.stringify(manifest, null, 2));
+        return;
+      }
+      if (name) {
+        const target = program.commands.find(c => c.name() === name || c.aliases().includes(name));
+        if (target) target.help();
+      }
+      program.help();
+    }),
+);
 
 // ── Malformed invocation → print the command's help inline, error LAST ──
 // When an agent guesses the wrong shape (excess args, unknown command/option,
