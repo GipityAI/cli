@@ -46,6 +46,37 @@ function removeGipityPluginConfig(): boolean {
   return changed;
 }
 
+/** The install.sh / install.ps1 launcher appends a line to the user's shell rc
+ *  files putting ~/.gipity/launcher/bin on PATH. Once ~/.gipity is deleted that
+ *  line points at nothing, so strip it back out - matched by the installer's own
+ *  marker comment and the launcher bin path. Unix shells only; on Windows the
+ *  installer edits the user PATH env var, which we leave untouched. Returns the
+ *  rc files we actually changed. */
+function removeInstallerPathLines(): string[] {
+  if (osPlatform() === 'win32') return [];
+  const marker = '# Added by the Gipity installer';
+  const touched: string[] = [];
+  for (const name of ['.bashrc', '.zshrc', '.profile']) {
+    const rc = join(homedir(), name);
+    if (!existsSync(rc)) continue;
+    let text: string;
+    try { text = readFileSync(rc, 'utf-8'); } catch { continue; }
+    const lines = text.split('\n');
+    const kept = lines.filter(
+      (line) => line.trim() !== marker && !line.includes('.gipity/launcher/bin'),
+    );
+    if (kept.length === lines.length) continue;
+    try { writeFileSync(rc, kept.join('\n')); touched.push(rc); } catch { /* ignore */ }
+  }
+  return touched;
+}
+
+/** Render an absolute path under $HOME back to ~ for display. */
+function tildify(p: string): string {
+  const home = homedir();
+  return p === home || p.startsWith(home + '/') ? '~' + p.slice(home.length) : p;
+}
+
 function resolveCliPath(): string {
   return resolve(process.argv[1] ?? 'gipity');
 }
@@ -110,15 +141,27 @@ export const uninstallCommand = new Command('uninstall')
   .action(async (opts: { yes?: boolean }) => {
     const autoYes = opts.yes || getAutoConfirm();
     const gipityDir = join(homedir(), '.gipity');
+    // Installs from install.sh / install.ps1 keep the launcher binary itself
+    // under ~/.gipity/launcher/bin, so wiping ~/.gipity removes the binary too -
+    // the only leftover is the PATH line the installer added to the shell rc
+    // files (cleaned up below). An npm-global install instead leaves the binary
+    // in npm's bin dir, which the user removes with `npm uninstall -g gipity`.
+    const launcherBin = join(gipityDir, 'launcher', 'bin', 'gipity');
+    const installedViaLauncher = existsSync(launcherBin);
 
     console.log(`${bold('Gipity uninstall')} - this will:`);
     console.log(`• Stop the running relay daemon (if any)`);
     console.log(`• Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
     console.log(`• Revoke this device on the server (best-effort)`);
     console.log(`• Remove the Gipity Claude Code plugin enablement (all Gipity hooks)`);
-    console.log(`• Delete ${gipityDir}/`);
+    console.log(`• Delete ${gipityDir}/${installedViaLauncher ? dim(' (includes the gipity launcher binary itself)') : ''}`);
+    if (installedViaLauncher) console.log(`• Remove the launcher PATH line from your shell startup files`);
     console.log('');
-    console.log(`${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
+    if (installedViaLauncher) {
+      console.log(`${dim('The `gipity` launcher lives under ~/.gipity, so this removes the binary too - no separate `npm uninstall` needed.')}`);
+    } else {
+      console.log(`${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
+    }
     console.log('');
 
     if (!autoYes) {
@@ -162,7 +205,22 @@ export const uninstallCommand = new Command('uninstall')
       console.log(`${muted(`${gipityDir}/ already gone.`)}`);
     }
 
+    // 6. Strip the launcher PATH line the installer added to shell rc files, so
+    //    we don't leave a dangling entry pointing at the dir we just deleted.
+    const touchedRc = removeInstallerPathLines();
+    if (touchedRc.length) {
+      console.log(`${success('Removed the launcher PATH line from')} ${dim(touchedRc.map(tildify).join(', '))}`);
+    }
+
     console.log('');
-    console.log(`${success('Uninstall complete.')} ${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the binary too.')}`);
-    console.log(`${dim('Then run')} ${brand('hash -r')} ${dim('(or open a new shell) - your shell caches the old binary path, and a reinstall may place it elsewhere.')}`);
+    console.log(`${success('Uninstall complete.')}`);
+    if (installedViaLauncher) {
+      console.log(`${dim('The launcher binary was under ~/.gipity and is now gone - nothing left to remove.')}`);
+    } else {
+      console.log(`${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the `gipity` binary too.')}`);
+    }
+    // The current shell caches the removed binary's path in its command hash, so
+    // the next `gipity` here reports "No such file or directory" until it's
+    // cleared. A new terminal always fixes it; `hash -r` fixes this one.
+    console.log(`${dim('Open a new terminal - or run')} ${brand('hash -r')} ${dim('in this one - so your shell forgets the removed binary’s path.')}`);
   });
