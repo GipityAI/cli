@@ -10,6 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { makeAuthedHome } from './helpers/test-home.js';
 
@@ -29,6 +31,32 @@ test('gipity setup (authed, non-TTY) logs in, offers relay setup, and stops with
   // Non-TTY declines the confirm, so nothing is paired and Claude never launches.
   assert.match(r.stdout, /No relay set up/);
   assert.doesNotMatch(r.stdout, /Launching Claude Code/);
+});
+
+test('gipity setup (already registered) surfaces the existing device and points at revoke instead of silently re-registering', async () => {
+  const home = makeAuthedHome();
+  // Seed an already-paired device. `paused: true` keeps the guard from spawning
+  // a background daemon, so the test stays hermetic (no network, no stray proc).
+  writeFileSync(join(home, '.gipity', 'relay.json'), JSON.stringify({
+    device: {
+      guid: 'rd_Existing1', name: 'SignalOrangeXps', platform: 'win32',
+      token: 'tok-x', paired_at: '2026-05-01T00:00:00Z',
+    },
+    paused: true,
+    relay_enabled: true,
+  }) + '\n');
+
+  const r = await run(['setup'], home);
+  assert.equal(r.status, 0, r.stderr);
+  // Names the existing registration honestly (this was the bug: it used to
+  // ask for a new name, ignore it, and report the old one as if freshly set).
+  assert.match(r.stdout, /already set up as a relay/i);
+  assert.match(r.stdout, /SignalOrangeXps/);
+  assert.match(r.stdout, /rd_Existing1/);
+  // Tells the user the one supported way to re-register: revoke, then setup.
+  assert.match(r.stdout, /gipity relay revoke/);
+  // It must NOT prompt for a device name on an already-registered machine.
+  assert.doesNotMatch(r.stdout, /Device name/);
 });
 
 test('gipity setup --help describes the relay-only setup', async () => {

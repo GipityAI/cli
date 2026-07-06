@@ -11,7 +11,7 @@
  * and no `process.exit` in this module: callers own all UX.
  */
 import { spawnCommand, spawnSyncCommand } from '../platform.js';
-import { hostname, platform as osPlatform } from 'os';
+import { hostname, userInfo, platform as osPlatform } from 'os';
 import { resolve, dirname } from 'path';
 import { mkdirSync, writeFileSync } from 'fs';
 import { post } from '../api.js';
@@ -23,6 +23,34 @@ import { getMachineId } from './machine-id.js';
 export function mapPlatform(p: string): 'darwin' | 'linux' | 'win32' {
   if (p === 'darwin' || p === 'linux' || p === 'win32') return p;
   return 'linux';
+}
+
+/**
+ * A friendly default device name for the web CLI — e.g. "Steve's Mac",
+ * "Steve's Windows PC". Prefers the OS login name + device kind, which reads
+ * better and is more recognizable than a raw hostname like "SignalOrangeXps".
+ * Falls back to the hostname, then a generic label. The user can override at
+ * the prompt, and the server de-dupes collisions ("Steve's Mac-2").
+ */
+export function friendlyDeviceName(): string {
+  const kind =
+    osPlatform() === 'darwin' ? 'Mac' :
+    osPlatform() === 'win32' ? 'Windows PC' :
+    'Linux PC';
+  let user = '';
+  try {
+    user = (userInfo().username || '').trim();
+  } catch {
+    // userInfo() throws when there's no matching passwd entry (some containers).
+  }
+  // Generic/service accounts carry no signal — the hostname is more useful there.
+  const generic = new Set(['root', 'user', 'admin', 'ubuntu', 'ec2-user', 'administrator', 'pi']);
+  if (user && !generic.has(user.toLowerCase())) {
+    const owner = user.charAt(0).toUpperCase() + user.slice(1);
+    return `${owner}'s ${kind}`;
+  }
+  const host = (hostname() || '').trim();
+  return host || `My ${kind}`;
 }
 
 /** Absolute path to the currently-running `gipity` CLI. Embedded in service
@@ -70,7 +98,7 @@ export async function pairDevice(opts: { name?: string; force?: boolean } = {}):
     state.clearDevice();
   }
 
-  const name = (opts.name?.trim() || hostname() || 'my-pc').trim();
+  const name = (opts.name?.trim() || friendlyDeviceName()).trim();
   if (!name || name.length > 100) {
     throw new Error('Device name must be 1–100 non-whitespace characters.');
   }

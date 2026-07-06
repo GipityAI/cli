@@ -13,12 +13,11 @@
  * `startDaemon`, `installAutostart`); this module is only the prompts + copy.
  */
 import { readFileSync } from 'node:fs';
-import { hostname } from 'os';
 import { prompt, confirm } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
 import * as state from './state.js';
 import { UnsupportedPlatformError } from './installers.js';
-import { pairDevice, startDaemon, installAutostart } from './setup.js';
+import { pairDevice, startDaemon, installAutostart, friendlyDeviceName } from './setup.js';
 
 /** Spawn a fresh `gipity relay run` detached from this process. Fire-and-forget.
  *  Re-exported from the shared `setup` core so existing importers (`claude.ts`)
@@ -63,6 +62,35 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
     return state.isRelayEnabled();
   }
 
+  // We only ever REGISTER an unregistered machine. If this computer already has
+  // a device, re-running setup must not silently create a second one — nor
+  // quietly reuse the old name after asking for a new one (the original bug:
+  // you'd type a new name and it would still show the old one). Surface the
+  // existing registration plainly and point at revoke as the way to start over.
+  const existingDevice = state.getDevice();
+  if (existingDevice) {
+    // Keep setup's promise: leave the relay enabled and running.
+    state.setRelayEnabled(true);
+    if (!state.isPaused()) ensureDaemonRunning();
+    if (opts.mode === 'run-now') {
+      console.log(`  ${bold('This computer is already set up as a relay')}`);
+      console.log('');
+      console.log(`  ${success('Registered as')} ${bold(existingDevice.name)} ${muted(`(${existingDevice.guid})`)}`);
+      if (state.isPaused()) {
+        console.log(`  ${dim('The relay is paused — resume it with')} ${brand('gipity relay resume')}${dim('.')}`);
+      } else {
+        console.log(`  ${dim('The relay is running. Open')} ${brand('gipity.ai')}${dim(' and type `/claude` to drive Claude Code here.')}`);
+      }
+      console.log('');
+      console.log(`  ${dim('To register this computer again — for example under a different name —')}`);
+      console.log(`  ${dim('unregister it first, then re-run setup:')}`);
+      console.log(`      ${brand('gipity relay revoke')}   ${dim('# unpairs this computer and removes the login service')}`);
+      console.log(`      ${brand('gipity setup')}          ${dim('# register it again (asks for a new name)')}`);
+      console.log('');
+    }
+    return true;
+  }
+
   // Header. `gipity setup` frames it as the deliberate action it is; the
   // `gipity claude` first-run frames it as an optional add-on it's offering.
   if (opts.mode === 'run-now') {
@@ -88,8 +116,8 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
     return false;
   }
 
-  // Device name - show hostname as the default; Enter accepts.
-  const defaultName = hostname() || 'my-pc';
+  // Device name - show a friendly default (owner + device kind); Enter accepts.
+  const defaultName = friendlyDeviceName();
   const rawName = await prompt(`  Device name [${bold(defaultName)}]: `);
   const name = (rawName || defaultName).trim();
   if (!name || name.length > 100) {
