@@ -2,7 +2,7 @@
 /**
  * Internal hook runner - invoked by Claude Code's lifecycle hooks
  * (SessionStart, Stop, SubagentStop, SessionEnd, and a throttled
- * PostToolUse for mid-run flushing) to mirror a terminal `gipity claude`
+ * PostToolUse for mid-run flushing) to mirror a terminal Claude Code
  * session into the Gipity server so the web CLI can display it read-only.
  *
  * Not a user-facing `gipity` subcommand by design: users never invoke
@@ -16,9 +16,22 @@
  *   source: 'claude-code' (today) | future: 'codex', …
  *   event:  'session-start' | 'stop' | 'subagent-stop' | 'session-end' | 'post-tool-use' | 'pre-compact'
  *
+ * Conversation binding, in order:
+ *   1. GIPITY_CONVERSATION_GUID env var - set by `gipity claude`, which
+ *      created/reused the conversation before spawning Claude Code.
+ *   2. A session_id → conv mapping persisted in the capture-state dir by
+ *      an earlier event of this session.
+ *   3. Self-arm: the session was launched WITHOUT `gipity claude` (bare
+ *      `claude` in a linked project dir). Resolve the project from
+ *      .gipity.json and ask the server to bind this session_id to a
+ *      conversation (POST /remote-sessions/resolve), then persist the
+ *      mapping. This is what makes bare `claude` sessions record.
+ *
  * Graceful no-ops (exit 0 silently):
- *   - GIPITY_CONVERSATION_GUID env var unset (hook fired from a bare
- *     `claude`, not `gipity claude`).
+ *   - GIPITY_CAPTURE=off - the relay daemon owns capture for this run
+ *     (it parses stream-json from stdout), or the caller opted out.
+ *   - No binding resolvable: not a Gipity project, `captureHooks: false`
+ *     in .gipity.json, or the resolve call failed.
  *   - The machine isn't paired - no device token available.
  *   - Anything unexpected (parse error, network error, etc.). We must
  *     not break the user's interactive session.
@@ -40,6 +53,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { getDevice } from '../relay/state.js';
 import { deviceFetch } from '../relay/device-http.js';
+import { getConfig } from '../config.js';
 import {
   parseTranscript,
   type IngestEntry,
@@ -170,6 +184,116 @@ export function acquireLock(convGuid: string): (() => void) | null {
   return null;
 }
 
+// ─── conversation binding ────────────────────────────────────────────
+// Sessions launched via `gipity claude` carry GIPITY_CONVERSATION_GUID.
+// Bare `claude` in a linked project has no env binding, so the first
+// event resolves one from the server (keyed by the agent session_id) and
+// persists it here for every later event of the session.
+
+/** session_id is Claude Code's session UUID - filesystem-safe by
+ *  construction; the character guard keeps a hostile hook payload from
+ *  escaping the capture-state dir (used for both the mapping file and
+ *  the resolve lock). */
+function safeSessionKey(sessionId: string): string {
+  return `sid-${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+}
+
+function sessionMapPath(sessionId: string): string {
+  return join(CAPTURE_DIR, `${safeSessionKey(sessionId)}.json`);
+}
+
+function readSessionMap(sessionId: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(sessionMapPath(sessionId), 'utf-8'));
+    return typeof parsed.conv_guid === 'string' ? parsed.conv_guid : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionMap(sessionId: string, convGuid: string): void {
+  mkdirSync(CAPTURE_DIR, { recursive: true });
+  writeFileSync(sessionMapPath(sessionId), JSON.stringify({ conv_guid: convGuid }) + '\n');
+}
+
+function deleteSessionMap(sessionId: string): void {
+  try { unlinkSync(sessionMapPath(sessionId)); } catch { /* already gone */ }
+}
+
+/** Ask the server which conversation this session belongs to: the conv
+ *  already bound to this session_id (resume), the project's still-empty
+ *  placeholder, or a fresh one. Returns null on any failure - capture is
+ *  best-effort and must never break the session. */
+async function resolveFromServer(projectGuid: string, hook: HookInput): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await deviceFetch('POST', '/remote-sessions/resolve', {
+      project_guid: projectGuid,
+      session_id: hook.session_id,
+      cwd: hook.cwd,
+    }, 15_000);
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  try {
+    const body = await res.json() as { data?: { conversation_guid?: string } };
+    return body.data?.conversation_guid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the conversation this event writes to. Env binding first (set
+ *  by `gipity claude`), then the session's persisted mapping, then the
+ *  self-arm server resolve. The resolve is serialized per-session with
+ *  the same crash-safe lock the flushers use, so concurrent hooks (Stop +
+ *  SubagentStop) can't each mint a conversation: the loser polls for the
+ *  winner's mapping instead of racing the server. */
+export async function resolveConvGuid(
+  hook: HookInput,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise(r => setTimeout(r, ms)),
+): Promise<string | null> {
+  const fromEnv = process.env.GIPITY_CONVERSATION_GUID;
+  if (fromEnv) return fromEnv;
+
+  const sessionId = hook.session_id;
+  if (!sessionId) return null;
+
+  const mapped = readSessionMap(sessionId);
+  if (mapped) return mapped;
+
+  // Self-arm gates: linked project, capture not opted out, machine paired
+  // (main() already checked the device, but resolveConvGuid is also the
+  // unit-tested entry - keep it self-sufficient).
+  const config = getConfig();
+  if (!config?.projectGuid || config.captureHooks === false) return null;
+  if (!getDevice()) return null;
+
+  const release = acquireLock(safeSessionKey(sessionId));
+  if (!release) {
+    // Another hook instance is resolving this session right now. Give it
+    // a moment and use its result; bail silently if it never lands (the
+    // next event retries the whole resolution).
+    for (let i = 0; i < 10; i++) {
+      await sleep(300);
+      const conv = readSessionMap(sessionId);
+      if (conv) return conv;
+    }
+    return null;
+  }
+  try {
+    // Re-check under the lock - the previous holder may have just finished.
+    const raced = readSessionMap(sessionId);
+    if (raced) return raced;
+    const conv = await resolveFromServer(config.projectGuid, hook);
+    if (conv) writeSessionMap(sessionId, conv);
+    return conv;
+  } finally {
+    release();
+  }
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
   return await new Promise((resolve) => {
@@ -283,6 +407,7 @@ async function handleSessionEnd(convGuid: string, hook: HookInput, source: strin
   await postEntries(convGuid, entries);
 
   deleteState(convGuid);
+  if (hook.session_id) deleteSessionMap(hook.session_id);
 }
 
 function displayName(source: string): string {
@@ -291,8 +416,11 @@ function displayName(source: string): string {
 }
 
 async function main(): Promise<void> {
-  const convGuid = process.env.GIPITY_CONVERSATION_GUID;
-  if (!convGuid) return; // bare `claude`, not `gipity claude`
+  // Explicit capture opt-out. Set by the relay daemon's dispatch spawns
+  // (the daemon parses stream-json from stdout - hook capture would
+  // double-post every event) and available to anyone wanting a one-off
+  // unrecorded session.
+  if (process.env.GIPITY_CAPTURE === 'off') return;
   if (!getDevice()) return; // machine not paired
 
   const [source, event] = process.argv.slice(2);
@@ -303,6 +431,9 @@ async function main(): Promise<void> {
   if (stdin.trim()) {
     try { hook = JSON.parse(stdin); } catch { /* ignore - event may not require transcript */ }
   }
+
+  const convGuid = await resolveConvGuid(hook);
+  if (!convGuid) return; // not a Gipity-bound session - nothing to capture
 
   try {
     switch (event) {

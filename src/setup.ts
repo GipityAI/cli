@@ -153,7 +153,7 @@ export const LEGACY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
 // an installed plugin when the marketplace advances - only an explicit
 // `plugin install`/`update` does - so this constant is how a CLI upgrade tells
 // ensureGipityPluginInstalled() to refresh a stale user-scope install.
-export const GIPITY_PLUGIN_VERSION = '0.4.1';
+export const GIPITY_PLUGIN_VERSION = '0.5.0';
 
 /** True for hook commands the CLI itself wrote into settings.json in past
  *  versions. Matched by signature so migration strips exactly our own

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { basename, resolve, dirname } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { getAccountSlug } from '../api.js';
 import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
 import { getAuth } from '../auth.js';
@@ -37,6 +37,7 @@ export const initCommand = new Command('init')
   .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity.')
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
+  .option('--no-capture', 'Don\'t record Claude Code sessions in this directory to your Gipity project (sets captureHooks: false in .gipity.json)')
   .option(
     '--for <tools>',
     `Which AI tool primer files to write (comma-separated). Default: all except aider (opt-in - it also writes .aider.conf.yml). Choices: ${TOOL_KEYS.join(', ')}, all`,
@@ -100,14 +101,27 @@ Working with an existing Gipity project:
         // artifact introduced by a newer CLI (e.g. aider's .aider.conf.yml)
         // would sync up as project content. Union in the current defaults.
         if (existing) {
+          let changed = false;
           const cur = existing.ignore ?? (existing.ignore = []);
           const missing = DEFAULT_SYNC_IGNORE.filter(e => !cur.includes(e));
           if (missing.length) {
             cur.push(...missing);
-            saveConfigAt(cwd, existing);
+            changed = true;
           }
+          // `--no-capture` on a re-init is the documented way to opt an
+          // existing project out of session recording. One-way from flags:
+          // a bare re-run never silently reverses an explicit opt-out
+          // (delete the key or set it true in .gipity.json to re-enable).
+          if (opts.capture === false && existing.captureHooks !== false) {
+            existing.captureHooks = false;
+            changed = true;
+          }
+          if (changed) saveConfigAt(cwd, existing);
         }
         console.log(success(`Refreshed primer files: ${primerSummary}.`));
+        if (opts.capture === false) {
+          console.log(success('Session recording disabled for this project (captureHooks: false in .gipity.json).'));
+        }
         return;
       }
 
@@ -176,9 +190,26 @@ Working with an existing Gipity project:
       }
       if (adopted.applied > 0) console.log(`Synced ${adopted.applied} change${adopted.applied > 1 ? 's' : ''} with Gipity.`);
 
+      // Session recording opt-out. Written after adopt so it lands in the
+      // freshly created .gipity.json regardless of how the link happened.
+      if (opts.capture === false) {
+        try {
+          const cfg = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8'));
+          cfg.captureHooks = false;
+          saveConfigAt(cwd, cfg);
+        } catch { /* config missing/unreadable - nothing to opt out of */ }
+      }
+
       console.log(success(`Wrote primer files: ${primerSummary}.`));
       if (wantsClaude) {
         console.log(success('Ready! Run `gipity claude` for Claude Code, or open this directory in your other AI coding tool.'));
+        // Recording happens by default (however Claude Code is launched), so
+        // say so up front - consent should be explicit, not discovered later.
+        if (opts.capture === false) {
+          console.log(muted('Session recording is off for this project (captureHooks: false in .gipity.json).'));
+        } else {
+          console.log(muted('Claude Code sessions here are recorded to your Gipity project (view at prompt.gipity.ai). Opt out: gipity init --no-capture.'));
+        }
       } else {
         console.log(success('Ready! Open this directory in your AI coding tool.'));
       }

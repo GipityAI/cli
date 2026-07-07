@@ -115,3 +115,26 @@ describe('gipity claude --new-project / --project', () => {
     }
   });
 });
+
+// The daemon-capture gate: hook capture stands down ONLY for relay-daemon
+// spawns (inherited conv guid + stream-json output). A user-supplied
+// `--output-format stream-json` run has no daemon parsing its stdout, so
+// hooks must stay armed or the conversation records nothing (the
+// qwen-flight zero-message bug, 2026-07-07).
+describe('hasStreamJsonFlag', () => {
+  it('detects both the two-arg and equals forms', async () => {
+    const { hasStreamJsonFlag } = await import('../commands/claude.js');
+    assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format', 'stream-json']), true);
+    assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format=stream-json']), true);
+  });
+
+  it('is false for other formats and for no format flag at all', async () => {
+    const { hasStreamJsonFlag } = await import('../commands/claude.js');
+    assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format', 'json']), false);
+    assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format=json']), false);
+    assert.equal(hasStreamJsonFlag(['-p', 'x']), false);
+    assert.equal(hasStreamJsonFlag([]), false);
+    // Value in a later position only counts when paired with the flag.
+    assert.equal(hasStreamJsonFlag(['stream-json']), false);
+  });
+});

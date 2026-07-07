@@ -173,8 +173,11 @@ async function runDaemon(home: string, claudeCmd: string, opts: { maxRunMs?: num
         GIPITY_RELAY_POLL_TIMEOUT_MS: '300',
         GIPITY_RELAY_BACKOFF_BASE_MS: '50',
         GIPITY_RELAY_BACKOFF_MAX_MS: '200',
-        // Bound the daemon so tests can't hang.
-        GIPITY_RELAY_MAX_RUN_MS: String(opts.maxRunMs ?? 1500),
+        // Bound the daemon so tests can't hang. The window must absorb CLI
+        // boot + device registration + the first diagnostics collection, all
+        // of which stretch well past a second on a loaded machine (the full
+        // smoke suite spawns dozens of concurrent CLI processes).
+        GIPITY_RELAY_MAX_RUN_MS: String(opts.maxRunMs ?? 4000),
       },
       cwd: home,
       timeout: 10_000,
@@ -240,7 +243,7 @@ describe('daemon: dispatch happy path', () => {
           GIPITY_RELAY_CLAUDE_CMD: 'true',
           GIPITY_RELAY_HEARTBEAT_MS: '150',
           GIPITY_RELAY_POLL_TIMEOUT_MS: '300',
-          GIPITY_RELAY_MAX_RUN_MS: '1500',
+          GIPITY_RELAY_MAX_RUN_MS: '4000',
           // Headless opt-out gate honored by state.diagnosticsConsented().
           GIPITY_NO_DIAGNOSTICS: '1',
         },

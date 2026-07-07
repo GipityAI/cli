@@ -195,6 +195,17 @@ function formatElapsed(ms: number): string {
  *  truncate the file. Best-effort: a malformed or unreadable config is left
  *  untouched and never blocks the launch. Headless `-p` runs skip the dialog
  *  already, so this is only needed for interactive launches. */
+/** True when the Claude Code argv asks for stream-json output (both the
+ *  `--output-format stream-json` and `--output-format=stream-json` forms).
+ *  Combined with an inherited GIPITY_CONVERSATION_GUID this identifies a
+ *  relay-daemon spawn, where the daemon owns capture and lifecycle-hook
+ *  capture must stand down. Exported for tests. */
+export function hasStreamJsonFlag(args: string[]): boolean {
+  const idx = args.indexOf('--output-format');
+  if (idx !== -1 && args[idx + 1] === 'stream-json') return true;
+  return args.includes('--output-format=stream-json');
+}
+
 export function markFolderTrusted(dir: string): void {
   try {
     const file = join(homedir(), '.claude.json');
@@ -745,12 +756,15 @@ export const claudeCommand = new Command('claude')
       // we can't satisfy the claude_code ownership rule, so hooks stay
       // offline for this run.
       //
-      // Note: when `--output-format stream-json` is present in argv, the
-      // relay daemon is capturing Claude's stdout directly and the hook-
-      // based transcript capture would double-post every event. In that
-      // case we intentionally do NOT propagate GIPITY_CONVERSATION_GUID
-      // to the Claude child (see childEnv assignment below) - the hook's
-      // existing "no guid → silent no-op" guard then skips capture.
+      // Note: when this process was spawned BY the relay daemon (inherited
+      // GIPITY_CONVERSATION_GUID) with `--output-format stream-json`, the
+      // daemon is capturing Claude's stdout directly and hook-based capture
+      // would double-post every event. In that case we set GIPITY_CAPTURE=off
+      // on the Claude child (see childEnv assignment below) so the hook
+      // runner stands down. A USER-supplied stream-json run has no daemon
+      // behind it - hooks stay armed there, or the conversation would sit
+      // empty forever (the qwen-flight zero-message bug, 2026-07-07).
+      const inheritedConvGuid = Boolean(process.env.GIPITY_CONVERSATION_GUID);
       let convGuidForHooks: string | null = process.env.GIPITY_CONVERSATION_GUID ?? null;
       if (!convGuidForHooks) {
         const device = relayState.getDevice();
@@ -886,14 +900,16 @@ export const claudeCommand = new Command('claude')
       // throws EINVAL on Node >=18.20.2/20.12.2 - the CVE-2024-27980 fix).
       const claudeCmd = resolveCommand('claude');
       const childEnv = { ...process.env };
-      // Gate hook-based capture: when the daemon is streaming via
-      // --output-format stream-json, it owns the capture and any hook
-      // post would be a dupe. Leaving GIPITY_CONVERSATION_GUID unset in
-      // the child's env trips the hook runner's early-return guard.
-      const streamJsonIdx = allArgs.indexOf('--output-format');
-      const daemonCapturing = streamJsonIdx !== -1 && allArgs[streamJsonIdx + 1] === 'stream-json';
+      // Gate hook-based capture: only when the DAEMON is streaming via
+      // --output-format stream-json (inherited guid = daemon spawn) does it
+      // own the capture; any hook post would then be a dupe. GIPITY_CAPTURE=off
+      // stands the hook runner down explicitly - merely unsetting the guid is
+      // no longer enough now that the runner self-arms from .gipity.json.
+      // A user-supplied stream-json run (no inherited guid) keeps hooks armed.
+      const daemonCapturing = inheritedConvGuid && hasStreamJsonFlag(allArgs);
       if (daemonCapturing) {
         delete childEnv.GIPITY_CONVERSATION_GUID;
+        childEnv.GIPITY_CAPTURE = 'off';
       } else if (convGuidForHooks) {
         childEnv.GIPITY_CONVERSATION_GUID = convGuidForHooks;
       }

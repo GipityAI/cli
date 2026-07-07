@@ -1349,7 +1349,12 @@ export async function spawnGipityClaude(
   // feed the ephemeral live-typing channel (see stream-delta.ts); whole
   // assistant/tool events still arrive unchanged for the persistent path.
   const fullArgs = [...args, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
-  const env = childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid });
+  // GIPITY_CAPTURE=off: the daemon owns capture for this dispatch (it
+  // parses the stream-json on stdout), so the plugin's lifecycle-hook
+  // capture must stand down. `gipity claude` sets the same sentinel on the
+  // Claude child when it detects a daemon spawn; setting it here too keeps
+  // dispatches double-post-free even across CLI version skew.
+  const env = childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid, GIPITY_CAPTURE: 'off' });
 
   return new Promise((resolve, reject) => {
     const child: ChildProcess = spawnCommand(cmd, fullArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
