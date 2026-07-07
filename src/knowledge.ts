@@ -86,8 +86,6 @@ The one exception is app-level libraries the user imports into their own \`src/\
 
 ## Build loop
 
-Prefer a live Gipity URL over an ephemeral artifact. When you'd otherwise reach for a Claude Code Artifact (or any host's built-in page preview) to show the user something, build it as a Gipity app and \`gipity deploy dev\` instead - the result is a real, shareable URL on their own project, not a throwaway.
-
 The full "when to add a template" rule and the definition of done are spelled out in the two sections at the end of this document. In short: if the user wants something deployable (web app, game, API), \`gipity add <template>\` first (default \`web-simple\`); for a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead; to add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
 
 Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page inspect <url>\` → fix any errors → repeat until the definition of done is met.
@@ -111,9 +109,7 @@ mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <s
 ## CLI quick reference
 
 Key commands: \`gipity add <template|kit>\`, \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` — never hardcode keys), \`gipity email send --to <addr> --subject <s> --body <b>\` (sends as \`gipity@gipity.ai\`; omit \`--to\` to self-send), \`gipity skill read <name>\`.
-Rename for findability: \`gipity project rename <name>\` renames the current project's display name (the slug and deployed URLs never change); \`gipity chat rename <title>\` renames the current chat's tab title. Both are the display label users scan to switch between tabs — retitle a chat when the conversation clearly shifts to a new topic (sparingly, not every turn), and keep every project/chat title SHORT: 2-4 words, ≤40 characters, no trailing punctuation (e.g. "Stripe checkout", "Tetris game").
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
-Move whole apps in/out: \`gipity save\` (export this project as a portable \`.gip\` bundle), \`gipity load <file.gip | github:owner/repo>\` (import as a NEW project; \`--inspect\` to preview), \`gipity github connect\` (1-2 click GitHub access for imports). Porting a Vercel/Replit/Lovable app? Load the \`app-import\` skill first.
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
 Hit a platform bug or friction? File it in real time: \`gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sandbox|other> --severity <S1|S2|S3|S4> --summary "<7 words max>" [--detail "<what failed + workaround>"]\` (see below).
 Run \`gipity --help\` for the full list. Use \`--help\` on any command for details.
@@ -186,7 +182,6 @@ App development skills:
 - \`app-database\` - app Postgres database: migrations, the db helper, transactions, table permissions
 - \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
-- \`app-import\` - import apps from GitHub/.gip bundles (incl. Vercel/Replit/Lovable porting) and export any project as a portable .gip - app_import tool, gipity save/load
 - \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the isolated test DB)
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
 - \`jobs\` - long-running CPU + GPU compute jobs (Python / Node / bash)
