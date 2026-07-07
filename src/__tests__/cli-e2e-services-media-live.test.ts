@@ -145,6 +145,31 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.ok(existsSync(out) && statSync(out).size > 1000, `expected a non-empty mp3 at ${out}`);
   });
 
+  // Sound effects run against the DEFAULT billing config (user_pays) on a fresh
+  // project: the logged-in owner is an identified payer, so no owner_pays flip
+  // is ever needed to generate assets. Regression for the "temporary billing
+  // flip" workaround agents invented when Bearer callers weren't recognized.
+
+  it('service call sound generates a real clip under default user_pays billing (costs credits)', () => {
+    const r = cli(
+      ['service', 'call', 'sound', '{"text":"single cartoon boing","duration_seconds":1}'],
+      { timeout: 120000 },
+    );
+    assert.equal(r.status, 0, `service call sound failed: ${r.stderr || r.stdout}`);
+    const body = JSON.parse(r.stdout);
+    assert.match(body.url ?? '', /^https?:\/\//, `expected a CDN url, got: ${r.stdout}`);
+    assert.ok(typeof body.credits_used === 'number' && body.credits_used > 0, 'expected credits_used > 0');
+  });
+
+  it('generate sound writes a real clip to disk (costs credits)', () => {
+    const out = join(projectDir, 'gen-sound.mp3');
+    const r = cli(['generate', 'sound', 'cartoon character saying oof', '--duration', '1', '-o', out, '--json'], { timeout: 120000 });
+    assert.equal(r.status, 0, `generate sound failed: ${r.stderr || r.stdout}`);
+    const meta = JSON.parse(r.stdout);
+    assert.match(meta.url ?? '', /^https?:\/\//, 'expected a CDN url in the result');
+    assert.ok(existsSync(out) && statSync(out).size > 1000, `expected a non-empty mp3 at ${out}`);
+  });
+
   it('service call rejects invalid JSON before hitting the network', () => {
     const r = cli(['service', 'call', 'llm', 'not-json']);
     assert.notEqual(r.status, 0);

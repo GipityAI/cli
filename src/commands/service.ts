@@ -14,7 +14,7 @@ const SERVICES: Array<{ name: string; method: 'POST' | 'GET'; desc: string }> = 
   { name: 'image/models', method: 'GET', desc: 'List image providers/models' },
   { name: 'tts', method: 'POST', desc: 'Text-to-speech ({ text, voice?, ... })' },
   { name: 'tts/voices', method: 'GET', desc: 'List TTS voices' },
-  { name: 'sound', method: 'POST', desc: 'Sound effect ({ prompt, duration_seconds? })' },
+  { name: 'sound', method: 'POST', desc: 'Sound effect ({ text, duration_seconds? })' },
   { name: 'music', method: 'POST', desc: 'Music generation ({ prompt, duration_seconds? })' },
   { name: 'video', method: 'POST', desc: 'Video generation ({ prompt, ... })' },
   { name: 'location/ip', method: 'POST', desc: 'IP geolocation ({ ip? })' },

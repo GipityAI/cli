@@ -288,11 +288,63 @@ Examples:
     }
   });
 
+// ── SOUND ──────────────────────────────────────────────────────────────
+
+const soundCommand = new Command('sound')
+  .description(`Generate a sound effect from a text description using AI.
+
+Always billed to you (the caller) - the app's service billing_mode does not
+apply to direct generation, so there is never a reason to flip a service to
+owner_pays just to create assets.
+
+Tips:
+  - Describe the sound, not a scene (e.g. "cartoon boing with a springy wobble")
+  - Omit --duration to let the model pick a natural length (billing is per second)
+  - --influence closer to 1 follows the text more literally
+
+Examples:
+  gipity generate sound "cartoon character saying oof"
+  gipity generate sound "thunder rolling in the distance" --duration 5
+  gipity generate sound "sci-fi laser blast" -o src/assets/sounds/laser.mp3`)
+  .argument('<text>', 'Text description of the sound effect (max 1000 characters)')
+  .option('--duration <seconds>', 'Clip length in seconds (0.5-30; default: automatic)', (v) => parseFloat(v))
+  .option('--influence <n>', 'How closely to follow the prompt, 0.0-1.0 (higher = more literal)', (v) => parseFloat(v))
+  .option('-o, --output <file>', 'Output path (default ./sound.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/sounds/boing.mp3; the cwd default is fine for one-off generation.')
+  .option('--json', 'Output as JSON')
+  .action(async (text: string, opts) => {
+    try {
+      const { config } = await resolveProjectContext();
+      const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/sound`, {
+        text,
+        duration_seconds: opts.duration,
+        prompt_influence: opts.influence,
+      });
+      const result = opts.json
+        ? await doGenerate()
+        : await withSpinner('Generating sound effect…', doGenerate, { done: null });
+
+      const filename = opts.output || 'sound.mp3';
+      const savedPath = await downloadFile(result.url, filename);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ ...result, saved: savedPath }));
+      } else {
+        const sizeKb = Math.round(result.size_bytes / 1024);
+        console.log(`${muted(`Generated sound effect (${sizeKb}KB)`)}`);
+        console.log(success(`Saved to ${savedPath}`));
+      }
+    } catch (err: any) {
+      printCommandError('Sound generation', err);
+      process.exit(1);
+    }
+  });
+
 // ── PARENT COMMAND ─────────────────────────────────────────────────────
 
 export const generateCommand = new Command('generate')
-  .description('Generate images, video, speech, or music')
+  .description('Generate images, video, speech, sound effects, or music')
   .addCommand(imageCommand)
   .addCommand(videoCommand)
   .addCommand(speechCommand)
+  .addCommand(soundCommand)
   .addCommand(musicCommand);

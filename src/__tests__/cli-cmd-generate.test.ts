@@ -68,3 +68,26 @@ test('gipity generate speech --provider POSTs and writes the audio file', async 
   assert.match(r.stdout, /Generated with elevenlabs/);
   assert.match(r.stdout, /Saved to \/.*\/speech\.mp3/);
 });
+
+test('gipity generate sound POSTs text + options and writes the audio file', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/generate/sound', { body: {
+    url: `${mock.apiBase}/files/sound.mp3`,
+    content_type: 'audio/mpeg',
+    model: '',
+    provider: 'gipity',
+    size_bytes: 12,
+  } });
+  mock.on('GET /files/sound.mp3', { contentType: 'audio/mpeg', raw: 'fakeaudiobts' });
+  const r = await fresh(['generate', 'sound', 'cartoon character saying oof', '--duration', '2.5', '--influence', '0.7']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Generated sound effect/);
+  assert.match(r.stdout, /Saved to \/.*\/sound\.mp3/);
+
+  const req = mock.requests().find(q => q.url === '/projects/p_TestProj/generate/sound');
+  assert.ok(req, 'sound generate request was made');
+  const body = req!.body as { text: string; duration_seconds: number; prompt_influence: number };
+  assert.equal(body.text, 'cartoon character saying oof');
+  assert.equal(body.duration_seconds, 2.5);
+  assert.equal(body.prompt_influence, 0.7);
+});
