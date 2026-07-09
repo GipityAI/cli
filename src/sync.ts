@@ -805,6 +805,32 @@ export function effectiveIgnore(root: string, configIgnore: string[] | undefined
   return [...base, GIPITY_IGNORE_FILE, ...readGipityIgnore(root)];
 }
 
+/** Fast, LOCAL-ONLY dirtiness probe: true when every local file matches its
+ *  baseline entry by size+mtime and nothing was added or deleted since the
+ *  last sync. Lets pre-action syncs (deploy) skip their server round trip:
+ *  deploy reads server-side (VFS) state, so with nothing to push the sync
+ *  adds no correctness, only latency. Conservative on purpose - any size or
+ *  mtime movement reads as dirty (no hashing here), never-synced projects
+ *  read as dirty, and callers then run the real sync(). */
+export function isLocalTreeClean(): boolean {
+  try {
+    const config = requireConfig();
+    const root = projectDir();
+    const baseline = readBaseline(config.projectGuid);
+    if (!baseline.lastFullSync) return false;
+    const local = walkLocal(root, effectiveIgnore(root, config.ignore), baseline.files);
+    const baselineFiles = baseline.files;
+    if (local.size !== Object.keys(baselineFiles).length) return false;
+    for (const [path, info] of local) {
+      const prior = baselineFiles[path];
+      if (!prior || prior.size !== info.size || prior.mtime !== info.mtime) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function sync(opts: SyncOptions = {}): Promise<SyncResult> {
   const config = requireConfig();
   const root = projectDir();

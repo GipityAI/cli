@@ -34,7 +34,22 @@ import {
 import { isClaudeInstalled, ensureClaudeInstalled, CLAUDE_PACKAGE } from '../claude-setup.js';
 
 const __clDir = dirname(fileURLToPath(import.meta.url));
-const __clPkg = JSON.parse(readFileSync(resolve(__clDir, '../../package.json'), 'utf-8'));
+// Walk up to the nearest gipity package.json instead of a hardcoded '../..':
+// the per-module tsc layout puts this file at dist/commands/, the bundled CLI
+// at dist/, so a fixed depth breaks one of the two layouts.
+function readOwnPkg(fromDir: string): { version?: string } {
+  for (let d = fromDir; ; d = dirname(d)) {
+    const p = join(d, 'package.json');
+    if (existsSync(p)) {
+      try {
+        const pkg = JSON.parse(readFileSync(p, 'utf-8'));
+        if (pkg.name === 'gipity') return pkg;
+      } catch { /* keep walking */ }
+    }
+    if (dirname(d) === d) return {};
+  }
+}
+const __clPkg = readOwnPkg(__clDir);
 
 /** Report a sync run to the user. Beyond the applied-changes line, this SURFACES
  *  sync.errors - a download that came back incomplete (truncated bulk tar, a file
@@ -337,7 +352,7 @@ export const claudeCommand = new Command('claude')
       }
 
       if (!nonInteractive) {
-        printBanner({ version: __clPkg.version, email: auth?.email, cwd: process.cwd() });
+        printBanner({ version: __clPkg.version ?? 'unknown', email: auth?.email, cwd: process.cwd() });
       }
 
       // A GIPITY_TOKEN env token authenticates every request on its own, so the

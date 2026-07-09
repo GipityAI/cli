@@ -2,7 +2,7 @@
  * sync.ts - Shared sync-before-action helper.
  */
 
-import { sync } from '../sync.js';
+import { sync, isLocalTreeClean } from '../sync.js';
 import { muted, error as clrError } from '../colors.js';
 import { createProgressReporter } from '../progress.js';
 
@@ -16,6 +16,12 @@ import { createProgressReporter } from '../progress.js';
  */
 export async function syncBeforeAction(opts: { sync?: boolean; json?: boolean; force?: boolean }): Promise<void> {
   if (opts.sync === false) return;
+  // Nothing changed locally since the last sync → nothing to push, and the
+  // action (deploy etc.) reads server-side state anyway. Skip the whole sync
+  // round trip. The probe is local-only stat checks and conservative: any
+  // doubt (size/mtime moved, never synced, no baseline) falls through to a
+  // real sync. `--force` always takes the full path.
+  if (!opts.force && isLocalTreeClean()) return;
   // Pass a progress reporter so a large pre-action upload shows the transfer
   // bar instead of a silent pause (the reporter is a no-op on non-TTY / when
   // piped, so JSON and headless output stay clean).

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Thin launcher. Resolves the user-local install at ~/.gipity/local/, exec's
+// Thin launcher. Resolves the user-local install at ~/.gipity/local/, runs
 // it, and kicks off a detached background updater. Modeled on Claude Code.
-import { spawnCommand, spawnSyncCommand } from '../platform.js';
+import { spawnCommand } from '../platform.js';
 import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, resolve, join } from 'path';
 import { LOCAL_ENTRY } from './state.js';
 import { isBootstrapped, bootstrap } from './bootstrap.js';
@@ -37,27 +37,33 @@ function startBackgroundUpdater(): void {
   } catch { /* updater is best-effort, never block */ }
 }
 
-function execLocal(): never {
-  const args = process.argv.slice(2);
-  const res = spawnSyncCommand(process.execPath, [LOCAL_ENTRY, ...args], {
-    stdio: 'inherit',
-    env: process.env,
-  });
-  process.exit(res.status ?? 1);
+/** Run a CLI entry IN-PROCESS via dynamic import instead of spawning a second
+ *  Node. The entry's top-level `await program.parseAsync(...)` means the import
+ *  promise resolves only after the command finishes, so awaiting it and letting
+ *  the process exit naturally matches the old child's lifecycle - minus a whole
+ *  Node cold-start per invocation. The CLI reads args via `process.argv.slice(2)`
+ *  everywhere, so the shim occupying argv[1] is fine (and paths captured from
+ *  argv[1], e.g. relay service units, now pin the update-following shim).
+ *
+ *  A rejection here is either a corrupt install (module failed to load) or a
+ *  crash-level bug (commands handle their own failures with process.exit).
+ *  Never fall back to re-running the command through another entry - it may
+ *  have partially executed, and doubling a mutation is worse than an error. */
+async function runEntry(entry: string): Promise<void> {
+  try {
+    await import(pathToFileURL(entry).href);
+  } catch (err) {
+    console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
+    process.exit(1);
+  }
 }
 
-function execSelf(): never {
-  // Run our own dist/index.js (this checkout/install), bypassing the local
-  // bootstrapped copy. Used for dev links and as the bootstrap-failure fallback
-  // so the user is never blocked (they can retry via `gipity update --force`).
-  const ownEntry = resolve(__dirname, '..', 'index.js');
-  const args = process.argv.slice(2);
-  const res = spawnSyncCommand(process.execPath, [ownEntry, ...args], {
-    stdio: 'inherit',
-    env: process.env,
-  });
-  process.exit(res.status ?? 1);
-}
+const execLocal = () => runEntry(LOCAL_ENTRY);
+
+// Run our own dist/index.js (this checkout/install), bypassing the local
+// bootstrapped copy. Used for dev links and as the bootstrap-failure fallback
+// so the user is never blocked (they can retry via `gipity update --force`).
+const execSelf = () => runEntry(resolve(__dirname, '..', 'index.js'));
 
 // Loud startup output (bootstrap status, npm-fallback notice) is reserved for
 // the handful of commands where users expect a visible chrome banner. All other
@@ -73,12 +79,11 @@ const isLoud =
   firstArg === 'version';
 
 // Dev link: run this checkout's own build, no bootstrap, no auto-update.
-if (isDevLink) execSelf();
-
-if (!isBootstrapped()) {
-  const ok = bootstrap(shimPkg.version, !isLoud);
-  if (!ok) execSelf();
+if (isDevLink) {
+  await execSelf();
+} else if (!isBootstrapped() && !bootstrap(shimPkg.version, !isLoud)) {
+  await execSelf();
+} else {
+  startBackgroundUpdater();
+  await execLocal();
 }
-
-startBackgroundUpdater();
-execLocal();

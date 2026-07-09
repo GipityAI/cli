@@ -65,6 +65,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before capturing (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
   .option('--json', 'Output as JSON')
+  .option('--no-reprobe', 'Skip the automatic second probe that filters one-time transient console errors - roughly halves inspect time on a page with any console error, at the cost of possibly reporting a cold-load transient as real')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps run headlessly (audio is a built-in tone, not real speech)')
@@ -79,9 +80,31 @@ export const pageInspectCommand = new Command('inspect')
       console.error(`  gipity page screenshot ${url}${typeof opts.screenshot === 'string' ? ` -o ${opts.screenshot}` : ''}`);
       process.exit(1);
     }
-    return run('Page inspect', async () => {
-    const waitMs = capWaitMs(opts.wait, url);
-    const parsedTimeout = parseInt(opts.waitTimeout, 10);
+    return run('Page inspect', () => inspectPage(url, opts));
+  });
+
+/** The commander opts shape of `page inspect` - every field optional so other
+ *  commands (deploy --inspect) can invoke the same pipeline with defaults. */
+export interface InspectPageOptions {
+  wait?: string;
+  waitFor?: string;
+  waitTimeout?: string;
+  json?: boolean;
+  reprobe?: boolean;
+  truncate?: boolean;
+  all?: boolean;
+  fakeMedia?: boolean;
+  device?: string;
+  auth?: boolean;
+}
+
+/** Run the full inspect pipeline (probe, transient-error re-probe, noise
+ *  filtering) against a URL and print the report. Shared by `page inspect`
+ *  and `deploy --inspect`, so a build agent can deploy + verify in ONE
+ *  command instead of two round trips through the model. */
+export async function inspectPage(url: string, opts: InspectPageOptions = {}): Promise<void> {
+    const waitMs = capWaitMs(opts.wait ?? '500', url);
+    const parsedTimeout = parseInt(opts.waitTimeout ?? '5000', 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
     const truncate = opts.truncate !== false;
     const showAll = opts.all === true;
@@ -158,7 +181,7 @@ export const pageInspectCommand = new Command('inspect')
     // the errors that recur; errors seen on a single probe are surfaced
     // separately as transient noise.
     let transientErrors: string[] = [];
-    if ((b.console || []).some(isErrorLine)) {
+    if (opts.reprobe !== false && (b.console || []).some(isErrorLine)) {
       try {
         const verify = await post<{ data: DebugBundle }>(`/tools/browser/inspect`, inspectBody);
         const recurring = new Set((verify.data.console || []).filter(isErrorLine));
@@ -292,5 +315,4 @@ export const pageInspectCommand = new Command('inspect')
         }
       }
     }
-    });
-  });
+}

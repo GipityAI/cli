@@ -5,6 +5,7 @@ import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
+import { inspectPage } from './page-inspect.js';
 
 // ── Status icons ───────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ export const deployCommand = new Command('deploy')
   .option('--optimize', 'Force Vite build optimization on (default for prod; use this to optimize a dev deploy too)')
   .option('--no-optimize', 'Skip build optimization and upload files as-is - the escape hatch for plain-HTML apps whose <script src> tags are not type="module"')
   .option('--json', 'Output as JSON')
+  .option('--inspect [path]', 'After a successful deploy, run `page inspect` on the deployed URL (or URL + path) in the same command - one build-loop step instead of two. With --json, emits two JSON lines: deploy, then inspect.')
   .action((target: string, opts) => run('Deploy', async () => {
       if (target !== 'dev' && target !== 'prod') {
         console.error(clrError('Target must be "dev" or "prod"'));
@@ -46,7 +48,7 @@ export const deployCommand = new Command('deploy')
         target: string;
         elapsedMs: number;
         batch?: number;
-        phases?: Array<{ name: string; status: string; summary: string }>;
+        phases?: Array<{ name: string; status: string; summary: string; elapsedMs?: number }>;
         warning?: string;
         customDomains?: string[];
         skippedFiles?: string[];
@@ -65,8 +67,29 @@ export const deployCommand = new Command('deploy')
 
       const d = res.data;
 
+      // Deploy + verify in one command: after a successful deploy, run the
+      // same inspect pipeline `page inspect` uses against the live URL. An
+      // inspect failure is reported but never turns a successful deploy into
+      // a nonzero exit - the deploy DID land.
+      const inspectAfter = async (): Promise<void> => {
+        if (!opts.inspect) return;
+        if (!d.url) {
+          console.error(warning('--inspect skipped: this deploy produced no URL (e.g. --only database)'));
+          return;
+        }
+        const url = typeof opts.inspect === 'string' ? new URL(opts.inspect, d.url).toString() : d.url;
+        if (!opts.json) console.log('');
+        try {
+          await inspectPage(url, { json: opts.json });
+        } catch (err: any) {
+          console.error(warning(`Inspect failed (deploy itself succeeded): ${err?.message ?? err}`));
+        }
+      };
+
       if (opts.json) {
         console.log(JSON.stringify(d));
+        const failedJson = d.phases?.some(p => p.status === 'failed');
+        if (!failedJson) await inspectAfter();
         return;
       }
 
@@ -77,7 +100,8 @@ export const deployCommand = new Command('deploy')
 
       if (d.phases && d.phases.length > 0) {
         for (const phase of d.phases) {
-          console.log(`${statusIcon(phase.status)} ${bold(phase.name)}: ${phase.summary}`);
+          const ms = phase.elapsedMs != null ? muted(` (${phase.elapsedMs}ms)`) : '';
+          console.log(`${statusIcon(phase.status)} ${bold(phase.name)}: ${phase.summary}${ms}`);
         }
       } else {
         // Fallback for simple deploys without phases
@@ -126,5 +150,6 @@ export const deployCommand = new Command('deploy')
         // - to open it, inspect it, or report it. Always surface it so nobody
         // has to reconstruct the URL convention or guess a subdomain.
         if (d.url) console.log(`${muted('Live:')} ${brand(d.url)}`);
+        await inspectAfter();
       }
   }));

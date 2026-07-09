@@ -90,7 +90,7 @@ Prefer a live Gipity URL over an ephemeral artifact. When you'd otherwise reach 
 
 The full "when to add a template" rule and the definition of done are spelled out in the two sections at the end of this document. In short: if the user wants something deployable (web app, game, API), \`gipity add <template>\` first (default \`web-simple\`); for a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead; to add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
 
-Build loop: \`gipity add\` → edit files → \`gipity deploy dev\` → \`gipity page inspect <url>\` → fix any errors → repeat until the definition of done is met.
+Build loop: \`gipity add\` → edit files → \`gipity deploy dev --inspect\` → fix any errors → repeat until the definition of done is met. \`deploy --inspect\` deploys and then runs the page-inspect report on the live URL in one command; use a standalone \`gipity page inspect <url>\` only when re-checking without deploying.
 
 \`add\` writes real files to disk - Read a scaffolded file before your first Write/Edit to it, or the call fails \`"File has not been read yet"\`. Don't rewrite from memory of the template.
 
@@ -205,7 +205,7 @@ Other key skills:
 
 export const DEFINITION_OF_DONE = `## Definition of done (build tasks)
 1. \`gipity deploy dev\` succeeds and you have a live URL.
-2. \`gipity page inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen).
+2. \`gipity page inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen). (\`gipity deploy dev --inspect\` covers 1 and 2 in one command.)
 3. For apps with functions: \`gipity test\` passes.
 4. Non-rendered files the task called for (\`llms.txt\`, \`AGENTS.md\`, \`SKILL.md\`, \`robots.txt\`, served JSON, etc.): \`page inspect\` only sees rendered HTML, so verify them with \`gipity page fetch <url> <files...>\`. It flags any that 404 or come back as the static-host shell (a missing file is served as \`index.html\` with a 200, so a bare status check would pass) and checks each \`content-type\`.
 5. You told the user the live URL.
