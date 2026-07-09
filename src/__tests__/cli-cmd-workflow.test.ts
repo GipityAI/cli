@@ -97,7 +97,7 @@ test('gipity workflow run <name> --wait prints each step\'s status and output', 
   mock.on('GET /workflows/wf_WflowAa0/runs/wr_New00002', { body: { data: {
     short_guid: 'wr_New00002', status: 'completed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z',
     total_input_tokens: 0, total_output_tokens: 0,
-    step_runs: [{ step_order: 1, status: 'completed', output_json: { inserted_id: 'loc_42' }, tokens_used: 0, model_used: null, error_message: null, started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z' }],
+    step_runs: [{ step_order: 1, step_name: 'write_entry', status: 'completed', output_json: { inserted_id: 'loc_42' }, tokens_used: 0, model_used: null, error_message: null, started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z' }],
   } } });
   const r = await fresh(['workflow', 'run', 'Daily', '--wait']);
   assert.equal(r.status, 0, r.stderr);
@@ -105,6 +105,8 @@ test('gipity workflow run <name> --wait prints each step\'s status and output', 
   // that silently skipped every step - that's the whole point of --wait.
   assert.match(r.stdout, /inserted_id/);
   assert.match(r.stdout, /loc_42/);
+  // "1. completed" alone doesn't say which step ran.
+  assert.match(r.stdout, /write_entry/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 

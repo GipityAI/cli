@@ -69,7 +69,10 @@ logsCommand
     for (const log of res.data) {
       const time = new Date(log.created_at).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
       const dur = log.duration_ms !== null ? `${log.duration_ms}ms`.padEnd(8) : ''.padEnd(8);
-      const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : warning;
+      // The runtime writes 'ok' | 'error' | 'limit_exceeded'; it has never
+      // written 'success'. Matching on that dead value painted every healthy
+      // invocation with the warning colour, so a clean log read as a problem.
+      const statusColor = log.status === 'ok' ? success : log.status === 'error' ? clrError : warning;
       const status = statusColor(log.status.padEnd(8));
       const trigger = muted(log.trigger_type.padEnd(8));
       const err = log.error_message ? `  ${clrError(`"${log.error_message}"`)}` : '';

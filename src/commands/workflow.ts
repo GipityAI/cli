@@ -57,6 +57,8 @@ interface RunData {
 
 interface StepRunData {
   step_order: number;
+  /** The step's name from the workflow definition; null if it was deleted. */
+  step_name: string | null;
   status: string;
   output_json: unknown;
   tokens_used: number;
@@ -89,7 +91,9 @@ function printStepRuns(steps: StepRunData[], emptyNote: string): void {
   for (const s of steps) {
     const statusColor = s.status === 'completed' ? success : s.status === 'failed' ? clrError : muted;
     const model = s.model_used ? `  ${muted(`[${s.model_used}]`)}` : '';
-    console.log(`  ${s.step_order}. ${statusColor(s.status)}  ${s.tokens_used ?? 0} tokens${model}`);
+    // Name the step: "2. failed" alone doesn't say which one.
+    const name = s.step_name ? `${bold(s.step_name)}  ` : '';
+    console.log(`  ${s.step_order}. ${name}${statusColor(s.status)}  ${s.tokens_used ?? 0} tokens${model}`);
     if (s.error_message) console.log(`     ${clrError(s.error_message)}`);
     if (s.output_json !== null && s.output_json !== undefined) {
       console.log(JSON.stringify(s.output_json, null, 2).split('\n').map(l => `     ${l}`).join('\n'));
