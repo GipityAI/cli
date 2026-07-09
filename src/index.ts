@@ -174,6 +174,7 @@ const SKILL_DOCS: Record<string, string> = {
   service: 'service-call',
   notify: 'app-notify',
   payments: 'app-payments',
+  records: 'app-records',
   realtime: 'app-realtime',
   job: 'jobs',
   sandbox: 'sandbox-tools',

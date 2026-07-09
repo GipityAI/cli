@@ -161,8 +161,8 @@ const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', 
 export const pageEvalCommand = new Command('eval')
   .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script)')
   .argument('<url>', 'URL to load')
-  .argument('[expr]', 'JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file.')
-  .option('--file <path>', 'Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work.')
+  .argument('[expr]', 'JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file. Time budget: the body has ~20s to finish after page load - keep driver scripts within it.')
+  .option('--file <path>', 'Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work. Same ~20s post-load budget as <expr>.')
   .option(
     '--fixture <path>',
     'Host a local file and expose it to the eval as `fixtureUrl` (and under `fixtures` by basename) to fetch in-page. For verifying a render/parse path against a real binary (an MP3, an image) - no size limit, auto-deleted after the run. Repeat for several files (single-value so it never swallows the inline <expr>).',
@@ -192,6 +192,18 @@ export const pageEvalCommand = new Command('eval')
     }
     if (exprArg === undefined && !opts.file) {
       pageEvalCommand.error('error: Provide an inline <expr> arg or --file <path>');
+    }
+    // Catch a swapped <url>/<expr> locally: the server's bare "Invalid URL"
+    // names neither the bad argument nor the expected order, so it reads like
+    // the page failed to evaluate rather than like a mis-invocation.
+    if (!/^https?:\/\//i.test(url)) {
+      const flatUrl = url.replace(/\s+/g, ' ').trim();
+      const shownUrl = flatUrl.length > 60 ? `${flatUrl.slice(0, 57)}...` : flatUrl;
+      pageEvalCommand.error(
+        exprArg !== undefined && /^https?:\/\//i.test(exprArg)
+          ? `error: arguments are swapped — the URL is the FIRST positional: gipity page eval "${exprArg}" '<expr>'`
+          : `error: <url> must be an absolute http(s) URL (got: "${shownUrl}") — usage: gipity page eval <url> [expr]`,
+      );
     }
     let expr = exprArg as string;
     if (opts.file) {

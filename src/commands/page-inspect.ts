@@ -1,8 +1,9 @@
 import { Command, Option } from 'commander';
 import { post } from '../api.js';
 import { formatSize } from '../utils.js';
-import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
+import { brand, bold, error as clrError, warning, muted, info, success } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { getAuth } from '../auth.js';
 import { capWaitMs } from './page-eval.js';
 import { TOUCH_DEVICES as INSPECT_DEVICES, resolveTouchDevice } from './page-screenshot.js';
 
@@ -29,6 +30,7 @@ interface DebugBundle {
   } | null;
   transientConsole?: string[];
   crossOriginConsole?: string[];
+  auth?: { requested: boolean; established: boolean; detail?: string };
 }
 
 /** A console line is an error-level entry (page error or console.error). */
@@ -208,6 +210,14 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     console.log(`${brand('Inspecting')} ${bold(b.url || url)}`);
     if (b.navigationIncomplete) {
       console.log(`${warning('⚠ Navigation incomplete:')} ${b.note || 'page did not reach full load'}`);
+    }
+    // Auth state: without this line an agent can't distinguish "signed-in render"
+    // from "--auth silently no-op'd and I'm looking at the anonymous page".
+    if (b.auth?.requested) {
+      const who = getAuth()?.email;
+      console.log(b.auth.established
+        ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
+        : `${warning('Auth: session NOT established')}${b.auth.detail ? ` — ${b.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
     }
     console.log(`${muted('Title:')} ${b.title || '(none)'}`);
     console.log(`${muted('Elements:')} ${b.elementCount || 0}`);

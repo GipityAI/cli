@@ -39,24 +39,61 @@ const PIN_LANGUAGE_HELP = [
   '  gipity sandbox run --file script.sh         # inferred from the file extension',
 ].join('\n');
 
+// Words that open a code statement, not a command line. A single positional
+// starting with one of these is a JS/Python snippet whose language we must not
+// guess (see resolveLanguage) - everything here is either invalid in bash or,
+// worse, VALID in bash with a different meaning (`export FOO=1`, `for ...`).
+const CODE_OPENERS = new Set([
+  'const', 'let', 'var', 'function', 'async', 'await', 'import', 'export',
+  'console', 'require', 'print', 'def', 'class', 'lambda', 'from', 'return',
+  'for', 'while', 'if', 'try', 'with',
+]);
+
+/**
+ * True when a bare inline string is unmistakably a shell COMMAND LINE
+ * (`node tests/game.test.js`, `ls -la`, `ffmpeg -i in.mp4 out.gif`) rather
+ * than a code snippet. Deliberately conservative: one line, starts with a
+ * plain command word (no parens/quotes/operators in it), not a code opener,
+ * not an assignment (`x = 1` is Python-or-bash-ambiguous). Anything that
+ * fails these checks still goes through the explicit-pin error below.
+ */
+export function looksLikeShellCommand(code: string): boolean {
+  if (code.includes('\n')) return false;
+  const m = /^([A-Za-z0-9_.~/-]+)(\s|$)/.exec(code.trim());
+  if (!m) return false;
+  const token = m[1].toLowerCase();
+  if (CODE_OPENERS.has(token)) return false;
+  if (/^\s*[A-Za-z_][A-Za-z0-9_]*\s*=/.test(code)) return false; // assignment
+  // A lone bare word (`foo`) is as likely a typo as a command; require either
+  // arguments after the word or a path-shaped word (`./build.sh`, `bin/run`).
+  return /\s\S/.test(code.trim()) || token.includes('/');
+}
+
 /**
  * Resolve the language from an explicit signal, or exit.
  *
- * Precedence: interpreter token > --language > --file extension.
+ * Precedence: interpreter token > --language > --file extension > the
+ * command-line heuristic above (bash).
  *
- * There is no default. js/python/bash are mutually exclusive, and plenty of
- * snippets parse as more than one of them (`x = 1`, `a[0]`, `foo()`), so any
- * default silently runs some fraction of input in the wrong interpreter. The old
- * behavior defaulted to JavaScript, which meant a shell one-liner ran as JS and
- * died with a Node `SyntaxError` at `/work/_run.js` - after paying for a project
- * sync and a server round trip. Failing here instead costs nothing and says what
- * to type. (`docs/skills/sandbox-tools.md` used to carry a hand-written "always
- * pin the language" warning to work around this; the CLI enforces it now.)
+ * Beyond that there is no default. js/python/bash are mutually exclusive, and
+ * plenty of snippets parse as more than one of them (`x = 1`, `a[0]`, `foo()`),
+ * so a blanket default silently runs some fraction of input in the wrong
+ * interpreter. The old behavior defaulted to JavaScript, which meant a shell
+ * one-liner ran as JS and died with a Node `SyntaxError` at `/work/_run.js` -
+ * after paying for a project sync and a server round trip. The one shape we DO
+ * default is the unambiguous command line (`gipity sandbox run "node
+ * tests/game.test.js"`): it was the single most common rejected invocation,
+ * the CLI had everything it needed to run it, and no code snippet matches the
+ * heuristic. Ambiguous snippets still fail here, costing nothing and saying
+ * what to type. (`docs/skills/sandbox-tools.md` used to carry a hand-written
+ * "always pin the language" warning to work around this; the CLI enforces it
+ * now.)
  */
 export function resolveLanguage(opts: {
   langFromInterp?: string;
   langOpt?: string;
   filePath?: string;
+  inlineCode?: string;
 }): string {
   const explicit = opts.langFromInterp
     ?? (opts.langOpt ? LANG_MAP[opts.langOpt.toLowerCase()] ?? opts.langOpt : undefined);
@@ -77,6 +114,8 @@ export function resolveLanguage(opts: {
     console.error(dim(`Pass --language explicitly:\n  gipity sandbox run --language py --file ${opts.filePath}`));
     process.exit(1);
   }
+  if (opts.inlineCode && looksLikeShellCommand(opts.inlineCode)) return 'bash';
+
   console.error(clrError('No language specified for inline code.'));
   console.error(dim(`Pin it one of three ways:\n${PIN_LANGUAGE_HELP}`));
   process.exit(1);
@@ -244,11 +283,12 @@ GCC/Rust).
       }
     }
 
-    // Language precedence: interpreter token > --language > file extension.
-    // There is deliberately no fallback: resolveLanguage() exits when nothing
-    // pinned one, rather than guessing. This runs BEFORE the project sync and the
-    // server round trip below, so a missing language costs nothing but the message.
-    const language = resolveLanguage({ langFromInterp, langOpt: opts.language, filePath });
+    // Language precedence: interpreter token > --language > file extension >
+    // unambiguous-command-line heuristic (bash). resolveLanguage() exits when
+    // nothing pins one and the input isn't command-shaped, rather than guessing.
+    // This runs BEFORE the project sync and the server round trip below, so a
+    // missing language costs nothing but the message.
+    const language = resolveLanguage({ langFromInterp, langOpt: opts.language, filePath, inlineCode });
 
     // Args are good - now it's worth resolving (and announcing) the project.
     const { config } = await resolveProjectContext();

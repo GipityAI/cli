@@ -128,12 +128,13 @@ test('gipity sandbox run <interpreter> <inline-code> pins the language for a non
   assert.equal(posted?.code, 'echo hi');
 });
 
-// The language is never guessed. A shell one-liner used to run as JavaScript and
-// die with a Node SyntaxError at /work/_run.js - after a project sync and a server
-// round trip. Now it fails locally, immediately, and names the three ways to pin it.
-test('gipity sandbox run refuses to guess a language for inline code', async () => {
+// The language is never guessed for CODE snippets - `x = 1` parses as Python
+// AND bash-adjacent, `a[0]` as JS or Python, so a blanket default silently runs
+// some inputs in the wrong interpreter. Those still fail locally, immediately,
+// and name the three ways to pin the language.
+test('gipity sandbox run refuses to guess a language for ambiguous inline code', async () => {
   resetMock();
-  const r = await fresh(['sandbox', 'run', 'echo hi; node --version']);
+  const r = await fresh(['sandbox', 'run', 'x = 1']);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /No language specified/i);
   assert.match(r.stderr, /sandbox run bash/);
@@ -141,9 +142,25 @@ test('gipity sandbox run refuses to guess a language for inline code', async () 
   assert.match(r.stderr, /--file script\.sh/);
 });
 
+// But an unambiguous shell COMMAND LINE runs as bash without ceremony - it was
+// the single most common rejected invocation (`sandbox run "node tests/x.js"`),
+// and no code snippet matches the command-line shape.
+test('gipity sandbox run runs a bare command line as bash', async () => {
+  resetMock();
+  let posted: { language?: string; code?: string } | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as { language?: string; code?: string };
+    return { body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 50, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', 'node tests/game.test.js']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(posted?.language, 'bash');
+  assert.equal(posted?.code, 'node tests/game.test.js');
+});
+
 test('gipity sandbox run fails before syncing or calling the server when no language is pinned', async () => {
   resetMock();
-  const r = await fresh(['sandbox', 'run', 'echo hi']);
+  const r = await fresh(['sandbox', 'run', 'x = 1']);
   assert.notEqual(r.status, 0);
   const reqs = mock.requests();
   assert.ok(!reqs.some(q => q.url === '/projects/p_TestProj/sandbox/execute'), 'must not reach the server');

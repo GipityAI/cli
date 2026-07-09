@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { sync } from '../sync.js';
-import { success, muted, bold, warning } from '../colors.js';
+import { success, muted, bold, warning, error as clrError } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { createProgressReporter, withSpinner } from '../progress.js';
 
@@ -192,9 +192,14 @@ export const addCommand = new Command('add')
       }
       return;
     }
-    // No name = show the full help (usage + options + catalog), same as --help.
+    // No name is a usage error, not a help request: error + help on STDERR and
+    // a nonzero exit. (It used to outputHelp() to stdout and exit 0, which an
+    // agent piping through `tail` reads as a successful add that printed
+    // help-shaped output.)
     if (!name) {
-      command.outputHelp();
+      console.error(clrError('Missing template or kit name. Usage: gipity add <name>  (see the catalog below, or `gipity add --list`)'));
+      command.outputHelp({ error: true });
+      process.exitCode = 1;
       return;
     }
     const config = requireConfig();

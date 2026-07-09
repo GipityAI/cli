@@ -224,6 +224,20 @@ export const testCommand = new Command('test')
         console.log('');
       }
 
+      // Failures recap. Results stream incrementally above, but agents usually
+      // read this output through a `tail` window, so anything printed early is
+      // lost - restate every failure (name + assertion message) right before
+      // the summary, where it's guaranteed to survive truncation from the top.
+      if (data.failed > 0) {
+        console.log(clrError('Failures:'));
+        for (const r of data.results.filter(r => r.status === 'failed')) {
+          const where = r.path ? `${r.path}/` : '';
+          console.log(`  ${statusIcon('failed')} ${where}${r.name || '(unnamed test - the file may have crashed outside a test)'}`);
+          console.log(`      ${clrError(r.error || `(no assertion message recorded - inspect with: gipity test status ${runGuid} --json)`)}`);
+        }
+        console.log('');
+      }
+
       // Summary
       const parts: string[] = [];
       if (data.passed > 0) parts.push(success(`${data.passed} passed`));
