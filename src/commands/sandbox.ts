@@ -31,6 +31,52 @@ const INTERPRETERS: Record<string, string> = {
   sh: 'bash',
 };
 
+/** Truncate one arg for echoing back, so a 2 KB fragment doesn't flood the terminal. */
+function preview(arg: string): string {
+  const flat = arg.replace(/\s+/g, ' ').trim();
+  return flat.length > 60 ? `${flat.slice(0, 57)}...` : flat;
+}
+
+/**
+ * Inline code arrived as several positional args, which means the caller's shell
+ * split it before the CLI ever saw it. The old message ("Unrecognized
+ * invocation") just restated the rules and left the caller to guess which one it
+ * broke - an agent that hits this typically retries the same mangled quoting.
+ *
+ * So: show the fragments we actually received (the split point is the evidence),
+ * then name the usual cause. On PowerShell a double-quoted string interpolates
+ * `$(...)` and backslash is NOT an escape character, so a POSIX-style
+ * `"... $(cmd) ... \"$f\" ..."` one-liner both runs `cmd` locally and terminates
+ * the string early at `\"`. That is exactly how one quoted arg becomes many.
+ */
+function explainSplitArgs(args: string[]): string {
+  const looksInterpolated = args.some(a => a.includes('$(') || a.includes('`'));
+  const lines = [
+    clrError(`Inline code must be a single argument, but ${args.length} were received:`),
+    ...args.slice(0, 4).map((a, i) => dim(`  ${i + 1}: ${preview(a)}`)),
+    ...(args.length > 4 ? [dim(`  ... and ${args.length - 4} more`)] : []),
+    '',
+    'Your shell split the code before the CLI saw it.',
+  ];
+  if (looksInterpolated) {
+    lines.push(
+      dim('In PowerShell a double-quoted string interpolates $(...), and backslash does not'),
+      dim('escape a quote - so a POSIX one-liner runs its subshell locally and ends early.'),
+    );
+  }
+  lines.push(
+    '',
+    'Fix, in order of preference:',
+    dim('  1. Put the code in a file (best for anything with quotes, $(...), or newlines):'),
+    '       gipity sandbox run --file script.sh',
+    dim('  2. Use the interpreter shorthand on a file:'),
+    '       gipity sandbox run bash script.sh',
+    dim('  3. Keep it inline, but as ONE argument your shell will not split:'),
+    "       gipity sandbox run --language bash 'echo hi'",
+  );
+  return lines.join('\n');
+}
+
 /** Project-relative path from the process cwd, or undefined when there's
  *  no local config (one-off mode) or the cwd is at/above the project root. */
 function resolveRelativeCwd(): string | undefined {
@@ -97,7 +143,11 @@ CLI tools (ImageMagick, FFmpeg, webp/cwebp, optipng, jq, pandoc, exiftool,
 GCC/Rust).
 `)
   .action((args: string[] = [], opts, command: Command) => run('Sandbox', async () => {
-    const { config } = await resolveProjectContext();
+    // Everything below this point is pure argument validation - it reads the local
+    // filesystem and nothing else. It runs BEFORE resolveProjectContext() so a
+    // malformed invocation fails on the spot instead of first paying a project
+    // lookup (and printing a misleading "→ (project: …)" banner) only to reject
+    // the args a moment later.
 
     // Resolve the positional args into either inline code or a script-file path.
     // `run <interpreter> <file>` (e.g. `run python build_report.py`) is the natural
@@ -116,7 +166,7 @@ GCC/Rust).
     } else if (args.length === 1) {
       inlineCode = args[0];
     } else if (args.length > 1) {
-      console.error(clrError('Unrecognized invocation. Pass inline code as a single quoted arg, a script with --file <path>, or use the `run <python|node|bash> <file>` shorthand.'));
+      console.error(explainSplitArgs(args));
       process.exit(1);
     }
 
@@ -157,6 +207,9 @@ GCC/Rust).
       console.error(clrError(`Invalid language: ${opts.language}. Use: js, py, or bash`));
       process.exit(1);
     }
+
+    // Args are good - now it's worth resolving (and announcing) the project.
+    const { config } = await resolveProjectContext();
 
     const timeout = parseInt(opts.timeout, 10);
     const cwd = resolveRelativeCwd();

@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runCliAsync } from './helpers/spawn-cli.js';
+import { runCliAsync, makeTmpHome } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 
@@ -193,4 +193,69 @@ test('gipity sandbox run syncs local inputs up before the execute call', async (
   assert.ok(treeIdx >= 0, 'expected a pre-run sync (files/tree fetch)');
   assert.ok(execIdx >= 0, 'expected the execute call');
   assert.ok(treeIdx < execIdx, 'expected the input sync to happen before execute');
+});
+
+// ── Malformed invocations are rejected before any project/network work ────────
+//
+// `sandbox run` used to call resolveProjectContext() first, so a command that
+// could never run still paid for a project lookup - and outside a linked project
+// dir that lookup is a real API round trip (the Home fallback fetches
+// /projects/default) that can even fail with "Not logged in" and mask the actual
+// mistake. Argument validation reads only the local filesystem, so it goes first.
+
+/** Run from a NON-project cwd, where resolveProjectContext() would take the Home
+ *  fallback and hit the API. Any request reaching the mock means we resolved the
+ *  project before validating the args. */
+function outsideProject(args: string[]) {
+  return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: makeTmpHome() });
+}
+
+test('gipity sandbox run rejects shell-split inline code without touching the API', async () => {
+  mock.reset();
+  const r = await outsideProject(['sandbox', 'run', '--language', 'bash', 'echo', 'hi']);
+
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Inline code must be a single argument, but 2 were received/);
+  // The received fragments are the evidence for where the shell split it.
+  assert.match(r.stderr, /1: echo/);
+  assert.match(r.stderr, /2: hi/);
+  assert.match(r.stderr, /--file script\.sh/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede argument validation');
+  assert.doesNotMatch(r.stderr, /project:/);
+});
+
+test('gipity sandbox run explains PowerShell quoting only when it sees interpolation', async () => {
+  mock.reset();
+  // The real-world break: `"... $(find ...) ... \"$f\" ..."` in PowerShell.
+  const withSubshell = await outsideProject([
+    'sandbox', 'run', '--language', 'bash', 'for f in $(find src -name', "'*.js');", 'do echo "$f"; done',
+  ]);
+  assert.equal(withSubshell.status, 1);
+  assert.match(withSubshell.stderr, /PowerShell/);
+
+  mock.reset();
+  const plain = await outsideProject(['sandbox', 'run', '--language', 'bash', 'echo', 'hi']);
+  assert.equal(plain.status, 1);
+  // No `$(` or backtick in the args - don't blame a shell the caller isn't using.
+  assert.doesNotMatch(plain.stderr, /PowerShell/);
+});
+
+test('gipity sandbox run rejects an invalid --language without touching the API', async () => {
+  mock.reset();
+  const r = await outsideProject(['sandbox', 'run', '--language', 'cobol', 'x = 1']);
+
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Invalid language: cobol/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede argument validation');
+});
+
+test('gipity sandbox run rejects inline code plus --file without touching the API', async () => {
+  mock.reset();
+  const script = join(makeTmpHome(), 'script.sh');
+  writeFileSync(script, 'echo hi\n');
+  const r = await outsideProject(['sandbox', 'run', '--file', script, 'echo hi']);
+
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /not both/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede argument validation');
 });
