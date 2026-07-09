@@ -31,7 +31,7 @@ test('gipity sandbox run prints stdout from the server', async () => {
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 0, stdout: 'hello from sandbox', stderr: '', durationMs: 100, timedOut: false,
   } } });
-  const r = await fresh(['sandbox', 'run', 'console.log("hello from sandbox")']);
+  const r = await fresh(['sandbox', 'run', '--language', 'js', 'console.log("hello from sandbox")']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /hello from sandbox/);
   assert.doesNotMatch(r.stdout, /undefined/);
@@ -64,7 +64,7 @@ test('gipity sandbox run auto-pulls output files to the local cwd', async () => 
     treeFetched = true;
     return { body: { data: [] } };
   });
-  const r = await fresh(['sandbox', 'run', 'touch out/result.txt']);
+  const r = await fresh(['sandbox', 'run', 'bash', 'touch out/result.txt']);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(treeFetched, 'expected sandbox run to trigger a sync (files/tree fetch)');
   assert.match(r.stdout, /Output files synced to this directory/);
@@ -128,19 +128,39 @@ test('gipity sandbox run <interpreter> <inline-code> pins the language for a non
   assert.equal(posted?.code, 'echo hi');
 });
 
-test('gipity sandbox run hints at the JS default when a shell snippet fails as JavaScript', async () => {
+// The language is never guessed. A shell one-liner used to run as JavaScript and
+// die with a Node SyntaxError at /work/_run.js - after a project sync and a server
+// round trip. Now it fails locally, immediately, and names the three ways to pin it.
+test('gipity sandbox run refuses to guess a language for inline code', async () => {
   resetMock();
-  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
-    exitCode: 1, stdout: '', stderr: "/work/_run.js:1\necho hi\n^^^^\nSyntaxError: Unexpected identifier 'hi'\n    at wrapSafe (node:internal/modules/cjs/loader:1464:18)",
-    durationMs: 10, timedOut: false,
-  } } });
   const r = await fresh(['sandbox', 'run', 'echo hi; node --version']);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /ran as JavaScript/);
+  assert.match(r.stderr, /No language specified/i);
+  assert.match(r.stderr, /sandbox run bash/);
   assert.match(r.stderr, /--language bash/);
+  assert.match(r.stderr, /--file script\.sh/);
 });
 
-test('gipity sandbox run does NOT hint at the JS default when the language was explicit', async () => {
+test('gipity sandbox run fails before syncing or calling the server when no language is pinned', async () => {
+  resetMock();
+  const r = await fresh(['sandbox', 'run', 'echo hi']);
+  assert.notEqual(r.status, 0);
+  const reqs = mock.requests();
+  assert.ok(!reqs.some(q => q.url === '/projects/p_TestProj/sandbox/execute'), 'must not reach the server');
+  assert.ok(!reqs.some(q => q.url.startsWith('/projects/p_TestProj/files/tree')), 'must not sync the project');
+});
+
+test('gipity sandbox run --file with an unrecognized extension asks for --language', async () => {
+  resetMock();
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(d, 'script.txt'), 'echo hi');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', '--file', 'script.txt'], { env: { HOME: home }, cwd: d });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Cannot infer the language/i);
+  assert.match(r.stderr, /--language/);
+});
+
+test('gipity sandbox run surfaces a failing run\'s stderr as-is when the language was explicit', async () => {
   resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 1, stdout: '', stderr: 'SyntaxError: bad', durationMs: 10, timedOut: false,
@@ -173,7 +193,7 @@ test('gipity sandbox run pushes local inputs up before running, even with no out
     treeFetched = true;
     return { body: { data: [] } };
   });
-  const r = await fresh(['sandbox', 'run', 'console.log("done")']);
+  const r = await fresh(['sandbox', 'run', '--language', 'js', 'console.log("done")']);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(treeFetched, 'expected sandbox run to push local inputs up before executing');
 });

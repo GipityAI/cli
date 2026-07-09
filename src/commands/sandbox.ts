@@ -31,6 +31,56 @@ const INTERPRETERS: Record<string, string> = {
   sh: 'bash',
 };
 
+/** The three ways to pin a language, shown whenever none was pinned. */
+const PIN_LANGUAGE_HELP = [
+  '  gipity sandbox run bash "<code>"            # interpreter token (bash | python | node)',
+  '  gipity sandbox run --language bash "<code>" # explicit flag (js | py | bash)',
+  '  gipity sandbox run --file script.sh         # inferred from the file extension',
+].join('\n');
+
+/**
+ * Resolve the language from an explicit signal, or exit.
+ *
+ * Precedence: interpreter token > --language > --file extension.
+ *
+ * There is no default. js/python/bash are mutually exclusive, and plenty of
+ * snippets parse as more than one of them (`x = 1`, `a[0]`, `foo()`), so any
+ * default silently runs some fraction of input in the wrong interpreter. The old
+ * behavior defaulted to JavaScript, which meant a shell one-liner ran as JS and
+ * died with a Node `SyntaxError` at `/work/_run.js` - after paying for a project
+ * sync and a server round trip. Failing here instead costs nothing and says what
+ * to type. (`docs/skills/sandbox-tools.md` used to carry a hand-written "always
+ * pin the language" warning to work around this; the CLI enforces it now.)
+ */
+export function resolveLanguage(opts: {
+  langFromInterp?: string;
+  langOpt?: string;
+  filePath?: string;
+}): string {
+  const explicit = opts.langFromInterp
+    ?? (opts.langOpt ? LANG_MAP[opts.langOpt.toLowerCase()] ?? opts.langOpt : undefined);
+
+  if (explicit && !['javascript', 'python', 'bash'].includes(explicit)) {
+    console.error(clrError(`Invalid language: ${opts.langOpt}. Use: js, py, or bash`));
+    process.exit(1);
+  }
+  if (explicit) return explicit;
+
+  const fromExt = opts.filePath
+    ? LANG_MAP[extname(opts.filePath).slice(1).toLowerCase()]
+    : undefined;
+  if (fromExt) return fromExt;
+
+  if (opts.filePath) {
+    console.error(clrError(`Cannot infer the language of ${opts.filePath} from its extension (expected .js, .py, or .sh).`));
+    console.error(dim(`Pass --language explicitly:\n  gipity sandbox run --language py --file ${opts.filePath}`));
+    process.exit(1);
+  }
+  console.error(clrError('No language specified for inline code.'));
+  console.error(dim(`Pin it one of three ways:\n${PIN_LANGUAGE_HELP}`));
+  process.exit(1);
+}
+
 /** Truncate one arg for echoing back, so a 2 KB fragment doesn't flood the terminal. */
 function preview(arg: string): string {
   const flat = arg.replace(/\s+/g, ' ').trim();
@@ -94,7 +144,11 @@ export const sandboxCommand = new Command('sandbox')
 sandboxCommand
   .command('run [args...]')
   .description('Run code')
-  .option('--language <language>', 'Language: js, py, or bash', 'js')
+  // No default. js/python/bash are mutually exclusive and the same snippet can
+  // parse as more than one of them, so an implicit default silently runs code in
+  // the wrong interpreter. Every invocation must pin the language via this flag,
+  // an interpreter token, or a --file extension - see resolveLanguage().
+  .option('--language <language>', 'Language: js, py, or bash (required unless pinned by an interpreter token or --file extension)')
   .option('--file <path>', 'Read the code body from a file instead of the inline <code> arg; --language is inferred from the extension when not given')
   .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
   .option(
@@ -142,7 +196,7 @@ Pre-installed: Python (pandas, numpy, matplotlib, Pillow, scipy, bs4),
 CLI tools (ImageMagick, FFmpeg, webp/cwebp, optipng, jq, pandoc, exiftool,
 GCC/Rust).
 `)
-  .action((args: string[] = [], opts, command: Command) => run('Sandbox', async () => {
+  .action((args: string[] = [], opts) => run('Sandbox', async () => {
     // Everything below this point is pure argument validation - it reads the local
     // filesystem and nothing else. It runs BEFORE resolveProjectContext() so a
     // malformed invocation fails on the spot instead of first paying a project
@@ -189,24 +243,11 @@ GCC/Rust).
       }
     }
 
-    // Language precedence: interpreter token > file extension (unless --language
-    // was passed explicitly) > the --language value (default js).
-    const fromExt = filePath && !langFromInterp && command.getOptionValueSource('language') === 'default'
-      ? LANG_MAP[extname(filePath).slice(1).toLowerCase()]
-      : undefined;
-    const language = langFromInterp || fromExt || LANG_MAP[opts.language] || opts.language;
-
-    // True when the run fell back to the implicit JS default - nothing in the
-    // command shape pinned a language. Used to explain the execution mode if a
-    // shell/Python snippet gets parsed as JavaScript and blows up (see hint below).
-    const usedDefaultJs = !langFromInterp
-      && command.getOptionValueSource('language') === 'default'
-      && language === 'javascript';
-
-    if (!['javascript', 'python', 'bash'].includes(language)) {
-      console.error(clrError(`Invalid language: ${opts.language}. Use: js, py, or bash`));
-      process.exit(1);
-    }
+    // Language precedence: interpreter token > --language > file extension.
+    // There is deliberately no fallback: resolveLanguage() exits when nothing
+    // pinned one, rather than guessing. This runs BEFORE the project sync and the
+    // server round trip below, so a missing language costs nothing but the message.
+    const language = resolveLanguage({ langFromInterp, langOpt: opts.language, filePath });
 
     // Args are good - now it's worth resolving (and announcing) the project.
     const { config } = await resolveProjectContext();
@@ -280,12 +321,8 @@ GCC/Rust).
         for (const f of res.data.outputFiles) console.log(`${f}`);
       }
       if (res.data.exitCode !== 0) {
-        // A SyntaxError / CJS-loader trace under the implicit JS default almost
-        // always means the input was shell or Python that got run as JavaScript.
-        // The raw Node stack trace never says which mode ran, so name it.
-        if (usedDefaultJs && /SyntaxError|cjs\/loader|wrapSafe/.test(res.data.stderr || '')) {
-          console.error(dim('Hint: ran as JavaScript (the default). For a shell command pass `--language bash` (or `gipity sandbox run bash "<cmd>"`); for Python pass `--language py`.'));
-        }
+        // No "did you mean another language?" hint is needed: the language is now
+        // always something the caller pinned, never a silent default we chose.
         process.exit(res.data.exitCode);
       }
     }

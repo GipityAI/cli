@@ -8,15 +8,23 @@ import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
 
-type Viewport = { width: number; height: number; deviceScaleFactor?: number };
+type Viewport = { width: number; height: number; deviceScaleFactor?: number; device?: string };
 
+/** `mobile` and `tablet` name a real handset/tablet rather than just a window size.
+ *  The server emulates it end to end - mobile user-agent, DPR, and crucially TOUCH,
+ *  so a page that gates its mobile UI on `'ontouchstart' in window` or
+ *  `navigator.maxTouchPoints` renders that UI instead of its desktop layout. The
+ *  dimensions here mirror the device's own metrics (reported in meta.json).
+ *  `device` values must be ones the server's BROWSER_DEVICES accepts. */
 const DEVICE_PRESETS: Record<string, Viewport> = {
   default: { width: 1280, height: 720 },
   desktop: { width: 1920, height: 1080 },
   laptop:  { width: 1366, height: 768 },
-  tablet:  { width: 768,  height: 1024, deviceScaleFactor: 2 },
-  mobile:  { width: 390,  height: 844,  deviceScaleFactor: 3 },
+  tablet:  { width: 820,  height: 1180, deviceScaleFactor: 2, device: 'iPad' },
+  mobile:  { width: 393,  height: 852,  deviceScaleFactor: 3, device: 'iPhone 15' },
 };
+
+const TOUCH_DEVICE_ALIASES: Record<string, string> = { mobile: 'iPhone 15', tablet: 'iPad' };
 
 type PagePerformance = { ttfb: number; domReady: number; load: number; lcp: number | null };
 
@@ -30,7 +38,7 @@ type ScreenshotMeta = {
   performance: PagePerformance | null;
   screenshots: Array<{
     index: number;
-    viewport: Viewport & { deviceScaleFactor: number };
+    viewport: Viewport & { deviceScaleFactor: number; touch: boolean };
     width: number;
     height: number;
     screenshotSizeBytes: number;
@@ -109,14 +117,42 @@ function parseViewportString(s: string): Viewport {
   return dpr ? { width, height, deviceScaleFactor: dpr } : { width, height };
 }
 
+/** Device metrics for the exact server device names, so `--device "Pixel 9"` works
+ *  alongside the friendly `mobile`/`tablet` presets. Mirrors agent-browser's own
+ *  descriptors; the server re-applies them, these are for filenames + meta. */
+const EXACT_DEVICE_VIEWPORTS: Record<string, Viewport> = {
+  'iPhone 15':     { width: 393,  height: 852,  deviceScaleFactor: 3,     device: 'iPhone 15' },
+  'iPhone 16':     { width: 393,  height: 852,  deviceScaleFactor: 3,     device: 'iPhone 16' },
+  'iPhone 16 Pro': { width: 402,  height: 874,  deviceScaleFactor: 3,     device: 'iPhone 16 Pro' },
+  'iPhone 17':     { width: 402,  height: 874,  deviceScaleFactor: 3,     device: 'iPhone 17' },
+  'iPad':          { width: 820,  height: 1180, deviceScaleFactor: 2,     device: 'iPad' },
+  'iPad Pro':      { width: 1024, height: 1366, deviceScaleFactor: 2,     device: 'iPad Pro' },
+  'Pixel 9':       { width: 412,  height: 923,  deviceScaleFactor: 2.625, device: 'Pixel 9' },
+  'Galaxy S25':    { width: 360,  height: 800,  deviceScaleFactor: 3,     device: 'Galaxy S25' },
+};
+
+/** Emulatable devices the server accepts (its BROWSER_DEVICES). Shared with
+ *  `page inspect` so both commands take the same names. */
+export const TOUCH_DEVICES = Object.keys(EXACT_DEVICE_VIEWPORTS);
+
+/** Case-insensitively resolve a device name or `mobile`/`tablet` alias to a server
+ *  device name. Used by `page inspect`, which takes one device rather than viewports. */
+export function resolveTouchDevice(name: string): string {
+  const key = name.trim().toLowerCase();
+  if (TOUCH_DEVICE_ALIASES[key]) return TOUCH_DEVICE_ALIASES[key];
+  const exact = TOUCH_DEVICES.find((d) => d.toLowerCase() === key);
+  if (exact) return exact;
+  throw new Error(`Unknown --device: "${name}" (known: mobile, tablet, ${TOUCH_DEVICES.join(', ')})`);
+}
+
 function resolveDevice(name: string): Viewport {
   const key = name.trim().toLowerCase();
   const preset = DEVICE_PRESETS[key];
-  if (!preset) {
-    const available = Object.keys(DEVICE_PRESETS).join(', ');
-    throw new Error(`Unknown --device preset: "${name}" (known: ${available})`);
-  }
-  return preset;
+  if (preset) return preset;
+  const exact = TOUCH_DEVICES.find((d) => d.toLowerCase() === key);
+  if (exact) return EXACT_DEVICE_VIEWPORTS[exact];
+  const available = [...Object.keys(DEVICE_PRESETS), ...TOUCH_DEVICES].join(', ');
+  throw new Error(`Unknown --device preset: "${name}" (known: ${available})`);
 }
 
 function splitCsv(values: string[] | undefined): string[] {
@@ -138,7 +174,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--action <js>', 'Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs after the post-load delay, then settles again before the shot.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
-  .option('--device <names>', `Viewport preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag)`, appendOption, [] as string[])
+  .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
@@ -235,6 +271,8 @@ export const pageScreenshotCommand = new Command('screenshot')
             width: s.viewport.width,
             height: s.viewport.height,
             device_scale_factor: s.viewport.deviceScaleFactor,
+            ...(s.viewport.device ? { device: s.viewport.device } : {}),
+            touch: !!s.viewport.touch,
           },
           width: s.width,
           height: s.height,
@@ -253,6 +291,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       if (meta.finalUrl) console.log(`${label('Web page URL')} ${meta.finalUrl}`);
       if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
       if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
+      if (s.viewport.device) console.log(`${label('Emulated device')} ${s.viewport.device} ${muted('(touch events, mobile user-agent)')}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
       console.log(`${label('Screenshot size')} ${sizePart}`);
       if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
@@ -269,7 +308,8 @@ export const pageScreenshotCommand = new Command('screenshot')
     for (let i = 0; i < meta.screenshots.length; i++) {
       const s = meta.screenshots[i];
       const dims = `${s.viewport.width}×${s.viewport.height}${s.viewport.deviceScaleFactor > 1 ? ` @${s.viewport.deviceScaleFactor}x` : ''}`;
-      console.log(`\n${brand('@ ' + dims)}`);
+      const deviceTag = s.viewport.device ? muted(` — ${s.viewport.device}, touch`) : '';
+      console.log(`\n${brand('@ ' + dims)}${deviceTag}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
       console.log(`${label('Screenshot size')} ${sizePart}`);
       if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);

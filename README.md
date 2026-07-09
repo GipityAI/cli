@@ -138,7 +138,7 @@ gipity sync down     # Pull remote changes
 | `gipity chat <message>` | Send a message to your Gipity agent |
 | `gipity db` | Query, list, create, or drop project databases |
 | `gipity memory` | Read/write agent and project memory |
-| `gipity sandbox run <code>` | Execute code in a sandboxed container |
+| `gipity sandbox run <code> --lang <js\|py\|bash>` | Execute code in a sandboxed container (language is required) |
 | `gipity project` | List, create, switch, or delete projects |
 | `gipity agent` | List, create, switch, or configure agents |
 | `gipity approval` | List, create, answer, or cancel pending approvals |
@@ -208,7 +208,7 @@ gipity memory write design_notes "use dark theme" --project
 Run code in a sandboxed Docker container with no network access. JavaScript, Python, and Bash.
 
 ```bash
-gipity sandbox run "console.log('Hello')"
+gipity sandbox run "console.log('Hello')" --lang js
 gipity sandbox run "import pandas; print(pandas.__version__)" --lang py
 gipity sandbox run "echo hello" --lang bash
 ```

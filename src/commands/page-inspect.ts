@@ -4,6 +4,7 @@ import { formatSize } from '../utils.js';
 import { brand, bold, error as clrError, warning, muted, info } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { capWaitMs } from './page-eval.js';
+import { TOUCH_DEVICES as INSPECT_DEVICES, resolveTouchDevice } from './page-screenshot.js';
 
 interface DebugBundle {
   url: string;
@@ -67,6 +68,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps run headlessly (audio is a built-in tone, not real speech)')
+  .option('--device <name>', `Inspect as a real touch device: ${INSPECT_DEVICES.join(', ')}. Emulates touch events, mobile user-agent and DPR, so a touch-gated mobile layout is what gets inspected.`)
   .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
   // an image here (`page screenshot` is the single path for that) — just point there.
@@ -89,6 +91,7 @@ export const pageInspectCommand = new Command('inspect')
       waitForSelector: opts.waitFor || undefined,
       waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
       fakeMedia: opts.fakeMedia || undefined,
+      device: opts.device ? resolveTouchDevice(opts.device) : undefined,
       auth: opts.auth || undefined,
     };
 

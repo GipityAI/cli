@@ -751,6 +751,70 @@ async function mockScreenshot() {
   mock.on('POST /tools/browser/screenshot', { raw: tar, contentType: 'application/x-tar' });
 }
 
+// ── device emulation: --device mobile must request a real touch device ─────
+// A phone-sized viewport alone leaves `'ontouchstart' in window` false, so an app
+// that gates its mobile controls on touch renders its desktop layout instead.
+
+type ShotBody = { viewports?: Array<{ width: number; height: number; device?: string }> };
+
+test('gipity page screenshot --device mobile asks the server to emulate a touch device', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--device', 'mobile', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  const vps = (req!.body as ShotBody).viewports!;
+  assert.equal(vps.length, 1);
+  assert.equal(vps[0].device, 'iPhone 15', '--device mobile must send a device name, not just a viewport');
+});
+
+test('gipity page screenshot --device desktop sends a plain viewport (no device emulation)', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--device', 'desktop', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  const vps = (req!.body as ShotBody).viewports!;
+  assert.equal(vps[0].device, undefined);
+  assert.equal(vps[0].width, 1920);
+});
+
+test('gipity page screenshot accepts an exact device name', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--device', 'Pixel 9', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as ShotBody).viewports![0].device, 'Pixel 9');
+});
+
+test('gipity page screenshot rejects an unknown --device with the known names', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--device', 'Nokia 3310']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /Nokia 3310/);
+  assert.match(r.stderr + r.stdout, /iPhone 15/);
+});
+
+test('gipity page inspect --device mobile resolves the alias to a server device name', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run(['page', 'inspect', 'https://example.com', '--device', 'mobile']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/inspect');
+  assert.equal((req!.body as { device?: string }).device, 'iPhone 15');
+});
+
+test('gipity page inspect without --device sends no device', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run(['page', 'inspect', 'https://example.com']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/inspect');
+  assert.equal((req!.body as { device?: string }).device, undefined);
+});
+
 test('gipity page screenshot honors --wait as an alias for --post-load-delay', async () => {
   mock.reset();
   await mockScreenshot();
