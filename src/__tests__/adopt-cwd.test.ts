@@ -200,4 +200,9 @@ describe('formatBytes', () => {
     assert.equal(formatBytes(1024 * 1024 * 1024), '1.00 GB');
     assert.equal(formatBytes(2.5 * 1024 * 1024 * 1024), '2.50 GB');
   });
+
+  it('TB for ≥ TB (the top plan\'s storage quota is a flat 1 TB)', () => {
+    assert.equal(formatBytes(1024 ** 4), '1.00 TB');
+    assert.equal(formatBytes(2.5 * 1024 ** 4), '2.50 TB');
+  });
 });

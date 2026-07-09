@@ -170,13 +170,15 @@ export function formatCwdLabel(cwd: string): string {
   return parts.slice(-2).join('/');
 }
 
-/** Format byte count handling KB/MB/GB. utils.formatSize tops out at MB,
- *  which prints "1024.0 MB" for the 1 GB refuse threshold. */
+/** Format byte count handling KB/MB/GB/TB. utils.formatSize tops out at MB,
+ *  which prints "1024.0 MB" for the 1 GB refuse threshold. TB matters for
+ *  storage quotas, where the top plan is a flat 1 TB. */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  return `${(n / 1024 ** 4).toFixed(2)} TB`;
 }
 
 export interface AdoptResult {
