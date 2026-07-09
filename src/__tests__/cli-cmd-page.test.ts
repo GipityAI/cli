@@ -727,13 +727,14 @@ test('page test --observe warns on an unrecognized {{token}} instead of sending 
 // ── screenshot --wait / --post-load-delay (request-body) ───────────────────
 
 /** Pack a minimal screenshot tar (meta.json + one png) the CLI can parse. */
-function screenshotTar(): Promise<Buffer> {
+function screenshotTar(metaExtra: Record<string, unknown> = {}): Promise<Buffer> {
   const meta = {
     full: false, finalUrl: 'https://example.com/', title: 'Example', status: 200, performance: null,
     screenshots: [{
       viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
       width: 1280, height: 720, screenshotSizeBytes: 4, phase: 'initial-load',
     }],
+    ...metaExtra,
   };
   const pack = tarPack.pack();
   const chunks: Buffer[] = [];
@@ -746,8 +747,8 @@ function screenshotTar(): Promise<Buffer> {
   });
 }
 
-async function mockScreenshot() {
-  const tar = await screenshotTar();
+async function mockScreenshot(metaExtra: Record<string, unknown> = {}) {
+  const tar = await screenshotTar(metaExtra);
   mock.on('POST /tools/browser/screenshot', { raw: tar, contentType: 'application/x-tar' });
 }
 
@@ -987,4 +988,114 @@ test('page fetch: MISSING (fetch failed) when the host is unreachable', async ()
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /MISSING\s+llms\.txt/);
   assert.match(r.stdout, /unreachable/);
+});
+
+// ── page eval --reload: two-phase persistence check ─────────────────────────
+// Runs <expr>, reloads the page in place (storage preserved), then runs the
+// --reload expression against the post-reload DOM — all one command.
+
+test('gipity page eval --reload sends reloadExpr and prints an After reload section', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-rl', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-rl', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"seeded"', truncated: false,
+    reloadResult: '{"restored":true}', reloadTruncated: false,
+  } } });
+  const r = await run([
+    'page', 'eval', 'https://example.com',
+    "localStorage.setItem('k','v')",
+    '--reload', "localStorage.getItem('k')",
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { reloadExpr?: string }).reloadExpr, "localStorage.getItem('k')");
+  assert.match(r.stdout, /"seeded"/);
+  assert.match(r.stdout, /After reload/);
+  assert.match(r.stdout, /"restored":true/);
+});
+
+test('gipity page eval --reload-file reads the post-reload expression from a file', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-rlf', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-rlf', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '1', truncated: false,
+    reloadResult: '2', reloadTruncated: false,
+  } } });
+  const reloadPath = join(home, 'after-reload.js');
+  const reloadScript = 'return document.querySelectorAll(".todo").length;';
+  writeFileSync(reloadPath, reloadScript);
+  const r = await run(['page', 'eval', 'https://example.com', '1', '--reload-file', reloadPath, '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { reloadExpr?: string }).reloadExpr, reloadScript);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.reloadResult, '2');
+});
+
+test('gipity page eval rejects passing both --reload and --reload-file', async () => {
+  mock.reset();
+  const reloadPath = join(home, 'after-reload-2.js');
+  writeFileSync(reloadPath, '1');
+  const r = await run(['page', 'eval', 'https://example.com', '1', '--reload', '2', '--reload-file', reloadPath]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /either --reload <expr> or --reload-file/);
+});
+
+test('gipity page eval without --reload sends no reloadExpr and prints no reload section', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-norl', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-norl', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '1', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '1']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { reloadExpr?: string }).reloadExpr, undefined);
+  assert.doesNotMatch(r.stdout, /After reload/);
+});
+
+// ── auth-state parity: eval + screenshot report the --auth outcome ──────────
+// inspect already prints an Auth: line; eval and screenshot must too, so an
+// agent can tell a signed-in run from "--auth silently no-op'd".
+
+test('gipity page eval prints the auth line when the job record carries auth state', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-auth', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-auth', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"hi"', truncated: false,
+    auth: { requested: true, established: true },
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'document.title', '--auth']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /session established/);
+});
+
+test('gipity page eval warns when --auth did not establish a session', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-noauth', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-noauth', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"hi"', truncated: false,
+    auth: { requested: true, established: false, detail: 'Invalid or expired token' },
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'document.title', '--auth']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /session NOT established/);
+  assert.match(r.stdout, /Invalid or expired token/);
+});
+
+test('gipity page screenshot prints the auth line from meta.json', async () => {
+  mock.reset();
+  await mockScreenshot({ auth: { requested: true, established: true } });
+  const r = await run(['page', 'screenshot', 'https://example.com', '--auth', '-o', join(home, 'shot-auth.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /session established/);
+});
+
+test('gipity page screenshot warns when --auth did not establish a session', async () => {
+  mock.reset();
+  await mockScreenshot({ auth: { requested: true, established: false, detail: 'Missing token' } });
+  const r = await run(['page', 'screenshot', 'https://example.com', '--auth', '-o', join(home, 'shot-noauth.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /session NOT established/);
+  assert.match(r.stdout, /Missing token/);
 });

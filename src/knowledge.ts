@@ -138,6 +138,7 @@ gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sand
 - **Never include PII or user data** (emails, names, secrets, tokens, prompt/file contents) — describe the platform problem in the abstract.
 - File it for *platform* problems, not your own mistakes or the app's own bugs. One report per distinct problem.
 - Reports go to a review queue for the team to triage into fixes; see what you've filed with \`gipity bug list\`.
+- Filed one by mistake? Withdraw it yourself: \`gipity bug retract <report-id> [--reason "<why>"]\` — works while it's still queued (status new/triaged). Never file a second report asking a human to close the first.
 
 ## Tool output is complete and synchronous
 

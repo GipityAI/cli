@@ -7,6 +7,11 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, resolve, join } from 'path';
 import { LOCAL_ENTRY } from './state.js';
 import { isBootstrapped, bootstrap } from './bootstrap.js';
+import { installOutputTrace } from '../trace.js';
+
+// Before anything can print: with GIPITY_TRACE_OUTPUT=1, tee all stdout/stderr
+// to ~/.gipity/trace/ (silent-success diagnosis, cli#125/#126/#108).
+installOutputTrace('shim');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(__dirname, '..', '..');

@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { get, post, del } from '../api.js';
+import { get, post, del, publicPost } from '../api.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, bold, muted, success, warning } from '../colors.js';
 import { run, printList, emitField } from '../helpers/index.js';
@@ -49,20 +49,40 @@ fnCommand
     });
   }));
 
+/** Invoke a function exactly like an anonymous visitor: mint the same
+ *  short-lived public app token the browser SDK uses (best-effort — public
+ *  functions run with no token at all), POST with no user credentials, and
+ *  return the standard envelope. A 401 here is the correct answer for an
+ *  auth-gated function — the server's message is surfaced as-is, with no
+ *  "run: gipity login" misdirection. */
+async function callAnon(projectGuid: string, name: string, body: unknown): Promise<{ data: any }> {
+  let appToken: string | undefined;
+  try {
+    const minted = await publicPost<{ data: { token: string } }>('/api/token', { app: projectGuid });
+    appToken = minted.data.token;
+  } catch { /* public functions work without a token; auth-gated ones will 401 with the real reason */ }
+  return publicPost<{ data: any }>(
+    `/api/${projectGuid}/fn/${encodeURIComponent(name)}`,
+    body,
+    appToken ? { 'X-App-Token': appToken } : undefined,
+  );
+}
+
 fnCommand
   .command('call <name> [body]')
   .description('Call a function')
   .option('--data <json>', 'JSON request body')
+  .option('--anon', 'Call as an anonymous visitor (the public path a signed-out user hits) instead of as your signed-in account')
   .option('--field <path>', 'Print only this field of the result (dot path, e.g. items.0.short_guid)')
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Call', async () => {
     const config = requireConfig();
     const raw = bodyArg || opts.data || '{}';
     const body = JSON.parse(raw);
-    const res = await post<{ data: any }>(
-      `/api/${config.projectGuid}/fn/${encodeURIComponent(name)}`,
-      body,
-    );
+    const path = `/api/${config.projectGuid}/fn/${encodeURIComponent(name)}`;
+    const res = opts.anon
+      ? await callAnon(config.projectGuid, name, body)
+      : await post<{ data: any }>(path, body);
     if (opts.field) { emitField(res.data, opts.field); return; }
     console.log(opts.json ? JSON.stringify(res.data) : JSON.stringify(res.data, null, 2));
   }));

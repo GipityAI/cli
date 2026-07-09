@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, resolveInRoot, extractTarToMap, type BaselineEntry } from '../sync.js';
+import { SCRATCH_IGNORE } from '../setup.js';
+import { shouldIgnore } from '../config.js';
 import { PassThrough } from 'stream';
 import * as tar from 'tar-stream';
 
@@ -425,6 +427,28 @@ describe('.gipityignore', () => {
       assert.ok(merged.includes('node_modules'));
       assert.ok(merged.includes('vendored'));
       assert.ok(merged.includes('.gipityignore'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('effectiveIgnore unions the scratch namespaces even when the config list omits them', () => {
+    // config.ignore is frozen into .gipity.json at link time, so a project
+    // linked before a scratch dir joined the defaults has a non-empty ignore
+    // list WITHOUT tmp/. Scratch is a platform convention (must mirror the
+    // server's isEphemeralSandboxPath denylist), not a user preference - so
+    // it is unioned in unconditionally, not only on the empty-list fallback.
+    const root = mkdtempSync(join(tmpdir(), 'gipity-ignore-'));
+    try {
+      const merged = effectiveIgnore(root, ['node_modules', '.git']);
+      for (const p of SCRATCH_IGNORE) {
+        assert.ok(merged.includes(p), `scratch pattern ${p} must be unioned into a non-empty config ignore`);
+      }
+      assert.equal(shouldIgnore('tmp/frame.png', merged), true, 'tmp/ must stay ignored on pre-scratch-era projects');
+      assert.equal(new Set(merged).size, merged.length, 'pattern list must be deduped (matcher cache key)');
+      // And a config that already lists a scratch dir doesn't get a duplicate.
+      const alreadyThere = effectiveIgnore(root, ['tmp/', 'node_modules']);
+      assert.equal(alreadyThere.filter(p => p === 'tmp/').length, 1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

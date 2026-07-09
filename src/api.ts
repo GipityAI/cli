@@ -411,12 +411,14 @@ export async function getAccountSlug(): Promise<string> {
   return accountSlugCache;
 }
 
-/** Unauthenticated request (for login/verify) */
-export async function publicPost<T>(path: string, body: unknown): Promise<T> {
+/** Unauthenticated request (for login/verify, and anonymous-visitor calls like
+ *  `fn call --anon`). extraHeaders lets callers attach non-auth headers such as
+ *  X-App-Token; no Authorization header is ever sent. */
+export async function publicPost<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { ...clientHeaders(), 'Content-Type': 'application/json' },
+    headers: { ...clientHeaders(), 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   });
 

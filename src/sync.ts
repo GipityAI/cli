@@ -35,7 +35,7 @@ import {
   UPLOAD_MAX_BYTES, UPLOAD_MAX_PATH_CHARS,
   type BatchInitResult, type BatchCompleteItem,
 } from './upload.js';
-import { DEFAULT_SYNC_IGNORE } from './setup.js';
+import { DEFAULT_SYNC_IGNORE, SCRATCH_IGNORE } from './setup.js';
 import type { ProgressReporter, SpinnerHandle } from './progress.js';
 
 const CONFIG_FILE = '.gipity.json';
@@ -799,10 +799,24 @@ export function readGipityIgnore(root: string): string[] {
 /** The ignore list a sync/push actually runs with: the project config's
  *  `ignore` (falling back to DEFAULT_SYNC_IGNORE when empty, so an empty list
  *  never means "sync everything - node_modules, .git and all"), plus any
- *  `.gipityignore` patterns. The ignore file itself never syncs. */
+ *  `.gipityignore` patterns, plus - unconditionally - the scratch namespaces.
+ *  The ignore file itself never syncs.
+ *
+ *  SCRATCH_IGNORE is unioned in even when the config has its own `ignore`
+ *  list, because scratch dirs are a PLATFORM CONVENTION, not a user
+ *  preference: they must mirror the server's `isEphemeralSandboxPath`
+ *  denylist (see the comment on SCRATCH_IGNORE in setup.ts) so the same
+ *  paths are throwaway everywhere - the sandbox refuses to persist them and
+ *  sync/deploy refuses to upload them. `config.ignore` is frozen into
+ *  .gipity.json at link time, so any project linked before a scratch dir was
+ *  added to the defaults would otherwise keep syncing it forever (tmp/ did
+ *  exactly this). Appended LAST so a stray `!tmp/` negation earlier in the
+ *  list can't re-include scratch; deduped so the matcher cache in
+ *  config.ts keys on one canonical pattern set. */
 export function effectiveIgnore(root: string, configIgnore: string[] | undefined): string[] {
   const base = configIgnore && configIgnore.length ? configIgnore : DEFAULT_SYNC_IGNORE;
-  return [...base, GIPITY_IGNORE_FILE, ...readGipityIgnore(root)];
+  const merged = [...base, GIPITY_IGNORE_FILE, ...readGipityIgnore(root)];
+  return [...merged, ...SCRATCH_IGNORE.filter(p => !merged.includes(p))];
 }
 
 /** Fast, LOCAL-ONLY dirtiness probe: true when every local file matches its

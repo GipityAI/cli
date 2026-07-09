@@ -63,6 +63,12 @@ import { textCommand } from './commands/text.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
 import { bold, dim, brand, muted, success } from './colors.js';
 import { normalizeAliases } from './flag-aliases.js';
+import { installOutputTrace } from './trace.js';
+
+// With GIPITY_TRACE_OUTPUT=1, tee all stdout/stderr to ~/.gipity/trace/
+// (silent-success diagnosis, cli#125/#126/#108). No-op when the shim already
+// installed the tee in this process - this covers gipcc/gipccd/direct runs.
+installOutputTrace('index');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));

@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join, resolve as resolvePath } from 'path';
 import { postForTarEntries } from '../api.js';
 import { getProjectRoot } from '../config.js';
-import { brand, bold, muted, success } from '../colors.js';
+import { getAuth } from '../auth.js';
+import { brand, bold, muted, success, warning } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
@@ -36,6 +37,8 @@ type ScreenshotMeta = {
   full: boolean;
   reloadBetween: boolean;
   performance: PagePerformance | null;
+  // Auth handoff state when --auth ran (same shape page inspect reports).
+  auth?: { requested: boolean; established: boolean; detail?: string };
   screenshots: Array<{
     index: number;
     viewport: Viewport & { deviceScaleFactor: number; touch: boolean };
@@ -54,6 +57,17 @@ function label(text: string): string {
 
 function fmtMs(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+/** Auth state line (same format as page inspect/eval): without it an agent
+ *  can't tell a signed-in capture from "--auth silently no-op'd and this is
+ *  the anonymous page". */
+function printAuthLine(auth?: ScreenshotMeta['auth']): void {
+  if (!auth?.requested) return;
+  const who = getAuth()?.email;
+  console.log(auth.established
+    ? `${label('Auth')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
+    : `${warning('Auth: session NOT established')}${auth.detail ? ` — ${auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
 }
 
 function fmtPerformance(p: PagePerformance): string {
@@ -264,6 +278,7 @@ export const pageScreenshotCommand = new Command('screenshot')
           final_url: meta.finalUrl,
           status: meta.status,
           performance: meta.performance,
+          ...(meta.auth ? { auth: meta.auth } : {}),
         },
         screenshots: meta.screenshots.map((s, i) => ({
           file: savedFiles[i],
@@ -291,6 +306,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       if (meta.finalUrl) console.log(`${label('Web page URL')} ${meta.finalUrl}`);
       if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
       if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
+      printAuthLine(meta.auth);
       if (s.viewport.device) console.log(`${label('Emulated device')} ${s.viewport.device} ${muted('(touch events, mobile user-agent)')}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
       console.log(`${label('Screenshot size')} ${sizePart}`);
@@ -304,6 +320,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (meta.finalUrl) console.log(`${label('Web page URL')} ${meta.finalUrl}`);
     if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
     if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
+    printAuthLine(meta.auth);
 
     for (let i = 0; i < meta.screenshots.length; i++) {
       const s = meta.screenshots[i];

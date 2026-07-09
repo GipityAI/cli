@@ -214,6 +214,45 @@ test('gipity test list reports clearly when no test files match', async () => {
   assert.match(r.stdout, /No test files matched filter: nope/);
 });
 
+test('gipity test list names the searched root and enumerates skipped kit tests when empty (cli#120/cli#121)', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: {
+    files: [], total: 0,
+    skipped: [
+      { path: 'src/packages/web-vision-detect/tests/nms.test.js', reason: 'outside tests/ - gipity test only scans tests/' },
+      { path: 'tests/watch.spec.mjs', reason: 'only tests/*.test.js and *.test.mjs run' },
+    ],
+  } } });
+  const r = await fresh(['test', 'list']);
+  assert.equal(r.status, 0, r.stderr);
+  // The message must name the searched root, not assert a project-level absence.
+  assert.match(r.stdout, /No test files found under tests\/ at the project root/);
+  // And it must not deny test-looking files that exist on disk.
+  assert.match(r.stdout, /2 test-looking files that gipity test does not run/);
+  assert.match(r.stdout, /src\/packages\/web-vision-detect\/tests\/nms\.test\.js/);
+  assert.match(r.stdout, /tests\/watch\.spec\.mjs/);
+  assert.match(r.stdout, /gipity sandbox run bash/);
+});
+
+test('gipity test (run) with zero tests fetches and prints the skipped candidates', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/test/run', { body: { data: { runGuid: RUN_GUID, status: 'running' } } });
+  mock.on(`GET /projects/p_TestProj/test/status/${RUN_GUID}`, { body: { data: {
+    runGuid: RUN_GUID, status: 'passed', total: 0, passed: 0, failed: 0, skipped: 0,
+    durationMs: 12, totalFiles: 0, completedFiles: 0,
+    startedAt: '2026-05-01T10:00:00Z', updatedAt: '2026-05-01T10:00:01Z', finishedAt: '2026-05-01T10:00:01Z',
+    results: [],
+  } } });
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: {
+    files: [], total: 0,
+    skipped: [{ path: 'src/packages/kit/tests/unit.test.js', reason: 'outside tests/ - gipity test only scans tests/' }],
+  } } });
+  const r = await fresh(['test', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /No tests ran - no tests\/\*\.test\.js files under the project root/);
+  assert.match(r.stdout, /src\/packages\/kit\/tests\/unit\.test\.js/);
+});
+
 test('gipity test history shows recent runs', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/test/history', { body: { data: [

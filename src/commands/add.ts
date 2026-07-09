@@ -235,6 +235,12 @@ export const addCommand = new Command('add')
 
     // The server runs the whole install pipeline before responding; animate the
     // wait, then clear the spinner so the installed-files list is the result.
+    // The spinner is TTY-only, so piped/agent transcripts would otherwise show
+    // a silent multi-second gap (favicon generation on a cold cache can take
+    // ~10s, cli#117) - leave one stderr marker so the wait reads as work.
+    if (!opts.json && !process.stdout.isTTY) {
+      console.error(muted('Installing (server writes files + generates favicons; first add for a title can take ~10s)...'));
+    }
     const doAdd = () => post<{ data: AddResponse }>(`/projects/${config.projectGuid}/add`, body);
     const res = opts.json
       ? await doAdd()

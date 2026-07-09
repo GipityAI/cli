@@ -98,6 +98,53 @@ test('gipity fn call --body is accepted as an alias for --data', async () => {
   assert.deepEqual(post!.body, { name: 'world' });
 });
 
+test('gipity fn call --anon calls the public path with an app token and no user auth (cli#122)', async () => {
+  mock.reset();
+  let mintBody: unknown;
+  let callAuth: string | string[] | undefined;
+  let callAppToken: string | string[] | undefined;
+  mock.on('POST /api/token', (req) => {
+    mintBody = req.body;
+    return { body: { data: { token: 'app-tok-123', expiresIn: 900 } } };
+  });
+  mock.on('POST /api/p_TestProj/fn/submit-refund', (req) => {
+    callAuth = req.headers['authorization'];
+    callAppToken = req.headers['x-app-token'];
+    return { body: { data: { ticket_code: 'RD-1', status: 'pending' } } };
+  });
+  const r = await fresh(['fn', 'call', 'submit-refund', '{"order":"1042"}', '--anon']);
+  assert.equal(r.status, 0, r.stderr);
+  // Unwrapped value, same shape as the authenticated call - no {data:{...}} envelope.
+  assert.match(r.stdout, /ticket_code/);
+  assert.doesNotMatch(r.stdout, /"data"/);
+  assert.deepEqual(mintBody, { app: 'p_TestProj' });
+  assert.equal(callAuth, undefined, 'anonymous call must not send Authorization');
+  assert.equal(callAppToken, 'app-tok-123');
+});
+
+test('gipity fn call --anon still works when app-token minting fails (public fn path)', async () => {
+  mock.reset();
+  mock.on('POST /api/token', { status: 429, body: { error: { code: 'RATE_LIMITED', message: 'slow down' } } });
+  mock.on('POST /api/p_TestProj/fn/hello', { body: { data: { greeting: 'Hi!' } } });
+  const r = await fresh(['fn', 'call', 'hello', '{}', '--anon']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Hi!/);
+});
+
+test('gipity fn call --anon surfaces the auth-gate error without a login hint', async () => {
+  mock.reset();
+  mock.on('POST /api/token', { body: { data: { token: 't', expiresIn: 900 } } });
+  mock.on('POST /api/p_TestProj/fn/members-only', {
+    status: 401,
+    body: { error: { code: 'AUTH_REQUIRED', message: 'This function requires a signed-in user' } },
+  });
+  const r = await fresh(['fn', 'call', 'members-only', '{}', '--anon']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /requires a signed-in user/);
+  // A 401 on --anon is the function's real answer, not a broken CLI session.
+  assert.doesNotMatch(r.stderr, /gipity login/);
+});
+
 test('an unknown option on fn call shows fn call help, not a sibling subcommand', async () => {
   mock.reset();
   const r = await fresh(['fn', 'call', 'hello', '--bogus']);

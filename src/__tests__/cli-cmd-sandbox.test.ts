@@ -311,6 +311,57 @@ test('gipity sandbox run rejects a scratch --input path without touching the API
   assert.deepEqual(mock.requests(), [], 'no API call should precede the scratch-input check');
 });
 
+// ── --no-sync-output: per-run "don't persist this output" globs ──────────────
+//
+// The filtering happens SERVER-side (in the output extractor) - a client-side
+// skip would still write the files into project storage and churn every later
+// sync. So the CLI's whole job is (a) sending the globs in the POST body and
+// (b) reporting what the server says it dropped.
+
+test('gipity sandbox run sends --no-sync-output globs in the POST body and prints the skipped list', async () => {
+  resetMock();
+  let posted: { noSyncOutput?: string[] } | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as { noSyncOutput?: string[] };
+    return { body: { data: {
+      exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+      outputFiles: ['docs/report.pdf'],
+      skippedOutputFiles: ['docs/preview-1.png', 'docs/preview-2.png'],
+    } } };
+  });
+  const r = await fresh(['sandbox', 'run', 'bash', 'pdftoppm -png docs/report.pdf docs/preview',
+    '--no-sync-output', 'docs/preview*', '--no-sync-output', '*.ppm']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(posted?.noSyncOutput, ['docs/preview*', '*.ppm'], 'both repeated globs must reach the server');
+  assert.match(r.stdout, /Not persisted \(--no-sync-output\):/);
+  assert.match(r.stdout, /docs\/preview-1\.png/);
+  assert.match(r.stdout, /docs\/preview-2\.png/);
+  // The kept output still prints under the normal heading.
+  assert.match(r.stdout, /docs\/report\.pdf/);
+});
+
+test('gipity sandbox run omits noSyncOutput from the POST body when the flag is absent', async () => {
+  resetMock();
+  let posted: Record<string, unknown> | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as Record<string, unknown>;
+    return { body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', 'bash', 'echo hi']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(posted, 'expected the execute call');
+  assert.ok(!('noSyncOutput' in posted!), 'no flag means no noSyncOutput key - server default behavior');
+  assert.doesNotMatch(r.stdout, /Not persisted/);
+});
+
+test('gipity sandbox run rejects an empty --no-sync-output glob without touching the API', async () => {
+  mock.reset();
+  const r = await outsideProject(['sandbox', 'run', '--language', 'bash', 'echo hi', '--no-sync-output', '']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /non-empty glob/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede glob validation');
+});
+
 test('gipity sandbox run allows a non-scratch input that merely starts with "tmp"', async () => {
   resetMock();
   mock.on('POST /projects/p_TestProj/sandbox/execute', () => ({

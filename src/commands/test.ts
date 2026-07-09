@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { get, post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { requireConfig, getProjectRoot } from '../config.js';
 import { success, error as clrError, warning, muted, bold, dim } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
 
@@ -13,6 +13,21 @@ function statusIcon(status: string): string {
   if (status === 'failed') return clrError('✗');
   if (status === 'skipped') return muted('→');
   return muted('?');
+}
+
+/** When the runner finds nothing, list the test-looking files it deliberately
+ *  skipped (kit tests under src/packages/, .spec.* files) so "no tests" never
+ *  contradicts what's on disk, and point at the sandbox as the way to run
+ *  frontend/kit module tests (cli#120/cli#121). */
+function printSkippedCandidates(skipped: Array<{ path: string; reason: string }>): void {
+  if (skipped.length === 0) return;
+  console.log('');
+  console.log(muted(`Found ${skipped.length} test-looking file${skipped.length === 1 ? '' : 's'} that gipity test does not run:`));
+  for (const s of skipped.slice(0, 10)) {
+    console.log(muted(`  ${s.path} (${s.reason})`));
+  }
+  if (skipped.length > 10) console.log(muted(`  ... and ${skipped.length - 10} more`));
+  console.log(muted('Run frontend/kit module tests in the sandbox: gipity sandbox run bash "node <file>"'));
 }
 
 interface TestStatusResponse {
@@ -213,9 +228,22 @@ export const testCommand = new Command('test')
       }
 
       if (!filterPath && data.total === 0 && data.results.length === 0) {
-        console.log(muted('No tests ran - this app has no tests/*.test.js files.'));
+        // Name the searched root: discovery is server-side over the synced
+        // project tree's tests/, never the shell cwd - an agent running from a
+        // subdirectory must not read this as "the project has no tests" for
+        // the wrong reason (cli#120).
+        const root = getProjectRoot();
+        console.log(muted(`No tests ran - no tests/*.test.js files under the project root${root ? ` (${root})` : ''}.`));
         console.log(muted('gipity test runs server-function tests only; a frontend-only app (no functions/) has nothing here to run.'));
         console.log(muted('Verify a frontend app by driving the live page: gipity page inspect <url> (or gipity page eval).'));
+        // Enumerate test-looking files the runner deliberately skips (kit
+        // tests, .spec.*) so this answer never contradicts what's on disk.
+        try {
+          const listRes = await get<{ data: { skipped?: Array<{ path: string; reason: string }> } }>(
+            `/projects/${config.projectGuid}/test/list`,
+          );
+          printSkippedCandidates(listRes.data.skipped ?? []);
+        } catch { /* the skipped list is advisory - never fail the run over it */ }
         return;
       }
 
@@ -314,16 +342,27 @@ testCommand
       const config = requireConfig();
       const qs = pathFilter ? `?filterPath=${encodeURIComponent(pathFilter)}` : '';
       const res = await get<{
-        data: { files: Array<{ path: string; name: string; vfsPath: string }>; total: number };
+        data: {
+          files: Array<{ path: string; name: string; vfsPath: string }>;
+          total: number;
+          skipped?: Array<{ path: string; reason: string }>;
+        };
       }>(`/projects/${config.projectGuid}/test/list${qs}`);
       const { files, total } = res.data;
 
       if (opts.json) { console.log(JSON.stringify(res.data, null, 2)); return; }
 
       if (total === 0) {
+        // Discovery is server-side over the synced project tree's tests/ -
+        // never the shell cwd. Say which root was searched so this can't be
+        // misread as a definitive project-level fact from a subdirectory
+        // (cli#120), and list any test-looking files deliberately skipped
+        // (kit tests, .spec.*) instead of asserting none exist (cli#121).
+        const root = getProjectRoot();
         console.log(muted(pathFilter
           ? `No test files matched filter: ${pathFilter}`
-          : 'No test files found. Add *.test.js files under tests/.'));
+          : `No test files found under tests/ at the project root${root ? ` (${root})` : ''}. Add *.test.js files under tests/.`));
+        if (!pathFilter) printSkippedCandidates(res.data.skipped ?? []);
         return;
       }
 

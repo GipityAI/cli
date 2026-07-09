@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { Command, Option } from 'commander';
 import { post, get, ApiError } from '../api.js';
-import { brand, bold, muted, warning } from '../colors.js';
+import { brand, bold, muted, warning, success } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { getAuth } from '../auth.js';
 import { resolveProjectContext } from '../config.js';
 import { uploadPublicFixture, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
@@ -10,6 +11,11 @@ export interface EvalResult {
   url: string;
   result: string;
   truncated: boolean;
+  // Result of the second expression run after an in-place reload (--reload).
+  reloadResult?: string;
+  reloadTruncated?: boolean;
+  // Auth handoff state when --auth ran (same shape page inspect reports).
+  auth?: { requested: boolean; established: boolean; detail?: string };
   navigationIncomplete?: boolean;
   note?: string;
 }
@@ -169,6 +175,11 @@ export const pageEvalCommand = new Command('eval')
     (val: string, prev: string[]) => [...prev, val],
     [] as string[],
   )
+  .option(
+    '--reload <expr>',
+    'After the first eval, reload the page IN PLACE (localStorage/sessionStorage/cookies preserved) and evaluate this second expression against the post-reload DOM. One command verifies persisted state survives a reload: seed/assert state with <expr>, then assert the restored UI here.',
+  )
+  .option('--reload-file <path>', 'Read the post-reload expression from a file instead of inline --reload (mutually exclusive)')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
@@ -214,6 +225,20 @@ export const pageEvalCommand = new Command('eval')
       }
     }
 
+    // Post-reload expression: inline --reload or --reload-file, same shape
+    // rules as the primary <expr>/--file pair.
+    if (opts.reload !== undefined && opts.reloadFile) {
+      pageEvalCommand.error('error: Pass either --reload <expr> or --reload-file <path>, not both');
+    }
+    let reloadExpr: string | undefined = opts.reload;
+    if (opts.reloadFile) {
+      try {
+        reloadExpr = readFileSync(opts.reloadFile, 'utf8');
+      } catch {
+        pageEvalCommand.error(`error: Cannot read file: ${opts.reloadFile}`);
+      }
+    }
+
     const waitMs = capWaitMs(opts.wait, url);
     const parsedTimeout = parseInt(opts.waitTimeout, 10);
     const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
@@ -243,18 +268,25 @@ export const pageEvalCommand = new Command('eval')
 
       const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
         url, expr: sentExpr, waitMs,
+        reloadExpr,
         waitForSelector: opts.waitFor || undefined,
         waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
         auth: opts.auth || undefined,
       });
-      const d = await pollEvalResult(kickoff.data.evalJobId, waitMs);
+      // The reload leg re-runs the settle before its eval — budget for both.
+      const d = await pollEvalResult(kickoff.data.evalJobId, reloadExpr !== undefined ? waitMs * 2 : waitMs);
       const { result, noValue } = normalizeEvalResult(d.result);
+      const reload = d.reloadResult !== undefined ? normalizeEvalResult(d.reloadResult) : undefined;
 
       const execTimeout = evalExecTimeoutMessage(d.result);
       if (execTimeout) throw new Error(execTimeout);
 
       if (opts.json) {
-        console.log(JSON.stringify(noValue ? { ...d, result, hint: EVAL_NO_VALUE_HINT } : { ...d, result }));
+        console.log(JSON.stringify({
+          ...d, result,
+          ...(reload ? { reloadResult: reload.result } : {}),
+          ...(noValue ? { hint: EVAL_NO_VALUE_HINT } : {}),
+        }));
         return;
       }
 
@@ -262,11 +294,25 @@ export const pageEvalCommand = new Command('eval')
       if (d.navigationIncomplete) {
         console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
       }
+      // Auth state: without this line an agent can't distinguish "signed-in
+      // eval" from "--auth silently no-op'd against the anonymous page".
+      if (d.auth?.requested) {
+        const who = getAuth()?.email;
+        console.log(d.auth.established
+          ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
+          : `${warning('Auth: session NOT established')}${d.auth.detail ? ` — ${d.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+      }
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
       console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${expr}`);
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
       if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
       if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
+      if (reload) {
+        console.log(`\n${bold('After reload')} ${muted('(page reloaded in place — storage preserved)')}`);
+        console.log(reload.result.trim() ? reload.result : muted('(empty result)'));
+        if (reload.noValue) console.log(muted(EVAL_NO_VALUE_HINT));
+        if (d.reloadTruncated) console.log(muted('(reload result truncated to fit context - narrow the expression for the full value)'));
+      }
     } finally {
       for (const h of hosted) {
         try {
@@ -298,6 +344,16 @@ Examples:
   # fetch-able 'fixtureUrl', runs the eval, then deletes the hosted copy:
   gipity page eval "https://dev.gipity.ai/me/app/" --fixture ./sample.mp3 \\
     "(async()=>{ const b = await fetch(fixtureUrl).then(r=>r.arrayBuffer()); return window.App.parseId3(b); })()"
+  # Verify persisted state survives a reload (localStorage/sessionStorage kept):
+  # run <expr>, reload the page in place, then run the --reload expression:
+  gipity page eval "https://dev.gipity.ai/me/app/" \\
+    "localStorage.setItem('todo','milk'); document.title" \\
+    --reload "({ restored: localStorage.getItem('todo'), heading: document.querySelector('h1')?.textContent })"
+
+Module resolution: dynamic import() specifiers starting with ./ or ../ resolve
+against the PAGE URL, so import('./packages/i18n/index.js') loads the app's own
+module without hand-building the deployed /account/project/ path. Absolute paths
+and full URLs pass through unchanged.
 
 The eval body runs under a ~20s in-page execution budget (its own await/setTimeout
 pauses count; --wait only sleeps BEFORE the eval and does not extend it). For a long

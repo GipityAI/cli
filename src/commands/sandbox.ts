@@ -196,6 +196,16 @@ sandboxCommand
     'Narrow to specific project files instead of auto-mirroring the whole tree (repeatable). Use this only for >1 GB projects or when you want surgical control.',
     (v: string, prev?: string[]) => [...(prev ?? []), v],
   )
+  // Commander maps a `--no-` prefixed flag to the un-prefixed camelCase name
+  // (`opts.syncOutput`); the explicit `[]` default stops commander's negated-
+  // boolean convention from defaulting it to `true`. Collected as an array so
+  // the flag is repeatable.
+  .option(
+    '--no-sync-output <glob>',
+    'Do not persist run outputs matching this glob back to the project (repeatable). For byproducts you want to inspect once but never keep, e.g. --no-sync-output "docs/preview*". Supports *, **, and dir/ prefixes.',
+    (v: string, prev: string[]) => [...prev, v],
+    [] as string[],
+  )
   .option('--json', 'Output as JSON')
   .addHelpText('after', `
 By default the whole project is auto-mirrored into /work/ (up to 1 GB) -
@@ -290,6 +300,14 @@ GCC/Rust).
     // missing language costs nothing but the message.
     const language = resolveLanguage({ langFromInterp, langOpt: opts.language, filePath, inlineCode });
 
+    // Validate --no-sync-output globs while we're still pre-network: an empty
+    // pattern (e.g. a quoting mishap) would silently match nothing server-side.
+    const noSyncOutput: string[] = opts.syncOutput ?? [];
+    if (noSyncOutput.some((g) => !g.trim())) {
+      console.error(clrError('--no-sync-output requires a non-empty glob (e.g. --no-sync-output "docs/preview*")'));
+      process.exit(1);
+    }
+
     // Args are good - now it's worth resolving (and announcing) the project.
     const { config } = await resolveProjectContext();
 
@@ -330,6 +348,7 @@ GCC/Rust).
         durationMs: number;
         timedOut: boolean;
         outputFiles?: string[];
+        skippedOutputFiles?: string[];
         mirroredCount?: number;
         autoMirrorSkipped?: { reason: string; totalBytes: number };
         mirrorWarnings?: string[];
@@ -343,6 +362,10 @@ GCC/Rust).
       timeout: isNaN(timeout) ? 30 : timeout,
       input_files: opts.input,
       cwd,
+      // The filter must run SERVER-side (in the output extractor): skipping
+      // only in the CLI would still write the files into project storage and
+      // make every later sync propose deleting them.
+      noSyncOutput: noSyncOutput.length ? noSyncOutput : undefined,
     });
     const res = opts.json
       ? await doRun()
@@ -374,6 +397,10 @@ GCC/Rust).
       if (res.data.outputFiles && res.data.outputFiles.length > 0) {
         console.log(`\nOutput files ${pulledLocal ? 'synced to this directory' : 'saved to project'}:`);
         for (const f of res.data.outputFiles) console.log(`${f}`);
+      }
+      if (res.data.skippedOutputFiles && res.data.skippedOutputFiles.length > 0) {
+        console.log(dim('\nNot persisted (--no-sync-output):'));
+        for (const f of res.data.skippedOutputFiles) console.log(dim(`${f}`));
       }
       if (res.data.exitCode !== 0) {
         // No "did you mean another language?" hint is needed: the language is now

@@ -28,7 +28,9 @@ export const bugCommand = new Command('bug')
     `\nso the team can triage it into a fix.\n` +
     `\nCategories: ${CATEGORIES.join(', ')}` +
     `\nSeverity:   ${SEVERITY_HINT}` +
-    `\nNever include PII or user data — describe the platform problem in the abstract.`,
+    `\nNever include PII or user data — describe the platform problem in the abstract.` +
+    `\nFiled one by mistake? Withdraw it yourself with \`gipity bug retract <id>\`` +
+    `\n(works until a human picks it up) — don't file a second report asking for a close.`,
   );
 
 bugCommand
@@ -57,6 +59,28 @@ bugCommand
 
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     console.log(success(`✓ Bug report filed (${res.data.report_guid}) — queued for triage.`));
+  }));
+
+bugCommand
+  .command('retract <id>')
+  .description('Withdraw a bug report you filed (e.g. it was your own mistake)')
+  .option('--reason <text>', 'Short note for triage on why you are retracting')
+  .option('--project <guid-or-slug>', 'Resolve auth against a specific project instead of cwd / Home')
+  .option('--json', 'Output raw JSON')
+  .addHelpText(
+    'after',
+    `\nOnly works on your own reports, and only while they are still queued` +
+    `\n(status new/triaged). Once a report is filed/fixed/dismissed, a human` +
+    `\nowns closing it out. Find report ids with \`gipity bug list\`.`,
+  )
+  .action((id, opts) => run('Bug report', async () => {
+    const { config } = await resolveProjectContext({ projectOverride: opts.project });
+    const res = await post<{ data: { report_guid: string; status: string } }>(
+      `/api/${config.projectGuid}/services/bug-report/retract`,
+      { report_guid: id, reason: opts.reason },
+    );
+    if (opts.json) { console.log(JSON.stringify(res.data)); return; }
+    console.log(success(`✓ Bug report ${res.data.report_guid} retracted — it is out of the triage queue.`));
   }));
 
 bugCommand
