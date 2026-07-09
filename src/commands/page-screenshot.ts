@@ -37,6 +37,9 @@ type ScreenshotMeta = {
   full: boolean;
   reloadBetween: boolean;
   performance: PagePerformance | null;
+  // Set only when --action ran and its script threw or failed to parse. The
+  // capture still succeeded, but it shows the page BEFORE the action.
+  actionError?: string;
   // Auth handoff state when --auth ran (same shape page inspect reports).
   auth?: { requested: boolean; established: boolean; detail?: string };
   screenshots: Array<{
@@ -68,6 +71,14 @@ function printAuthLine(auth?: ScreenshotMeta['auth']): void {
   console.log(auth.established
     ? `${label('Auth')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
     : `${warning('Auth: session NOT established')}${auth.detail ? ` — ${auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+}
+
+/** A failed --action still yields a screenshot - of the page the action never
+ *  touched. Silence there is the trap: the image looks plausible and the command
+ *  reports success, so the caller trusts a capture of the wrong state. Say so. */
+function printActionErrorLine(actionError?: string): void {
+  if (!actionError) return;
+  console.log(`${warning('⚠ --action failed:')} ${actionError} ${muted('(this image shows the page BEFORE the action ran)')}`);
 }
 
 function fmtPerformance(p: PagePerformance): string {
@@ -185,7 +196,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   // so the `?? opts.wait` merge below would never see the --wait alias. Default
   // is applied in the merge instead.
   .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms (default: 1000)')
-  .option('--action <js>', 'Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs after the post-load delay, then settles again before the shot.')
+  .option('--action <js>', 'Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./…\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
@@ -307,6 +318,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
       if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
       printAuthLine(meta.auth);
+      printActionErrorLine(meta.actionError);
       if (s.viewport.device) console.log(`${label('Emulated device')} ${s.viewport.device} ${muted('(touch events, mobile user-agent)')}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
       console.log(`${label('Screenshot size')} ${sizePart}`);
@@ -321,6 +333,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
     if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
     printAuthLine(meta.auth);
+    printActionErrorLine(meta.actionError);
 
     for (let i = 0; i < meta.screenshots.length; i++) {
       const s = meta.screenshots[i];

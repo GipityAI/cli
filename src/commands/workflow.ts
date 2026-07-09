@@ -78,6 +78,25 @@ function formatRunLine(r: RunData): string {
   return `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${runTokens(r)} tokens  ${muted(fmtTime(r.started_at))}`;
 }
 
+/** Print each step's status, tokens, model, error and output. A run line alone
+ *  says a run finished, not what it did — without the steps you can't tell a
+ *  workflow that wrote a row from one that silently skipped every step. */
+function printStepRuns(steps: StepRunData[], emptyNote: string): void {
+  if (steps.length === 0) {
+    console.log(`  ${muted(emptyNote)}`);
+    return;
+  }
+  for (const s of steps) {
+    const statusColor = s.status === 'completed' ? success : s.status === 'failed' ? clrError : muted;
+    const model = s.model_used ? `  ${muted(`[${s.model_used}]`)}` : '';
+    console.log(`  ${s.step_order}. ${statusColor(s.status)}  ${s.tokens_used ?? 0} tokens${model}`);
+    if (s.error_message) console.log(`     ${clrError(s.error_message)}`);
+    if (s.output_json !== null && s.output_json !== undefined) {
+      console.log(JSON.stringify(s.output_json, null, 2).split('\n').map(l => `     ${l}`).join('\n'));
+    }
+  }
+}
+
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -86,7 +105,7 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
  * terminal state, returning it. Throws on timeout so the `run()` wrapper reports
  * it. Two phases: wait for the new run row to appear, then poll it to terminal.
  */
-async function waitForRun(wfGuid: string, prevGuid: string | undefined, timeoutSec: number): Promise<RunData> {
+async function waitForRun(wfGuid: string, prevGuid: string | undefined, timeoutSec: number): Promise<RunData & { step_runs: StepRunData[] }> {
   const deadline = Date.now() + timeoutSec * 1000;
 
   let runGuid: string | undefined;
@@ -210,6 +229,10 @@ workflowCommand
     } else {
       console.log(formatRunLine(r));
       if (r.error_message) console.log(`  ${clrError(r.error_message)}`);
+      // The whole point of --wait is to see what the run did. The detail endpoint
+      // we just polled already carries the steps, so show them rather than make
+      // the caller re-query the database to find out whether anything happened.
+      printStepRuns(r.step_runs ?? [], '(no steps recorded)');
     }
     if (r.status !== 'completed') process.exit(1);
   }));
@@ -232,21 +255,7 @@ workflowCommand
         return;
       }
       console.log(formatRunLine(r));
-      const steps = r.step_runs ?? [];
-      if (steps.length === 0) {
-        console.log('  (no steps recorded)');
-        return;
-      }
-      for (const s of steps) {
-        const statusColor = s.status === 'completed' ? success : s.status === 'failed' ? clrError : muted;
-        const model = s.model_used ? `  ${muted(`[${s.model_used}]`)}` : '';
-        console.log(`  ${s.step_order}. ${statusColor(s.status)}  ${s.tokens_used ?? 0} tokens${model}`);
-        if (s.error_message) console.log(`     ${clrError(s.error_message)}`);
-        if (s.output_json !== null && s.output_json !== undefined) {
-          const pretty = JSON.stringify(s.output_json, null, 2).split('\n').map(l => `     ${l}`).join('\n');
-          console.log(pretty);
-        }
-      }
+      printStepRuns(r.step_runs ?? [], '(no steps recorded)');
       return;
     }
 

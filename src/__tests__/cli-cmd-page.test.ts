@@ -7,6 +7,7 @@ import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 import { timestampSlug, defaultFilename } from '../commands/page-screenshot.js';
+import { summarizeExpr } from '../commands/page-eval.js';
 
 let mock: MockServer;
 let home: string;
@@ -1098,4 +1099,53 @@ test('gipity page screenshot warns when --auth did not establish a session', asy
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /session NOT established/);
   assert.match(r.stdout, /Missing token/);
+});
+
+// A multi-line driver script echoed back in full buries the result underneath
+// its own source, and an echo landing right above "(empty result)" reads like
+// the parser rejected the script rather than like the script returned nothing.
+test('summarizeExpr echoes a short one-liner verbatim', () => {
+  assert.equal(summarizeExpr('document.title'), 'document.title');
+  assert.equal(summarizeExpr('  document.title  '), 'document.title');
+});
+
+test('summarizeExpr collapses a multi-line script to its first line plus a shape summary', () => {
+  const out = summarizeExpr("const a = 1;\nconst b = 2;\nreturn a + b;");
+  assert.match(out, /^const a = 1;/);
+  assert.match(out, /\+2 more lines/);
+  assert.doesNotMatch(out, /return a \+ b/);
+});
+
+test('summarizeExpr counts only meaningful lines and singularizes', () => {
+  const out = summarizeExpr("const a = 1;\n\n\nreturn a;");
+  assert.match(out, /\+1 more line,/);
+});
+
+test('summarizeExpr truncates a long single-line expr', () => {
+  const long = `document.querySelector('${'x'.repeat(200)}')`;
+  const out = summarizeExpr(long);
+  assert.ok(out.length < long.length);
+  assert.match(out, /…/);
+  assert.match(out, /chars\)$/);
+});
+
+// A --action that throws still produces a screenshot — of the page the action
+// never touched. Reporting success there hands the caller an image of the wrong
+// state and lets them "verify" a feature that never ran.
+test('gipity page screenshot warns when --action failed and the image is undriven', async () => {
+  mock.reset();
+  await mockScreenshot({ actionError: "Cannot read properties of null (reading 'click')" });
+  const r = await run(['page', 'screenshot', 'https://example.com', '--action', "document.querySelector('#nope').click()", '-o', join(home, 'shot-action-err.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /--action failed/);
+  assert.match(r.stdout, /reading 'click'/);
+  assert.match(r.stdout, /BEFORE the action ran/);
+});
+
+test('gipity page screenshot says nothing about --action when it ran clean', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--action', 'document.title = "x"', '-o', join(home, 'shot-action-ok.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /--action failed/);
 });

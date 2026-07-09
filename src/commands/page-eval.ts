@@ -59,6 +59,28 @@ export function normalizeEvalResult(raw: string): { result: string; noValue: boo
   return { result: raw, noValue: false };
 }
 
+// A one-line inline expr is worth echoing back — it's the thing you're asserting
+// on. A multi-line driver script is not: echoing 30 lines of the caller's own
+// source above the result buries the value, and an echo that lands right before
+// `(empty result)` reads like the parser choked on the script rather than like
+// the script returned nothing. Collapse anything bigger than a single short line
+// to its first line plus a shape summary.
+const EXPR_ECHO_MAX_CHARS = 120;
+
+export function summarizeExpr(expr: string): string {
+  const lines = expr.split('\n');
+  const meaningful = lines.filter((l) => l.trim() !== '');
+  const oneLine = meaningful.length <= 1;
+  if (oneLine && expr.trim().length <= EXPR_ECHO_MAX_CHARS) return expr.trim();
+
+  const first = (meaningful[0] ?? '').trim();
+  const head = first.length > EXPR_ECHO_MAX_CHARS ? `${first.slice(0, EXPR_ECHO_MAX_CHARS - 1)}…` : first;
+  const shape = oneLine
+    ? `(${expr.trim().length} chars)`
+    : `(+${meaningful.length - 1} more ${meaningful.length - 1 === 1 ? 'line' : 'lines'}, ${expr.trim().length} chars)`;
+  return `${head} ${shape}`;
+}
+
 type EvalJobRecord =
   | { status: 'running' }
   | ({ status: 'done' } & EvalResult)
@@ -303,7 +325,7 @@ export const pageEvalCommand = new Command('eval')
           : `${warning('Auth: session NOT established')}${d.auth.detail ? ` — ${d.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
       }
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
-      console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${expr}`);
+      console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
       if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
       if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));

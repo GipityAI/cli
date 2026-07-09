@@ -83,6 +83,28 @@ test('gipity workflow run <name> --wait polls the new run to terminal and prints
   assert.match(r.stdout, /wr_New00002/);
   assert.match(r.stdout, /completed/);
   assert.doesNotMatch(r.stdout, /Triggered/); // --wait prints the run, not the fire-and-forget line
+});
+
+test('gipity workflow run <name> --wait prints each step\'s status and output', async () => {
+  mock.reset();
+  mock.on('GET /workflows', { body: { data: [WF_A], meta: { activeCount: 1, activeLimit: 50 } } });
+  mock.on('POST /workflows/wf_WflowAa0/run', { body: { data: { message: 'queued', workflow_guid: 'wf_WflowAa0' } } });
+  let listCalls = 0;
+  mock.on('GET /workflows/wf_WflowAa0/runs', () => {
+    const guid = listCalls++ === 0 ? 'wr_Old00001' : 'wr_New00002';
+    return { body: { data: [{ short_guid: guid, status: 'completed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z', total_input_tokens: 0, total_output_tokens: 0 }] } };
+  });
+  mock.on('GET /workflows/wf_WflowAa0/runs/wr_New00002', { body: { data: {
+    short_guid: 'wr_New00002', status: 'completed', started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z',
+    total_input_tokens: 0, total_output_tokens: 0,
+    step_runs: [{ step_order: 1, status: 'completed', output_json: { inserted_id: 'loc_42' }, tokens_used: 0, model_used: null, error_message: null, started_at: '2026-05-02T10:00:00Z', completed_at: '2026-05-02T10:00:03Z' }],
+  } } });
+  const r = await fresh(['workflow', 'run', 'Daily', '--wait']);
+  assert.equal(r.status, 0, r.stderr);
+  // Without the step output a caller can't tell a run that did work from one
+  // that silently skipped every step - that's the whole point of --wait.
+  assert.match(r.stdout, /inserted_id/);
+  assert.match(r.stdout, /loc_42/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
