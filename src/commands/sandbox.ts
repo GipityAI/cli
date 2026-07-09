@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'fs';
-import { dirname, extname, relative } from 'path';
+import { dirname, extname, relative, resolve } from 'path';
 import { post } from '../api.js';
-import { resolveProjectContext, getConfigPath, shouldIgnore } from '../config.js';
+import { resolveProjectContext, getConfigPath, getProjectRoot, shouldIgnore } from '../config.js';
 import { SCRATCH_IGNORE } from '../setup.js';
 import { sync } from '../sync.js';
 import { error as clrError, dim } from '../colors.js';
@@ -347,6 +347,8 @@ GCC/Rust).
         stderr: string;
         durationMs: number;
         timedOut: boolean;
+        stdoutTruncated?: boolean;
+        stderrTruncated?: boolean;
         outputFiles?: string[];
         skippedOutputFiles?: string[];
         mirroredCount?: number;
@@ -394,9 +396,25 @@ GCC/Rust).
       if (res.data.stdout) console.log(res.data.stdout);
       if (res.data.stderr) console.error(res.data.stderr);
       if (res.data.timedOut) console.error(`[Timed out after ${res.data.durationMs}ms]`);
+      if (res.data.stdoutTruncated || res.data.stderrTruncated) {
+        console.error(dim('Note: output truncated at 256 KB. Write large results to a file instead of printing them.'));
+      }
       if (res.data.outputFiles && res.data.outputFiles.length > 0) {
-        console.log(`\nOutput files ${pulledLocal ? 'synced to this directory' : 'saved to project'}:`);
-        for (const f of res.data.outputFiles) console.log(`${f}`);
+        // Only claim a file is "synced to this directory" once it is actually on
+        // local disk - a sync that ran is not the same as a file that landed.
+        const projectRoot = getProjectRoot();
+        const landed = (f: string) => pulledLocal && !!projectRoot && existsSync(resolve(projectRoot, f));
+        const onDisk = res.data.outputFiles.filter(landed);
+        const notOnDisk = res.data.outputFiles.filter((f: string) => !landed(f));
+        if (onDisk.length > 0) {
+          console.log('\nOutput files synced to this directory:');
+          for (const f of onDisk) console.log(`${f}`);
+        }
+        if (notOnDisk.length > 0) {
+          console.log('\nOutput files saved to project:');
+          for (const f of notOnDisk) console.log(`${f}`);
+          if (pulledLocal) console.log(dim("Not pulled locally - run 'gipity sync' to fetch them."));
+        }
       }
       if (res.data.skippedOutputFiles && res.data.skippedOutputFiles.length > 0) {
         console.log(dim('\nNot persisted (--no-sync-output):'));

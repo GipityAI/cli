@@ -1,7 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join, dirname } from 'node:path';
 import { runCliAsync, makeTmpHome } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
@@ -51,24 +52,62 @@ test('gipity sandbox run with --language python posts language=python', async ()
 
 test('gipity sandbox run auto-pulls output files to the local cwd', async () => {
   resetMock();
+  // Stage the output files on disk and report them in the remote tree with a
+  // matching contentHash, so the post-run sync is a no-op and they survive it.
+  // That is what "the pull landed" looks like from the command's point of view.
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  const files = { 'out/result.txt': 'result\n', 'out/chart.png': 'png-bytes\n' };
+  const remote = Object.entries(files).map(([path, body], i) => {
+    mkdirSync(join(d, dirname(path)), { recursive: true });
+    writeFileSync(join(d, path), body);
+    return {
+      path, size: Buffer.byteLength(body), modified: new Date(0).toISOString(),
+      type: 'file', guid: `f_${i}`, serverVersion: 1,
+      contentHash: createHash('sha256').update(body).digest('hex'),
+    };
+  });
   mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
     exitCode: 0, stdout: '', stderr: '', durationMs: 100, timedOut: false,
-    outputFiles: ['out/result.txt', 'out/chart.png'],
+    outputFiles: Object.keys(files),
   } } });
-  // When the run reports output files, the command pulls them down - proven by
-  // the "synced to this directory" message and the filename in stdout below.
-  // (A remote-tree fetch alone no longer distinguishes pull from the pre-run
-  // push, which always fetches the tree too.)
   let treeFetched = false;
   mock.on('GET /projects/p_TestProj/files/tree', () => {
     treeFetched = true;
-    return { body: { data: [] } };
+    return { body: { data: remote } };
   });
-  const r = await fresh(['sandbox', 'run', 'bash', 'touch out/result.txt']);
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'touch out/result.txt'], { env: { HOME: home }, cwd: d });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(treeFetched, 'expected sandbox run to trigger a sync (files/tree fetch)');
   assert.match(r.stdout, /Output files synced to this directory/);
   assert.match(r.stdout, /result\.txt/);
+});
+
+test('gipity sandbox run does not claim a local sync for files that never landed', async () => {
+  resetMock();
+  // The server reports output files but the sync pulls nothing down (empty
+  // remote tree), so nothing reaches local disk. The command must say so rather
+  // than printing "synced to this directory" for files the caller cannot open.
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 100, timedOut: false,
+    outputFiles: ['out/result.txt'],
+  } } });
+  const r = await fresh(['sandbox', 'run', 'bash', 'touch out/result.txt']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /synced to this directory/);
+  assert.match(r.stdout, /Output files saved to project/);
+  assert.match(r.stdout, /gipity sync/);
+});
+
+test('gipity sandbox run surfaces a truncation notice when the server clipped output', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: 'partial', stderr: '', durationMs: 10, timedOut: false,
+    stdoutTruncated: true,
+  } } });
+  const r = await fresh(['sandbox', 'run', '--language', 'js', 'console.log("x")']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /partial/);
+  assert.match(r.stderr, /truncated at 256 KB/);
 });
 
 test('gipity sandbox run --file reads the body and infers language from the extension', async () => {

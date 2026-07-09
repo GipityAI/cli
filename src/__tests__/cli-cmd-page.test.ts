@@ -877,12 +877,17 @@ test('gipity page screenshot omits action from the body when --action is absent'
 });
 
 test('gipity page screenshot rejects a guessed --eval flag but still shows the state-capture guidance', async () => {
-  // The unknown-option error renders this command's help (with the 'after'
-  // block) so the very first guess lands on the answer.
+  // --eval is a hidden decoy: rather than a bare "unknown option", it names the
+  // real flag (--action), and still renders this command's help (with the
+  // 'after' block) so the very first guess lands on the answer.
+  mock.reset();
   const r = await run(['page', 'screenshot', 'https://example.com', '--eval', 'foo']);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /unknown option/i);
+  assert.match(r.stderr, /--eval is not a flag on screenshot/);
+  assert.match(r.stderr, /--action/);
   assert.match(r.stderr, /page eval|--full captures the ENTIRE scrollable page/);
+  // It must NOT have actually captured against the server.
+  assert.equal(mock.requests().some((q) => q.url === '/tools/browser/screenshot'), false);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────

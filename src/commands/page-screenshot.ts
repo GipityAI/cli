@@ -189,6 +189,12 @@ function appendOption(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
+// Pre-capture scripting lives on --action, but agents reach for the JS-intent
+// names first and an "unknown option" alone doesn't name the right flag. Capture
+// the common guesses as hidden decoys (taking a value, so they swallow the
+// script) and redirect precisely — same pattern as `page eval`'s JS_DECOY_FLAGS.
+const ACTION_DECOY_FLAGS = ['--eval', '--js', '--javascript', '--script', '--code', '--exec'];
+
 export const pageScreenshotCommand = new Command('screenshot')
   .description('Screenshot a web page')
   .argument('<url>', 'URL to screenshot')
@@ -211,6 +217,15 @@ export const pageScreenshotCommand = new Command('screenshot')
   // rather than reject it as an unknown option and send them on a --help detour.
   .addOption(new Option('--full-page', 'Alias for --full').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
+    // A JS-intent flag guess (captured as a hidden decoy below): name the real
+    // flag before any other arg-shape check fires.
+    const decoy = ACTION_DECOY_FLAGS.find((f) => opts[f.slice(2)] !== undefined);
+    if (decoy) {
+      pageScreenshotCommand.error(
+        `error: ${decoy} is not a flag on screenshot — use --action "<js>" to run JavaScript in the page ` +
+        `before the capture, e.g. gipity page screenshot "<url>" --action "document.getElementById('play').click()"`,
+      );
+    }
     // --wait is a hidden alias for --post-load-delay (agents reach for it because
     // sibling `page inspect`/`eval` name the flag --wait). Canonical name wins if
     // both given; fall back to the 1000ms default when neither is set.
@@ -346,6 +361,10 @@ export const pageScreenshotCommand = new Command('screenshot')
       console.log(`${label('Screenshot file')} ${success(savedFiles[i])}`);
     }
   }));
+
+// Register the JS-intent guesses as hidden decoys (value-taking, so they swallow
+// the script) — the action turns any of them into the "--action" redirect above.
+for (const f of ACTION_DECOY_FLAGS) pageScreenshotCommand.addOption(new Option(`${f} <value>`).hideHelp());
 
 // `screenshot` captures the page AFTER load + settle (+ optional --action). There
 // is no scroll-to-a-position or wait-for-a-selector lever (agents reach for
