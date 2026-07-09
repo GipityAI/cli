@@ -165,7 +165,7 @@ const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', 
 // tools, undo/redo, transforms) and `return` a JSON-serializable result —
 // no /tmp + shell command-substitution harness needed.
 export const pageEvalCommand = new Command('eval')
-  .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script)')
+  .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script). ONE client per call - to verify realtime/presence across concurrent clients use `page test --observe` instead')
   .argument('<url>', 'URL to load')
   .argument('[expr]', 'JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file. Time budget: the body has ~20s to finish after page load - keep driver scripts within it.')
   .option('--file <path>', 'Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work. Same ~20s post-load budget as <expr>.')

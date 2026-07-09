@@ -61,7 +61,7 @@ function shortUrl(url: string, truncate = true, maxLen = 100): string {
 }
 
 export const pageInspectCommand = new Command('inspect')
-  .description('Inspect a web page (console, failed resources, timing, layout overflow)')
+  .description('Inspect a web page (console, failed resources, timing, layout overflow). ONE passive load - to verify realtime/presence across concurrent clients use `page test --observe`')
   .argument('<url>', 'URL to inspect')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before capturing (lets late async/LCP work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before capturing (deterministic; replaces --wait)')
