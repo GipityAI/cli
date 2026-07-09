@@ -55,6 +55,9 @@ export interface ProjectStorage {
  * bytes: version history included, deduplicated blobs counted once) and is what
  * `quotaBytes` is enforced against. The `storage` split explains how that number
  * arises; `projects` attributes only LIVE bytes, so it won't sum to `usedBytes`.
+ *
+ * `projects` holds only the biggest few; `projectTotals` covers every project,
+ * so we can say what the list leaves out.
  */
 export interface StorageUsageData {
   quotaBytes: number;
@@ -71,6 +74,7 @@ export interface StorageUsageData {
   };
   versionRetention: { days: number; count: number; maxDays: number; maxCount: number };
   projects: ProjectStorage[];
+  projectTotals: { count: number; liveBytes: number; liveFiles: number };
 }
 
 function row(label: string, value: string, note = ''): void {
@@ -91,12 +95,27 @@ function printUsage(d: StorageUsageData): void {
   row('Billed', formatBytes(s.physicalBytes), 'versions kept, dedup applied');
 
   if (d.projects.length > 0) {
+    // The server returns only the biggest projects. Say so, and account for the
+    // rest - a list that looks exhaustive but isn't sends people hunting for
+    // space in the wrong place.
+    const totals = d.projectTotals;
+    const hidden = totals.count - d.projects.length;
     console.log('');
-    console.log(`${bold('By project')} ${muted('(live files only)')}`);
+    const scope = hidden > 0
+      ? `(top ${d.projects.length} of ${totals.count.toLocaleString()}, live files only)`
+      : '(live files only)';
+    console.log(`${bold('By project')} ${muted(scope)}`);
     for (const p of d.projects) {
       const name = p.projectName ?? '(no project)';
       row(name.length > 16 ? `${name.slice(0, 15)}…` : name,
         formatBytes(p.liveBytes), `${p.liveFiles.toLocaleString()} files`);
+    }
+    if (hidden > 0) {
+      const shownBytes = d.projects.reduce((n, p) => n + p.liveBytes, 0);
+      const shownFiles = d.projects.reduce((n, p) => n + p.liveFiles, 0);
+      row(`…and ${hidden.toLocaleString()} more`,
+        formatBytes(totals.liveBytes - shownBytes),
+        `${(totals.liveFiles - shownFiles).toLocaleString()} files`);
     }
   }
 

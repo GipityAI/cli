@@ -36,6 +36,7 @@ const USAGE = {
     { projectShortGuid: 'p_aaa', projectName: 'my-app', liveBytes: 1.5 * GB, liveFiles: 800 },
     { projectShortGuid: null, projectName: null, liveBytes: 0.5 * GB, liveFiles: 403 },
   ],
+  projectTotals: { count: 2, liveBytes: 2 * GB, liveFiles: 1203 },
 };
 
 test('gipity storage usage shows the billed figure, the live/versions/dedup split, and projects', async () => {
@@ -54,8 +55,31 @@ test('gipity storage usage shows the billed figure, the live/versions/dedup spli
   assert.match(r.stdout, /my-app\s+1\.50 GB\s+800 files/);
   assert.match(r.stdout, /\(no project\)\s+512\.0 MB\s+403 files/);
   assert.match(r.stdout, /Version retention: 3 days \/ 10 copies/);
+  // Nothing is hidden here, so the heading makes no claim about a cap.
+  assert.match(r.stdout, /By project\s+\(live files only\)/);
+  assert.doesNotMatch(r.stdout, /and .* more/);
   // Under quota: no "over quota" nag.
   assert.doesNotMatch(r.stdout, /Over quota/);
+  assert.doesNotMatch(r.stdout, /undefined|NaN/);
+});
+
+test('gipity storage usage discloses the per-project cap and accounts for the tail', async () => {
+  mock.reset();
+  // The real shape of a big account: the server returns its top few projects out
+  // of many. Printing those rows alone reads as an exhaustive list and loses the
+  // remainder - the whole point of the command is "where did my space go?".
+  mock.on('GET /users/me/storage', { body: { data: {
+    ...USAGE,
+    storage: { ...USAGE.storage, liveBytes: 2.5 * GB, liveFiles: 5000 },
+    projectTotals: { count: 602, liveBytes: 2.5 * GB, liveFiles: 5000 },
+  } } });
+  const r = await fresh(['storage', 'usage']);
+  assert.equal(r.status, 0, r.stderr);
+  // The heading admits the list is truncated, and by how much.
+  assert.match(r.stdout, /By project\s+\(top 2 of 602, live files only\)/);
+  // The 600 unlisted projects hold 2.5 GB - (1.5 + 0.5) GB of bytes and
+  // 5000 - 1203 files. Both are reported rather than dropped on the floor.
+  assert.match(r.stdout, /…and 600 more\s+512\.0 MB\s+3,797 files/);
   assert.doesNotMatch(r.stdout, /undefined|NaN/);
 });
 
@@ -92,6 +116,7 @@ test('gipity storage usage renders an empty account without a project section', 
     },
     versionRetention: { days: 3, count: 10, maxDays: 30, maxCount: 50 },
     projects: [],
+    projectTotals: { count: 0, liveBytes: 0, liveFiles: 0 },
   } } });
   const r = await fresh(['storage', 'usage']);
   assert.equal(r.status, 0, r.stderr);
