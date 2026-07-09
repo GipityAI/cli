@@ -2,7 +2,8 @@ import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'fs';
 import { dirname, extname, relative } from 'path';
 import { post } from '../api.js';
-import { resolveProjectContext, getConfigPath } from '../config.js';
+import { resolveProjectContext, getConfigPath, shouldIgnore } from '../config.js';
+import { SCRATCH_IGNORE } from '../setup.js';
 import { sync } from '../sync.js';
 import { error as clrError, dim } from '../colors.js';
 import { run } from '../helpers/index.js';
@@ -255,12 +256,26 @@ GCC/Rust).
     const timeout = parseInt(opts.timeout, 10);
     const cwd = resolveRelativeCwd();
 
+    // A scratch path is never synced, so it can never reach the VFS the sandbox
+    // mirrors from - `--input tmp/frame.png` would fail inside the container with
+    // a bare "no such file". Catch it here, where we can say why.
+    const scratchInputs = (opts.input ?? []).filter(
+      (p: string) => shouldIgnore(p.replace(/\\/g, '/').replace(/^\.\//, ''), SCRATCH_IGNORE),
+    );
+    if (scratchInputs.length) {
+      console.error(clrError(`Scratch paths are never mirrored into the sandbox: ${scratchInputs.join(', ')}`));
+      console.error(dim(`  ${SCRATCH_IGNORE.join(', ')} are ignored by sync, so the sandbox never sees them.`));
+      console.error(dim('  Stage inputs at a real project path (src/, docs/, assets/) and delete them afterward.'));
+      process.exit(1);
+    }
+
     // Push local working-tree changes up before executing. The sandbox mirrors
     // the *server* (VFS), not the local cwd, so any input staged outside Claude's
     // Write/Edit auto-push hook - a Bash `cp`/`ffmpeg`/redirect, or any external
     // process - would otherwise be invisible to the run and the first invocation
     // would silently miss its inputs. Syncing first makes the auto-mirror reflect
-    // local state regardless of how files got there ("no manual copy needed").
+    // local state however files got there - with the one exception of the scratch
+    // namespaces above, which sync ignores and so the mirror never carries.
     // Bidirectional + CAS, so it's a cheap manifest check when nothing changed.
     // Symmetric with the post-run pull below. Skip in one-off mode (no project).
     if (getConfigPath()) {

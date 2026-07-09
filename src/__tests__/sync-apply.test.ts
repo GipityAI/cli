@@ -916,3 +916,126 @@ describe('sync() - fetch-intercepted', () => {
     assert.equal(readBaseline('proj_apply').files['old.js'], undefined);
   });
 });
+
+// ─── Empty-directory cleanup ────────────────────────────────────
+//
+// sync() prunes directories its own delete-local actions emptied, and nothing
+// else. It used to walk the whole tree and rmdir every empty directory, which
+// silently deleted ones the caller had just created: `mkdir -p src/images/
+// monsters` followed later by a write into it failed with ENOENT because a
+// sync ran in between. The VFS stores files only, so an empty local directory
+// has no remote counterpart and must simply be left alone.
+
+describe('sync() - empty directory cleanup', () => {
+  /** Baseline + local + remote all agree on `keep.txt`; nothing to do. */
+  function stubTreeWith(files: { path: string; sha: string; size: number; version: number }[]): void {
+    stubFetch(async (url) => {
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({
+          data: files.map(f => ({
+            path: f.path, size: f.size, modified: '2026-04-21', type: 'file',
+            guid: `fl_${f.path}`, contentHash: f.sha, serverVersion: f.version,
+          })),
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+  }
+
+  async function sha256(s: string): Promise<string> {
+    const { createHash } = await import('crypto');
+    return createHash('sha256').update(s).digest('hex');
+  }
+
+  it('leaves a freshly created empty directory alone', async () => {
+    const sha = await sha256('content');
+    writeFileSync(join(projectDir, 'keep.txt'), 'content');
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_apply',
+      files: { 'keep.txt': { size: 7, mtime: '2024', sha256: sha, serverVersion: 3 } },
+      lastFullSync: null,
+    }));
+    // The directory an agent just made and is about to write into.
+    mkdirSync(join(projectDir, 'src', 'images', 'monsters'), { recursive: true });
+
+    stubTreeWith([{ path: 'keep.txt', sha, size: 7, version: 3 }]);
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+    const result = await sync({ interactive: false });
+
+    assert.equal(result.applied, 0);
+    assert.deepEqual(result.errors, []);
+    assert.ok(existsSync(join(projectDir, 'src', 'images', 'monsters')),
+      'empty directory must survive a sync that deleted nothing');
+  });
+
+  it('removes a directory its own delete-local emptied, pruning upward', async () => {
+    const keepSha = await sha256('content');
+    const picSha = await sha256('png-bytes');
+    writeFileSync(join(projectDir, 'keep.txt'), 'content');
+    mkdirSync(join(projectDir, 'assets', 'old'), { recursive: true });
+    writeFileSync(join(projectDir, 'assets', 'old', 'pic.png'), 'png-bytes');
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_apply',
+      files: {
+        'keep.txt': { size: 7, mtime: '2024', sha256: keepSha, serverVersion: 3 },
+        'assets/old/pic.png': { size: 9, mtime: '2024', sha256: picSha, serverVersion: 2 },
+      },
+      lastFullSync: null,
+    }));
+    // A sibling empty directory sync never touched - must survive the prune.
+    mkdirSync(join(projectDir, 'src', 'images', 'monsters'), { recursive: true });
+
+    // Remote dropped pic.png → unchanged × deleted → delete-local.
+    stubTreeWith([{ path: 'keep.txt', sha: keepSha, size: 7, version: 3 }]);
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+    const result = await sync({ interactive: false });
+
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.applied, 1, 'the remote deletion applied locally');
+    assert.ok(!existsSync(join(projectDir, 'assets', 'old', 'pic.png')), 'file deleted');
+    assert.ok(!existsSync(join(projectDir, 'assets', 'old')), 'emptied directory removed');
+    assert.ok(!existsSync(join(projectDir, 'assets')), 'now-empty parent pruned too');
+    assert.ok(existsSync(join(projectDir, 'src', 'images', 'monsters')),
+      'unrelated empty directory must not be pruned');
+    assert.ok(existsSync(join(projectDir, 'keep.txt')), 'untouched file survives');
+  });
+
+  it('keeps a directory that still holds another file after a delete-local', async () => {
+    const keepSha = await sha256('content');
+    const picSha = await sha256('png-bytes');
+    writeFileSync(join(projectDir, 'keep.txt'), 'content');
+    mkdirSync(join(projectDir, 'assets'), { recursive: true });
+    writeFileSync(join(projectDir, 'assets', 'pic.png'), 'png-bytes');
+    writeFileSync(join(projectDir, 'assets', 'stay.png'), 'png-bytes');
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({
+      projectGuid: 'proj_apply',
+      files: {
+        'keep.txt': { size: 7, mtime: '2024', sha256: keepSha, serverVersion: 3 },
+        'assets/pic.png': { size: 9, mtime: '2024', sha256: picSha, serverVersion: 2 },
+        'assets/stay.png': { size: 9, mtime: '2024', sha256: picSha, serverVersion: 2 },
+      },
+      lastFullSync: null,
+    }));
+
+    stubTreeWith([
+      { path: 'keep.txt', sha: keepSha, size: 7, version: 3 },
+      { path: 'assets/stay.png', sha: picSha, size: 9, version: 2 },
+    ]);
+
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync } = await import('../sync.js');
+    const result = await sync({ interactive: false });
+
+    assert.deepEqual(result.errors, []);
+    assert.ok(!existsSync(join(projectDir, 'assets', 'pic.png')), 'file deleted');
+    assert.ok(existsSync(join(projectDir, 'assets')), 'directory with a survivor is kept');
+    assert.ok(existsSync(join(projectDir, 'assets', 'stay.png')), 'survivor untouched');
+  });
+});

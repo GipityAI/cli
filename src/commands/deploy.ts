@@ -107,11 +107,11 @@ export const deployCommand = new Command('deploy')
       const failedPhases = d.phases?.filter(p => p.status === 'failed') ?? [];
       if (failedPhases.length > 0) {
         // The database phase can fail on the account-wide database cap, whose
-        // server message ("Maximum of N databases reached. Drop one first.")
-        // names no command. The droppable databases live in OTHER projects, so
-        // the default project-scoped `gipity db list` shows nothing — point the
-        // caller straight at the account-wide list + drop path so they don't
-        // dead-end (or reach for raw DB access) to free a slot.
+        // server message ("Maximum of N databases reached (you have N). Drop one
+        // first.") names no command. The droppable databases live in OTHER
+        // projects, so the default project-scoped `gipity db list` shows nothing
+        // — point the caller straight at the account-wide list + drop path so
+        // they don't dead-end (or reach for raw DB access) to free a slot.
         if (failedPhases.some(p => /databases? reached|database (cap|limit)/i.test(p.summary))) {
           console.log('');
           console.log(muted('Free a slot under the account database cap:'));

@@ -279,3 +279,28 @@ test('gipity sandbox run rejects inline code plus --file without touching the AP
   assert.match(r.stderr, /not both/);
   assert.deepEqual(mock.requests(), [], 'no API call should precede argument validation');
 });
+
+// `tmp/` (and the other scratch namespaces) are never synced, so they never
+// reach the VFS the sandbox mirrors from. Passing one as --input used to fail
+// inside the container with a bare "no such file"; it's now caught locally.
+test('gipity sandbox run rejects a scratch --input path without touching the API', async () => {
+  mock.reset();
+  const r = await fresh(['sandbox', 'run', 'bash', '--input', 'tmp/frame.png', 'echo hi']);
+
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /never mirrored into the sandbox/);
+  assert.match(r.stderr, /tmp\/frame\.png/);
+  assert.match(r.stderr, /Stage inputs at a real project path/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede the scratch-input check');
+});
+
+test('gipity sandbox run allows a non-scratch input that merely starts with "tmp"', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', () => ({
+    body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false } },
+  }));
+  const r = await fresh(['sandbox', 'run', 'bash', '--input', 'tmpfile.png', 'echo hi']);
+
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /ok/);
+});

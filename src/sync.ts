@@ -1316,6 +1316,9 @@ async function syncInner(
   // turns "files we failed to fetch" into "delete those files." Skip ALL deletes
   // this run and let a clean sync replan them once the pull succeeds.
   let deletesSkippedIncomplete = 0;
+  // Directories that lost a file to a delete-local this run. Only these are
+  // candidates for empty-dir cleanup — see cleanupEmptyDirs.
+  const dirsTouchedByDelete = new Set<string>();
   for (const a of plannedToApply) {
     if (downloadIncomplete && (a.kind === 'delete-local' || a.kind === 'delete-remote')) {
       deletesSkippedIncomplete++;
@@ -1331,10 +1334,12 @@ async function syncInner(
       catch (e) { errors.push((e as Error).message); continue; }
       try {
         unlinkSync(full);
+        dirsTouchedByDelete.add(dirname(full));
         delete baseline.files[a.path];
         applied++;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          dirsTouchedByDelete.add(dirname(full));
           delete baseline.files[a.path];
           applied++;
         } else {
@@ -1401,8 +1406,8 @@ async function syncInner(
     );
   }
 
-  // Clean up empty local directories after delete-local actions.
-  cleanupEmptyDirs(root, config.ignore);
+  // Clean up local directories emptied by this run's delete-local actions.
+  cleanupEmptyDirs(root, dirsTouchedByDelete);
 
   // Adopt agreed content-match state into the baseline, and prune stale entries.
   // `plan()` is pure, so it emits these as lists and the mutation happens here.
@@ -1427,28 +1432,44 @@ async function syncInner(
   };
 }
 
-function cleanupEmptyDirs(root: string, ignorePatterns: string[]): void {
-  function walk(dir: string): boolean {
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); }
+/**
+ * Remove directories that THIS run's delete-local actions left empty.
+ *
+ * Scoped to `emptiedDirs` on purpose. The previous version walked the whole
+ * project tree and removed every empty directory it found, which also deleted
+ * ones the user had just created: `mkdir -p src/images/monsters` followed a few
+ * tool calls later by a write into it failed with ENOENT, because a full sync
+ * had pruned the directory in between. The VFS stores files only, so a freshly
+ * created empty directory has no remote counterpart and looked indistinguishable
+ * from "deleted on the server."
+ *
+ * Pruning only where sync actually removed a file preserves the original intent
+ * — don't leave an empty husk behind after a remote delete — while leaving every
+ * other directory alone. An unrelated empty directory is now simply never
+ * sync's business.
+ *
+ * Prunes upward, since removing `a/b/c` can leave `a/b` empty too. A directory
+ * holding only sync-ignored entries is not empty on disk, so it survives — the
+ * same outcome the old ignore-aware walk produced.
+ */
+function cleanupEmptyDirs(root: string, emptiedDirs: Set<string>): void {
+  const isEmpty = (dir: string): boolean => {
+    try { return readdirSync(dir).length === 0; }
     catch { return false; }
-    let kept = 0;
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      const rel = relative(root, full).replace(/\\/g, '/');
-      if (shouldIgnore(rel, ignorePatterns)) { kept++; continue; }
-      if (entry.isDirectory()) {
-        if (!walk(full)) kept++;
-      } else {
-        kept++;
-      }
+  };
+
+  // `emptiedDirs` holds dirname()s of resolveInRoot() results, which are
+  // lexically resolved — resolve the root the same way, or the containment
+  // guard below never matches and nothing is ever pruned.
+  const rootResolved = resolve(root);
+
+  for (const start of emptiedDirs) {
+    let dir = resolve(start);
+    while (dir !== rootResolved && dir.startsWith(rootResolved + sep) && isEmpty(dir)) {
+      try { rmdirSync(dir); } catch { break; }
+      dir = dirname(dir);
     }
-    if (kept === 0 && dir !== root) {
-      try { rmdirSync(dir); return true; } catch { return false; }
-    }
-    return false;
   }
-  walk(root);
 }
 
 // ─── Single-file push (used by `gipity push <file>`) ───────────
