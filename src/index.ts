@@ -338,16 +338,19 @@ program.addCommand(
     }),
 );
 
-// ── Malformed invocation → print the command's help inline, error LAST ──
+// ── Malformed invocation → print the command's help inline, error FIRST and LAST ──
 // When an agent guesses the wrong shape (excess args, unknown command/option,
 // missing arg), don't make it run `--help` as a second trip: render that exact
-// command's help inline. The one-line error goes LAST, not first: agents
-// routinely pipe CLI output through `| tail` to bound context, which would drop
-// a leading error and leave only the help — reading as success-with-no-result.
-// A trailing error survives `tail`, names exactly which argument was wrong, and
-// reads as the conclusive failure it is. addCommand doesn't inherit this, so
-// apply recursively. (We render help ourselves rather than via
-// showHelpAfterError so the error can come after it.)
+// command's help inline. The one-line error is printed TWICE, bracketing the
+// help. Agents bound context by piping CLI output through `| tail` OR `| head`,
+// and either one alone silently eats a single copy of the error: a `head -20`
+// over the 90-odd lines of root help shows the banner and nothing else, reading
+// as success-with-no-result. Bracketing means whichever end survives truncation
+// still carries the failure, while the help in between keeps doing its job (a
+// guessed `gipity browser` still surfaces the real `page` from the catalog).
+// addCommand doesn't inherit this, so apply recursively. (We render help
+// ourselves rather than via showHelpAfterError so we control where the error
+// lands.)
 function fullCommandName(cmd: Command): string {
   const parts: string[] = [];
   for (let c: Command | null = cmd; c; c = c.parent) parts.unshift(c.name());
@@ -392,9 +395,11 @@ function enableHelpAfterError(cmd: Command): void {
     // one identical, self-resolving handler everywhere sidesteps the clobber.
     outputError: (str, write) => {
       const target = resolveTargetCommand(process.argv);
+      const msg = str.replace(/\n+$/, '');
+      write(`${msg}\n\n`);
       write(`Showing \`${fullCommandName(target)} --help\`:\n\n`);
       target.outputHelp({ error: true });
-      write(`\n${str.replace(/\n+$/, '')}\n`);
+      write(`\n${msg}\n`);
     },
   });
   for (const sub of cmd.commands) enableHelpAfterError(sub);

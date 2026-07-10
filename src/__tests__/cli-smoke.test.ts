@@ -70,6 +70,32 @@ describe('cli-smoke: error behavior', () => {
     assert.match(out, /\bpage\b/);
   });
 
+  // Agents bound context by piping through `| head -N` or `| tail -N`. The 90-odd
+  // lines of root help sit between the two copies of the error, so a single copy
+  // at either end alone would be truncated away by one of them - leaving output
+  // that reads as success-with-no-result. Both ends must carry the failure.
+  // Regression: cli#131, where `gipity whoami --json 2>&1 | head -20` showed only
+  // the help banner and the agent never learned it had guessed a bad command.
+  it('usage errors survive truncation from either end (head AND tail)', () => {
+    for (const argv of [['browser'], ['db', 'query'], ['fn', 'call', '--bogus']]) {
+      const out = (runCli(argv).stdout + runCli(argv).stderr).split('\n');
+      const head = out.slice(0, 3).join('\n');
+      const tail = out.slice(-3).join('\n');
+      assert.match(head, /^error: /m, `head of \`gipity ${argv.join(' ')}\` carries no error`);
+      assert.match(tail, /^error: /m, `tail of \`gipity ${argv.join(' ')}\` carries no error`);
+    }
+  });
+
+  // Runs with a scratch HOME, so there is no signed-in user: `auth` is null.
+  // What matters is that `whoami` reaches `status` at all instead of dying as an
+  // unknown command - it's the name agents reach for to find their identity.
+  it('`whoami` is an alias for `status`, not an unknown command', () => {
+    const r = runCli(['whoami', '--json']);
+    assert.equal(r.status, 0);
+    const out = JSON.parse(r.stdout);
+    assert.ok('auth' in out && 'project' in out, 'whoami --json should print the status payload');
+  });
+
   it('excess args print the error AND that command\'s help inline', () => {
     // Mirrors an agent guessing `gipity add <tmpl> title=...` (positional k=v).
     const r = runCli(['add', '2d-game', 'title=x']);

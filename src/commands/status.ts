@@ -33,7 +33,11 @@ function checkGipityPlugin(): { missing: string[]; ok: boolean; stale: boolean }
   return { missing, ok: missing.length === 0, stale };
 }
 
+// `whoami` is the name agents reach for first when they want the signed-in
+// identity (it's the unix spelling), and this is the command that prints it.
+// Aliasing costs one line and turns a guess into a hit.
 export const statusCommand = new Command('status')
+  .alias('whoami')
   .description('Show project and login status')
   .option('--json', 'Output as JSON')
   .option('--repair-hooks', 'Re-enable the Gipity Claude Code plugin (hooks) if missing or disabled')
