@@ -18,6 +18,9 @@ export interface EvalResult {
   auth?: { requested: boolean; established: boolean; detail?: string };
   navigationIncomplete?: boolean;
   note?: string;
+  // Present only when the page painted below the server's slow-render
+  // threshold, which makes wall-clock waits under-advance its rAF-driven clock.
+  slowRender?: { fps: number };
 }
 
 // Shown when an eval runs cleanly but returns nothing serializable. Turns a
@@ -315,6 +318,16 @@ export const pageEvalCommand = new Command('eval')
       console.log(`${brand('Eval')} ${bold(d.url || url)}`);
       if (d.navigationIncomplete) {
         console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
+      }
+      // A slow-painting page makes any wall-clock wait silently wrong: the
+      // page's rAF loop is its clock, and engines cap the per-frame delta, so
+      // `setTimeout(2000)` may advance only a fraction of a second of app time.
+      // Without this line the eval returns a plausible-looking false negative.
+      if (d.slowRender) {
+        console.log(`${warning('⚠ Slow render:')} page painted at ${d.slowRender.fps} fps. `
+          + `Waiting on real time (setTimeout) advances animation/physics time far slower than it looks — `
+          + `assertions after a wall-clock wait can report a false negative. `
+          + `Step the app's own loop deterministically instead (3D templates: ${bold('core.advance(seconds)')}).`);
       }
       // Auth state: without this line an agent can't distinguish "signed-in
       // eval" from "--auth silently no-op'd against the anonymous page".
