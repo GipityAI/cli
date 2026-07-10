@@ -3,6 +3,7 @@ import { get, post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { bold, muted, success, warning } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { flushBugQueue, isRetryableFailure, queueBugReport } from '../bug-queue.js';
 
 // Kept in sync with @easyclaw/shared BUG_REPORT_CATEGORIES / _SEVERITIES (the CLI
 // package can't import the server's shared package). The server validates
@@ -52,13 +53,31 @@ bugCommand
     }
 
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
-    const res = await post<{ data: { report_guid: string } }>(
-      `/api/${config.projectGuid}/services/bug-report/submit`,
-      { category, severity, summary: opts.summary, detail: opts.detail },
-    );
 
-    if (opts.json) { console.log(JSON.stringify(res.data)); return; }
-    console.log(success(`✓ Bug report filed (${res.data.report_guid}) — queued for triage.`));
+    // Best-effort: deliver anything stranded by an earlier outage/session-expiry
+    // before filing the new one, so a single working connection clears the backlog.
+    const delivered = await flushBugQueue().catch(() => 0);
+    if (delivered > 0 && !opts.json) {
+      console.log(muted(`Delivered ${delivered} previously queued bug report${delivered === 1 ? '' : 's'}.`));
+    }
+
+    const payload = { category, severity, summary: opts.summary, detail: opts.detail };
+    try {
+      const res = await post<{ data: { report_guid: string } }>(
+        `/api/${config.projectGuid}/services/bug-report/submit`,
+        payload,
+      );
+      if (opts.json) { console.log(JSON.stringify(res.data)); return; }
+      console.log(success(`✓ Bug report filed (${res.data.report_guid}) — queued for triage.`));
+    } catch (err: any) {
+      // The report itself is the record of "the platform broke" - don't lose it
+      // just because the breakage (dead session, no network) also blocks filing it.
+      if (!isRetryableFailure(err)) throw err;
+      queueBugReport({ projectGuid: config.projectGuid, ...payload });
+      if (opts.json) { console.log(JSON.stringify({ queued: true })); return; }
+      console.log(warning('Bug report saved locally - no connection or session expired.'));
+      console.log(muted('It will be delivered automatically next time you log in or file another report.'));
+    }
   }));
 
 bugCommand

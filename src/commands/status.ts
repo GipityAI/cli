@@ -6,6 +6,7 @@ import { getAuth, sessionExpired } from '../auth.js';
 import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
 import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopeInstallState } from '../setup.js';
+import { flushBugQueue } from '../bug-queue.js';
 
 /** Hooks ship in the Gipity Claude Code plugin now. "Installed" means three
  *  things must all hold: the user-scope settings register the marketplace and
@@ -48,6 +49,13 @@ export const statusCommand = new Command('status')
     void cwd;
     const hookCheck = config ? checkGipityPlugin() : null;
 
+    // `status` is the command an agent reaches for to confirm "are we back?"
+    // after an outage/session-expiry - a valid, unexpired session here is the
+    // clearest signal we have that any bug reports stranded by that outage can
+    // now go out. Skipped entirely (existsSync short-circuit) when the queue
+    // is empty, which is the common case, so this stays a no-op most runs.
+    const queueDelivered = (auth && !sessionExpired()) ? await flushBugQueue().catch(() => 0) : 0;
+
     if (opts.json) {
       console.log(JSON.stringify({
         project: config ? {
@@ -84,6 +92,10 @@ export const statusCommand = new Command('status')
       console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login`)}`);
     } else {
       console.log(`${muted('Auth:')} ${success(auth.email)}`);
+    }
+
+    if (queueDelivered > 0) {
+      console.log(`${muted('Bug queue:')} ${success(`delivered ${queueDelivered} queued bug report${queueDelivered === 1 ? '' : 's'}`)}`);
     }
 
     if (hookCheck) {

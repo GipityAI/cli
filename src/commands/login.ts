@@ -3,6 +3,7 @@ import { saveAuth, getAuth } from '../auth.js';
 import { publicPost } from '../api.js';
 import { prompt, decodeJwtExp } from '../utils.js';
 import { success, error as clrError, muted } from '../colors.js';
+import { flushBugQueue } from '../bug-queue.js';
 
 export const loginCommand = new Command('login')
   .description('Log in or sign up')
@@ -72,4 +73,11 @@ async function verify(email: string, code: string): Promise<void> {
   });
 
   console.log(success(`Logged in (${email}).`));
+
+  // A fresh session is the clearest "we're reconnected" signal - clear any bug
+  // reports that got stranded while this account's session was expired/offline.
+  const delivered = await flushBugQueue().catch(() => 0);
+  if (delivered > 0) {
+    console.log(muted(`Delivered ${delivered} queued bug report${delivered === 1 ? '' : 's'}.`));
+  }
 }

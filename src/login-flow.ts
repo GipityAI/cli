@@ -11,7 +11,8 @@
 import { publicPost } from './api.js';
 import { getAuth, saveAuth, type AuthData } from './auth.js';
 import { prompt, decodeJwtExp } from './utils.js';
-import { success, error as clrError } from './colors.js';
+import { success, error as clrError, muted } from './colors.js';
+import { flushBugQueue } from './bug-queue.js';
 
 /** Prompt for email + 6-digit code, persist the tokens, and return the new
  *  auth. Exits the process on empty input or a bad token (the caller can't
@@ -38,5 +39,11 @@ export async function interactiveLogin(): Promise<AuthData> {
 
   saveAuth({ accessToken: res.accessToken, refreshToken: res.refreshToken, email, expiresAt });
   console.log(`  ${success(`Logged in (${email}).`)}`);
+
+  const delivered = await flushBugQueue().catch(() => 0);
+  if (delivered > 0) {
+    console.log(`  ${muted(`Delivered ${delivered} queued bug report${delivered === 1 ? '' : 's'}.`)}`);
+  }
+
   return getAuth()!;
 }
