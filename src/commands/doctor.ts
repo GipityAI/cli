@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { LOCAL_PKG_DIR, LOCAL_ENTRY, STATE_FILE, SETTINGS_FILE, UPDATE_LOG, readState, readSettings, updatesDisabled } from '../updater/state.js';
 import { bold, dim, success, warning, error as clrError, muted } from '../colors.js';
 import { getAuth, sessionExpired } from '../auth.js';
@@ -10,6 +11,40 @@ import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
 import { resolveCliPath } from '../relay/setup.js';
 
 const NODE_MIN_MAJOR = 18;
+
+/**
+ * If the `node` running this CLI lives under a version-manager install tree
+ * (nvm/fnm/asdf/volta), return the manager's name; otherwise null.
+ *
+ * Why it matters: `npm install -g gipity` drops the `gipity` binary in the
+ * *active node version's* bin dir. With a lazily-activated manager (nvm's
+ * default setup), that dir isn't on a fresh shell's PATH until the manager
+ * initializes, so a new terminal reports `gipity: command not found` and users
+ * think the install failed. (Plugin hooks used to break the same way; the
+ * plugin's sh launcher now resolves node itself, so this is only about the
+ * `gipity` binary's own discoverability.) `gipity doctor` surfaces it with a
+ * remediation instead of leaving it a mystery.
+ */
+export function versionManagerNode(
+  execPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string | null {
+  const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '') + '/';
+  const p = norm(execPath);
+  const h = norm(home);
+  const roots: Array<[string, string]> = [
+    ['nvm', env.NVM_DIR ? norm(env.NVM_DIR) : `${h}.nvm/`],
+    ['fnm', env.FNM_DIR ? norm(env.FNM_DIR) : `${h}.fnm/`],
+    ['fnm', `${h}.local/share/fnm/`],
+    ['asdf', env.ASDF_DIR ? norm(env.ASDF_DIR) : `${h}.asdf/`],
+    ['volta', env.VOLTA_HOME ? norm(env.VOLTA_HOME) : `${h}.volta/`],
+  ];
+  for (const [name, root] of roots) {
+    if (p.startsWith(root)) return name;
+  }
+  return null;
+}
 
 function localVersion(): string | null {
   const pkgPath = join(LOCAL_PKG_DIR, 'package.json');
@@ -40,7 +75,10 @@ function rel(t: number): string {
 export interface EnvReport {
   /** Everything an onboarded user needs is in place. */
   ready: boolean;
-  node: { ok: boolean; version: string };
+  /** `version_manager` names the version manager (nvm/fnm/asdf/volta) the
+   *  running node lives under, or null for a system/global node - see
+   *  {@link versionManagerNode}. */
+  node: { ok: boolean; version: string; version_manager: string | null };
   gipity: { installed: boolean; version: string; logged_in: boolean; email: string | null; session_expired: boolean };
   claude: { installed: boolean; authenticated: boolean };
   relay: {
@@ -88,7 +126,11 @@ export function gatherEnv(opts: { probeClaude?: boolean } = {}): EnvReport {
   const expired = auth ? sessionExpired() : false;
   const device = relayState.getDevice();
 
-  const node = { ok: nodeMajor >= NODE_MIN_MAJOR, version: process.versions.node };
+  const node = {
+    ok: nodeMajor >= NODE_MIN_MAJOR,
+    version: process.versions.node,
+    version_manager: versionManagerNode(process.execPath),
+  };
   const gipity = {
     installed: true, // we're running it
     version: shimVersion(),
@@ -144,7 +186,11 @@ export const doctorCommand = new Command('doctor')
     console.log(bold('Gipity - doctor'));
     console.log('');
     console.log(bold('Environment'));
-    console.log(`${muted('node            ')} ${env.node.version}  ${env.node.ok ? success('✓') : clrError(`(need ${NODE_MIN_MAJOR}+)`)}`);
+    console.log(`${muted('node            ')} ${env.node.version}  ${env.node.ok ? success('✓') : clrError(`(need ${NODE_MIN_MAJOR}+)`)}${env.node.version_manager ? muted(`  (via ${env.node.version_manager})`) : ''}`);
+    if (env.node.version_manager) {
+      console.log(`${muted('                ')} ${warning(`node is managed by ${env.node.version_manager}`)} - if a fresh terminal reports \`gipity: command not found\`, its bin dir isn't on your`);
+      console.log(`${muted('                ')} ${dim(`login PATH yet. Ensure ${env.node.version_manager} auto-activates in your shell rc, set it as the default version, or symlink node + gipity onto your base PATH.`)}`);
+    }
     console.log(`${muted('gipity login    ')} ${env.gipity.logged_in ? success(`logged in as ${env.gipity.email}`) : (env.gipity.session_expired ? warning(`session expired (${env.gipity.email})`) : warning('not logged in'))}`);
     console.log(`${muted('claude code     ')} installed ${yn(env.claude.installed)} · authenticated ${yn(env.claude.authenticated)}`);
     const autostartLabel = env.relay.autostart === null ? muted('n/a') : yn(env.relay.autostart);

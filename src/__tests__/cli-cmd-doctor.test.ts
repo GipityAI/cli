@@ -11,6 +11,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { makeAuthedHome } from './helpers/test-home.js';
+import { versionManagerNode } from '../commands/doctor.js';
 
 function bareHome(): string {
   return mkdtempSync(join(tmpdir(), 'gipity-doctor-'));
@@ -32,6 +33,7 @@ function assertEnvShape(env: any) {
   assert.equal(typeof env.ready, 'boolean');
   assert.equal(typeof env.node.ok, 'boolean');
   assert.equal(typeof env.node.version, 'string');
+  assert.ok(env.node.version_manager === null || typeof env.node.version_manager === 'string');
   assert.equal(typeof env.claude.installed, 'boolean');
   assert.equal(typeof env.claude.authenticated, 'boolean');
   assert.equal(typeof env.relay.paired, 'boolean');
@@ -43,6 +45,22 @@ function assertEnvShape(env: any) {
   assert.equal(typeof env.cli.auto_updates, 'boolean');
   assert.equal(typeof env.cli.local_install_ok, 'boolean');
 }
+
+test('versionManagerNode detects nvm/fnm/asdf/volta installs and passes system node', () => {
+  const home = '/home/jane';
+  // Version-manager node trees -> named.
+  assert.equal(versionManagerNode('/home/jane/.nvm/versions/node/v18.17.0/bin/node', {}, home), 'nvm');
+  assert.equal(versionManagerNode('/home/jane/.volta/tools/image/node/20.11.0/bin/node', {}, home), 'volta');
+  assert.equal(versionManagerNode('/home/jane/.asdf/installs/nodejs/20.0.0/bin/node', {}, home), 'asdf');
+  assert.equal(versionManagerNode('/home/jane/.local/share/fnm/node-versions/v20.0.0/installation/bin/node', {}, home), 'fnm');
+  // System / global node -> null.
+  assert.equal(versionManagerNode('/usr/bin/node', {}, home), null);
+  assert.equal(versionManagerNode('/opt/homebrew/bin/node', {}, home), null);
+  // Honors explicit manager roots from env (non-default location).
+  assert.equal(versionManagerNode('/opt/nvm/versions/node/v18.0.0/bin/node', { NVM_DIR: '/opt/nvm' }, home), 'nvm');
+  // A path that merely contains ".nvm" as a substring elsewhere isn't a false positive.
+  assert.equal(versionManagerNode('/home/jane/projects/my.nvm.app/node', {}, home), null);
+});
 
 test('gipity doctor --json reports logged-out + unpaired for a fresh home', async () => {
   const home = bareHome();
