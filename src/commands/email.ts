@@ -9,15 +9,19 @@ function collect(value: string, prev: string[]): string[] {
   return [...prev, value];
 }
 
+// `email` is a command GROUP. Agent email is `email send`; the deployed app's
+// email() service is exercised via `email test` / `email log`. (Keeping agent
+// send under `send` rather than a bare-`email` default action avoids a
+// parent/subcommand `--subject` option collision — and matches the `email`
+// skill doc, which documents the CLI verb as `gipity email send`.)
 export const emailCommand = new Command('email')
-  .description('Send email (as the agent), or test/inspect a deployed app\'s email() sends')
-  .addHelpText('after', [
-    '',
-    'Agent email (default): sends from gipity@gipity.ai. Omit --to to self-send.',
-    'App email():',
-    '  gipity email test <to>   Send a test email through your app\'s email() path (owner-billed)',
-    '  gipity email log         Recent email() sends from your app',
-  ].join('\n'))
+  .description("Send email as the agent (send), or test/inspect a deployed app's email() sends (test/log)");
+
+// --- gipity email send ---
+// Agent email from gipity@gipity.ai (omit --to to self-send).
+emailCommand
+  .command('send')
+  .description('Send an email as the agent (from gipity@gipity.ai; omit --to to self-send)')
   .requiredOption('--subject <subject>', 'Email subject')
   .requiredOption('--body <body>', 'Email body (plain text)')
   .option('--to <email>', 'Recipient (repeatable; omit for self-send)', collect, [] as string[])
@@ -29,10 +33,7 @@ export const emailCommand = new Command('email')
   .action(async (opts) => {
     try {
       await resolveProjectContext();
-      const payload: Record<string, unknown> = {
-        subject: opts.subject,
-        body: opts.body,
-      };
+      const payload: Record<string, unknown> = { subject: opts.subject, body: opts.body };
       if (opts.to.length) payload.to = opts.to;
       if (opts.cc.length) payload.cc = opts.cc;
       if (opts.bcc.length) payload.bcc = opts.bcc;
