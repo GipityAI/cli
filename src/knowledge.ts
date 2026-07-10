@@ -60,7 +60,7 @@ You are the developer. Write files in this directory - the Gipity Claude Code pl
 
 ## Use first-party services before reaching outside
 
-Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, web push notifications (Gipity Notify - no VAPID keys, no Firebase/OneSignal; works on iOS home-screen web apps), and email (send as the agent via \`gipity email send\`, or from a deployed app via a workflow \`notify\` step - no SMTP/SendGrid/Nodemailer). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
+Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, web push notifications (Gipity Notify - no VAPID keys, no Firebase/OneSignal; works on iOS home-screen web apps), and email (send as the agent via \`gipity email send\`, or from a deployed app's function with the injected \`email()\` service - \`services: ['email']\`, no SMTP/SendGrid/Nodemailer). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
 
 ## Don't guess Gipity facts - look them up
 
