@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCliAsync } from './helpers/spawn-cli.js';
@@ -17,6 +17,23 @@ function fresh(args: string[]) {
   // Use a fresh project dir; downloadFile writes to cwd, so isolate per-test.
   const d = makeProjectDir({ apiBase: mock.apiBase });
   return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: d });
+}
+
+/** Same as `fresh`, but hands back the project dir so a test can assert on the
+ *  files that landed in it. */
+function freshIn(dir: string, args: string[]) {
+  return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: dir });
+}
+
+function mockSound() {
+  mock.on('POST /projects/p_TestProj/generate/sound', { body: {
+    url: `${mock.apiBase}/files/sound.mp3`,
+    content_type: 'audio/mpeg',
+    model: '',
+    provider: 'gipity',
+    size_bytes: 12,
+  } });
+  mock.on('GET /files/sound.mp3', { contentType: 'audio/mpeg', raw: 'fakeaudiobts' });
 }
 
 test('gipity generate image POSTs and downloads from the returned URL', async () => {
@@ -90,4 +107,46 @@ test('gipity generate sound POSTs text + options and writes the audio file', asy
   assert.equal(body.text, 'cartoon character saying oof');
   assert.equal(body.duration_seconds, 2.5);
   assert.equal(body.prompt_influence, 0.7);
+});
+
+test('gipity generate sound creates a missing -o parent directory', async () => {
+  mock.reset();
+  mockSound();
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  // `src/audio/` does not exist - the natural place for an audio asset in a
+  // freshly scaffolded app, and what used to blow up with a raw ENOENT.
+  const r = await freshIn(dir, ['generate', 'sound', 'warm two-tone doorbell chime', '-o', 'src/audio/ding.mp3']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(dir, 'src', 'audio', 'ding.mp3'), 'utf8'), 'fakeaudiobts');
+});
+
+test('gipity generate image creates a missing -o parent directory', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/generate/image', { body: {
+    url: `${mock.apiBase}/files/generated.png`,
+    content_type: 'image/png',
+    model: 'flux-2-pro',
+    provider: 'bfl',
+    size_bytes: 12,
+  } });
+  mock.on('GET /files/generated.png', { contentType: 'image/png', raw: 'fakepng12bts' });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshIn(dir, ['generate', 'image', 'a tee shirt', '-o', 'src/images/products/tee.png']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(dir, 'src', 'images', 'products', 'tee.png'), 'utf8'), 'fakepng12bts');
+});
+
+test('generate rejects an unusable -o path before spending a paid generation', async () => {
+  mock.reset();
+  mockSound();
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(dir, 'blocker'), 'a file, not a directory');
+  const r = await freshIn(dir, ['generate', 'sound', 'a ding', '-o', 'blocker/nested/ding.mp3']);
+  assert.notEqual(r.status, 0);
+  // Names what the CLI actually needed, rather than leaking a raw fs errno.
+  assert.match(r.stderr, /can't create the output directory/);
+  // The whole point of checking up front: generation is billed per call, so the
+  // request must never leave the machine when the file can't be saved.
+  assert.equal(mock.requests().filter(q => q.url.includes('/generate/')).length, 0,
+    'no generation request should be made when the output path is unusable');
 });

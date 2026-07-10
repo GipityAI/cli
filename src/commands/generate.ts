@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { pushFile } from '../sync.js';
-import { writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import { resolve as resolvePath, dirname, relative, isAbsolute } from 'path';
 import { error as clrError, success, muted } from '../colors.js';
 import { printCommandError } from '../helpers/command.js';
@@ -34,10 +34,26 @@ async function downloadFile(url: string, filename: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
+  ensureOutputDir(filename);
   writeFileSync(filename, buffer);
   const savedPath = resolvePath(filename);
   await pushGenerated(savedPath);
   return savedPath;
+}
+
+/** Create the parent directory of an -o path, so `-o src/audio/ding.mp3` works
+ *  in a tree that has no `src/audio/` yet instead of dying on a raw ENOENT.
+ *
+ *  Every action also calls this *before* its generate request: generation is
+ *  billed per call, so an unwritable output path has to fail before we spend
+ *  one, not after the bytes are already paid for and in hand. */
+function ensureOutputDir(output: string): void {
+  const dir = dirname(resolvePath(output));
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (err: any) {
+    throw new Error(`can't create the output directory ${dir} (${err.code || err.message}). Pick a different -o path.`);
+  }
 }
 
 /** Sync a freshly generated file up to the linked project (no-op when there's
@@ -83,6 +99,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
+      if (opts.output) ensureOutputDir(opts.output);
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
         prompt,
         provider: opts.provider,
@@ -147,6 +164,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
+      if (opts.output) ensureOutputDir(opts.output);
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/video`, {
         prompt,
         model: opts.model,
@@ -201,6 +219,7 @@ Examples:
   .action(async (text: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
+      if (opts.output) ensureOutputDir(opts.output);
 
       let speakers: unknown;
       if (opts.speakers) {
@@ -262,6 +281,7 @@ Examples:
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
+      if (opts.output) ensureOutputDir(opts.output);
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/music`, {
         prompt,
         duration_seconds: opts.duration,
@@ -314,6 +334,7 @@ Examples:
   .action(async (text: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
+      if (opts.output) ensureOutputDir(opts.output);
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/sound`, {
         text,
         duration_seconds: opts.duration,
