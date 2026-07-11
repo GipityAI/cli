@@ -23,6 +23,7 @@ interface Dispatch {
   project_guid: string;
   project_slug: string;
   account_slug: string;
+  conversation_guid?: string;
 }
 
 let server: Server;
@@ -314,6 +315,65 @@ describe('daemon: auto-bootstrap missing project dir', () => {
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     assert.equal(cfg.projectGuid, 'p_test');
     assert.equal(cfg.projectSlug, 'test');
+  });
+});
+
+describe('daemon: kill-on-new-message start→resume upgrade', () => {
+  it('a second start dispatch for a busy conv kills the child and resumes its session', async () => {
+    resetMock();
+    const { home } = freshHome();
+
+    // Fake claude: record argv, announce a session via a stream-json init
+    // event (exactly what the real `claude --output-format stream-json`
+    // emits first), then block until SIGTERMed.
+    // One log line per invocation (argv can contain newlines - the question
+    // protocol prompt - so squash them). The same command also serves the
+    // daemon's post-dispatch `sync` spawn; the assertions filter to the
+    // `claude -p` invocations.
+    const argsLog = join(home, 'claude-args.log');
+    const fakeClaude = join(home, 'fake-claude.sh');
+    writeFileSync(fakeClaude, [
+      '#!/bin/sh',
+      `printf 'ARGS::%s\\n' "$(printf '%s ' "$@" | tr '\\n' ' ')" >> "${argsLog}"`,
+      `echo '{"type":"system","subtype":"init","session_id":"sess-test-1","cwd":"/tmp"}'`,
+      'exec sleep 1',
+      '',
+    ].join('\n'), { mode: 0o755 });
+
+    // Both dispatches target the SAME conversation and both arrive as
+    // kind='start' - the fast-follow race: the server enqueued the second
+    // before the first run's SessionStart reached it.
+    pending.push(dispatchRow({ short_guid: 'rds_first1', message: 'one', conversation_guid: 'c_upgrade' }));
+
+    const daemonDone = runDaemon(home, fakeClaude, { maxRunMs: 6000 });
+
+    // Wait until the first child is actually running (it has logged its argv,
+    // which happens before it announces its session), then hand the daemon
+    // the second dispatch.
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        if (readFileSync(argsLog, 'utf-8').includes('ARGS::claude -p one')) break;
+      } catch { /* not written yet */ }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    await new Promise(r => setTimeout(r, 200)); // let the init line be parsed
+    pending.push(dispatchRow({ short_guid: 'rds_second1', kind: 'start', message: 'two', conversation_guid: 'c_upgrade' }));
+
+    await daemonDone;
+
+    const spawnLines = readFileSync(argsLog, 'utf-8').trim().split('\n')
+      .filter(l => l.startsWith('ARGS::claude -p'));
+    assert.equal(spawnLines.length, 2, `expected 2 claude spawns, got: ${spawnLines.join(' | ')}`);
+    // First spawn: fresh session, no --resume.
+    assert.doesNotMatch(spawnLines[0], /--resume/);
+    // Second spawn: upgraded start→resume with the killed child's session.
+    assert.match(spawnLines[1], /--resume sess-test-1/);
+
+    // First dispatch was killed (cancelled), second ran to completion.
+    const byGuid = Object.fromEntries(acks.map(a => [a.guid, a.status]));
+    assert.equal(byGuid['rds_first1'], 'cancelled');
+    assert.equal(byGuid['rds_second1'], 'done');
   });
 });
 

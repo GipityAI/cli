@@ -48,6 +48,11 @@ import { ensureRelayAgentToken } from './agent-token.js';
 import { redactEntries, redactString, normalizeSecrets } from './redact.js';
 import { getMachineId } from './machine-id.js';
 import { collectDiagnostics } from './diagnostics.js';
+import { SessionPool, PoolFullError, type QueryFactory, type SessionStateKind } from './session-pool.js';
+import { getConfig } from '../config.js';
+import { getAccountSlug } from '../api.js';
+import { buildFreshWrap, buildResumeWrap, buildProjectContextBlock } from '../prompts.js';
+import { fetchProjectStats } from '../commands/claude.js';
 
 // Re-exported so the existing `relay-bridge-abort.test.ts` keeps working.
 // New callers should import from device-http.js directly.
@@ -73,6 +78,18 @@ const MAX_CONCURRENT_DISPATCHES = Math.max(1, parseInt(process.env.GIPITY_RELAY_
 // Cap how long the pre-Claude project sync (and the post-dispatch push-back) may
 // run before we kill it - a stalled sync must never hang a dispatch forever.
 const PROJECT_SYNC_TIMEOUT_MS = parseInt(process.env.GIPITY_RELAY_SYNC_TIMEOUT_MS || '120000', 10);
+
+// ─── Phase 2: long-lived session pool (feature-flagged, default OFF) ─────
+// When 'on', a conversation's follow-up messages are fed into a live Claude
+// Code process (via the Agent SDK) instead of spawning `gipity claude -p`
+// each time - faster follow-ups + clean interrupt, at ~300MB RSS per idle
+// session. Bounded by a hot window + LRU cap; any pool error or a saturated
+// pool falls back to the proven spawn path for that dispatch, so this can
+// only make things faster, never break them. Rollback = restart with the
+// flag unset.
+const SESSION_POOL_ENABLED = process.env.GIPITY_RELAY_SESSION_POOL === 'on';
+const SESSION_HOT_MS = parseInt(process.env.GIPITY_RELAY_SESSION_HOT_MS || String(5 * 60_000), 10);
+const MAX_SESSIONS = Math.max(1, parseInt(process.env.GIPITY_RELAY_MAX_SESSIONS || '3', 10));
 
 /** System-prompt addendum enabling the interactive question card on the
  *  relay path (AskUserQuestion is unavailable in -p mode). The model emits
@@ -274,6 +291,8 @@ export async function run(opts: DaemonOptions = {}): Promise<number> {
     if (ctx.shutdownReason) return;
     ctx.shutdownReason = reason;
     ctx.abort.abort(reason);
+    // Close any live pool sessions so their claude subprocesses exit with us.
+    sessionPool?.shutdown();
   };
 
   process.on('SIGINT',  () => shutdown('SIGINT'));
@@ -360,6 +379,13 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
           log('debug', 'diagnostics collection failed', { err: err?.message });
         }
       }
+      // Phase 2: report which conversations have a live (hot/running) session
+      // so the web indicator can show fast-follow-up readiness. Only when the
+      // pool is enabled and has live sessions - a bare ping otherwise.
+      if (SESSION_POOL_ENABLED) {
+        const sessions = getLiveSessionStates();
+        if (sessions.length > 0) body.sessions = sessions.map(s => ({ conversation_guid: s.convGuid, state: s.state }));
+      }
       const r = await deviceFetch('POST', '/remote-devices/heartbeat', body, 10_000, ctx.abort.signal);
       if (r.status === 401) {
         log('warn', 'heartbeat 401 - device revoked, exiting clean');
@@ -406,7 +432,13 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
       await sleep(backoff, ctx.abort.signal);
       continue;
     }
-    await sleep(HEARTBEAT_INTERVAL_MS, ctx.abort.signal);
+    // Sleep until the next tick OR a session-state poke (whichever first), so
+    // the indicator flips promptly on a session opening/closing.
+    await Promise.race([
+      sleep(HEARTBEAT_INTERVAL_MS, ctx.abort.signal),
+      new Promise<void>(resolve => { heartbeatPoke = () => { heartbeatPoke = null; resolve(); }; }),
+    ]);
+    heartbeatPoke = null;
   }
   return 0;
 }
@@ -889,7 +921,8 @@ async function ack(shortGuid: string, status: 'done' | 'error' | 'cancelled', er
   }
 }
 
-async function handleDispatch(d: ClaimedDispatch): Promise<void> {
+async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
+  let d = claimed;
   log('info', 'dispatch claimed', { id: d.short_guid, project: d.project_slug, kind: d.kind });
   log('debug', 'dispatch payload', {
     id: d.short_guid,
@@ -919,7 +952,23 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
   // then --resume the same session, loading whatever made it to disk.
   // Two children on one session would corrupt the .jsonl - this is the
   // serialization point that prevents that.
-  await killRunningForConv(d.conversation_guid);
+  const { killedSessionIds } = await killRunningForConv(d.conversation_guid);
+
+  // start→resume upgrade: a dispatch can arrive as kind='start' while the
+  // conversation ALREADY has a session locally - the server enqueued it
+  // before the first run's SessionStart reached it (fast follow-up). Spawning
+  // fresh would orphan that session and lose the first turn's context;
+  // resume the session the killed child announced (or the last one this conv
+  // was seen using) instead.
+  if (d.kind === 'start') {
+    const sid = killedSessionIds.find(isSafeSessionId) ?? lastSessionForConv(d.conversation_guid);
+    if (sid) {
+      log('info', 'upgrading start → resume (conv already has a local session)', {
+        id: d.short_guid, session_id: sid, from_kill: killedSessionIds.length > 0,
+      });
+      d = { ...d, kind: 'resume', remote_session_id: sid };
+    }
+  }
 
   // One ordered ingest queue per dispatch: markers, prompt echo, stream
   // entries, and the tail all flow through it in order, with backoff
@@ -977,6 +1026,15 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
       return;
     }
     pushSystem('Project files synced.');
+  }
+
+  // Phase 2: if the session pool is enabled, try to run this turn in a
+  // long-lived Claude Code session (fast follow-up + clean interrupt). Any
+  // failure - pool saturated, SDK error, wrap failure - falls through to the
+  // proven spawn path below, so the pool can only ever make things faster.
+  if (SESSION_POOL_ENABLED) {
+    const handled = await tryHandleViaPool(d, cwd, queue, pushSystem, flushQueue);
+    if (handled) return;
   }
 
   // Build argv for `gipity claude -p …` (or with --resume). No shell - argv
@@ -1150,6 +1208,199 @@ async function handleDispatch(d: ClaimedDispatch): Promise<void> {
 }
 
 /**
+ * Wrap the user's raw message with the same project-context / resume framing
+ * the `gipity claude` wrapper applies on the spawn path (see claude.ts). The
+ * pool bypasses that wrapper, so it must replicate it or the model loses the
+ * Gipity context. `resume` => short framing (context already loaded); fresh
+ * => full context block (one stats call, cold path only).
+ */
+async function wrapPoolMessage(d: ClaimedDispatch, cwd: string, resume: boolean): Promise<string> {
+  const config = getConfig();
+  let accountSlug = '';
+  try { accountSlug = await getAccountSlug(); } catch { /* best effort */ }
+  const ctx = {
+    projectName: config?.projectSlug ?? d.project_slug ?? 'this project',
+    projectSlug: config?.projectSlug ?? d.project_slug ?? '',
+    projectGuid: config?.projectGuid ?? d.project_guid ?? '',
+    accountSlug,
+    cwd,
+  };
+  if (resume) return buildResumeWrap(ctx, d.message);
+  const stats = await fetchProjectStats(ctx.projectGuid, cwd);
+  return buildFreshWrap(buildProjectContextBlock({ ...ctx, ...stats }), d.message);
+}
+
+/**
+ * Phase 2 turn: run a dispatch in a long-lived pool session. Reuses the
+ * caller's ingest `queue` + markers so the web live view is identical to the
+ * spawn path. Returns true if it handled the dispatch (including acking it),
+ * false if it declined (pool saturated / not-yet-created error) so the caller
+ * falls back to a legacy spawn. Never throws.
+ */
+async function tryHandleViaPool(
+  d: ClaimedDispatch,
+  cwd: string,
+  queue: IngestQueue,
+  pushSystem: (content: string) => void,
+  flushQueue: () => Promise<void>,
+): Promise<boolean> {
+  let pool: SessionPool;
+  try {
+    pool = await getSessionPool();
+  } catch (err: any) {
+    log('warn', 'session pool unavailable - falling back to spawn', { id: d.short_guid, err: err?.message });
+    return false;
+  }
+
+  const wasLive = pool.stateFor(d.conversation_guid) !== 'cold';
+  // Resume framing when the pool already has a live session, OR the
+  // conversation has a known Claude session id to resume into a fresh one.
+  const resumeSessionId = d.kind === 'resume' && d.remote_session_id
+    ? d.remote_session_id
+    : lastSessionForConv(d.conversation_guid);
+  const resume = wasLive || !!resumeSessionId;
+
+  let message: string;
+  try {
+    message = await wrapPoolMessage(d, cwd, resume);
+  } catch (err: any) {
+    log('warn', 'pool message wrap failed - falling back to spawn', { id: d.short_guid, err: err?.message });
+    return false;
+  }
+
+  // Prompt echo + "Running Claude Code" marker, matching the spawn path.
+  const words = d.message.trim().split(/\s+/).filter(Boolean).length;
+  const ts0 = new Date().toISOString();
+  queue.push(
+    { kind: 'prompt', prompt: d.message, ts: ts0, source_uuid: randomUUID() },
+    { kind: 'system', content: `Running Claude Code - ${words.toLocaleString('en-US')} words${wasLive ? ' (hot session)' : ''}`, ts: ts0, source_uuid: randomUUID() },
+  );
+
+  // Per-turn stream plumbing, same shapes as spawnGipityClaude's splitter.
+  const phases = new PhaseTracker();
+  const deltaAcc = new DeltaAccumulator(getRelaySecrets);
+  const deltaBatcher = new DeltaBatcher((flush) => {
+    void postStreamDelta(d.conversation_guid, d.short_guid, flush);
+  });
+  const toolNames = new Map<string, string>();
+  const msgSeq = new Map<string, number>();
+  let attached = false;
+  let finalResult: IngestEntry | null = null;
+  let contextTokens: number | undefined;
+  const startedAt = Date.now();
+
+  const buildProgress = (alive: boolean) => {
+    const now = Date.now();
+    const tool = phases.currentTool();
+    const hint = tool?.hint ? redactString(tool.hint, getRelaySecrets()).slice(0, 200) : undefined;
+    return {
+      dispatch_guid: d.short_guid,
+      proc_alive: alive,
+      stdout_bytes_total: 0,
+      stdout_bytes_delta: 0,
+      stdout_idle_ms: Math.max(0, now - phases.lastEventAt),
+      uptime_ms: Math.max(0, now - startedAt),
+      phase: phases.phase,
+      current_tool: tool?.name?.slice(0, 100),
+      current_tool_hint: hint,
+      tool_elapsed_ms: tool ? Math.max(0, now - tool.startedAt) : undefined,
+      last_event_ms: Math.max(0, now - phases.lastEventAt),
+      context_tokens: contextTokens,
+    };
+  };
+
+  const onMessage = (msg: any): void => {
+    phases.note(msg);
+    const usageIn = msg?.message?.usage?.input_tokens;
+    if (typeof usageIn === 'number' && usageIn > (contextTokens ?? 0)) contextTokens = usageIn;
+    deltaBatcher.push(deltaAcc.note(msg));
+    let entries = mapEventToEntries(msg, { toolNames, msgSeq });
+    if (entries.length === 0) return;
+    entries = entries.filter(e => {
+      if (e.kind === 'attach') { if (attached) return false; attached = true; return true; }
+      if (e.kind === 'result') { finalResult = e; return false; }
+      return true;
+    });
+    if (entries.length === 0) return;
+    const ts = new Date().toISOString();
+    for (const e of entries) { e.ts = ts; if (!e.source_uuid) e.source_uuid = randomUUID(); }
+    queue.push(...entries);
+  };
+
+  const env = childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid, GIPITY_CAPTURE: 'off' });
+  const freshOptions: Record<string, unknown> = {
+    cwd,
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    includePartialMessages: true,
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: GIPITY_QUESTION_PROTOCOL },
+    env,
+    pathToClaudeCodeExecutable: resolveCommand('claude'),
+    ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+    ...(d.model ? { model: d.model } : {}),
+  };
+
+  poolDispatches.set(d.short_guid, d.conversation_guid);
+  void postProgress(d.conversation_guid, buildProgress(true));
+  const progressTimer = setInterval(() => {
+    void postProgress(d.conversation_guid, buildProgress(true));
+  }, 2000);
+  progressTimer.unref?.();
+
+  const t0 = Date.now();
+  try {
+    const result = await pool.runTurn({
+      convGuid: d.conversation_guid,
+      cwd,
+      message,
+      model: d.model,
+      freshOptions,
+      onMessage,
+    });
+    clearInterval(progressTimer);
+    deltaBatcher.flush();
+    if (finalResult) queue.push(finalResult);
+    if (result.sessionId) recordSessionForConv(d.conversation_guid, result.sessionId);
+    const dur = formatDuration(Date.now() - t0);
+    void postProgress(d.conversation_guid, buildProgress(false));
+
+    if (result.outcome === 'cancelled') {
+      pushSystem(`Claude Code cancelled (${dur})`);
+      await flushQueue();
+      await ack(d.short_guid, 'cancelled');
+    } else if (result.outcome === 'error') {
+      pushSystem(`Claude Code failed (${dur}: ${result.error ?? 'session error'})`);
+      await flushQueue();
+      await ack(d.short_guid, 'error', `session pool: ${result.error ?? 'error'}`);
+    } else {
+      pushSystem(`Claude Code finished (${dur}${result.wasHot ? ', hot' : ''})`);
+      await flushQueue();
+      await ack(d.short_guid, 'done');
+    }
+    log('info', 'pool turn complete', { id: d.short_guid, outcome: result.outcome, hot: result.wasHot, ms: Date.now() - t0 });
+    return true;
+  } catch (err: any) {
+    clearInterval(progressTimer);
+    if (err instanceof PoolFullError) {
+      // No idle session to evict - let the caller spawn a normal child. We
+      // have NOT acked or pushed a marker beyond the prompt echo, so the
+      // spawn path takes over cleanly.
+      log('info', 'pool full - falling back to spawn for this dispatch', { id: d.short_guid });
+      return false;
+    }
+    // A genuine pool error after the turn started: ack it here rather than
+    // double-running via the spawn path (the turn may have partially executed).
+    log('error', 'pool turn errored - acking error', { id: d.short_guid, err: err?.message });
+    pushSystem(`Claude Code failed (session pool error: ${err?.message ?? 'unknown'})`);
+    await flushQueue();
+    await ack(d.short_guid, 'error', `session pool error: ${err?.message ?? 'unknown'}`);
+    return true;
+  } finally {
+    poolDispatches.delete(d.short_guid);
+  }
+}
+
+/**
  * Auto-resolve the cwd for a dispatched project. If `~/GipityProjects/<slug>/`
  * exists with a matching .gipity.json, use it. Otherwise create the dir,
  * write the config, install capture hooks, and pull project files - so the
@@ -1224,11 +1475,77 @@ interface RunningEntry {
   child: ChildProcess;
   convGuid: string;
   exited: Promise<void>;
+  /** Claude Code session id from the child's stream-json init event, once
+   *  seen. Lets kill-on-new-message upgrade a stale `start` dispatch to a
+   *  `--resume` of the session the killed child had already created. */
+  sessionId?: string;
 }
 const running = new Map<string, RunningEntry>();
 
+/** Last session id seen per conversation, TTL-bounded. Belt for the window
+ *  where the server enqueued a `start` dispatch before the previous run's
+ *  SessionStart reached it (claim-time derivation upstream shrinks that
+ *  window to ingest lag; this map closes it locally, including the case
+ *  where the previous child already exited so there's nothing to kill). */
+const LAST_SESSION_TTL_MS = 10 * 60_000;
+const lastSessionByConv = new Map<string, { sessionId: string; at: number }>();
+
+function recordSessionForConv(convGuid: string, sessionId: string): void {
+  const now = Date.now();
+  for (const [k, v] of lastSessionByConv) {
+    if (now - v.at > LAST_SESSION_TTL_MS) lastSessionByConv.delete(k);
+  }
+  lastSessionByConv.set(convGuid, { sessionId, at: now });
+}
+
+function lastSessionForConv(convGuid: string): string | null {
+  const hit = lastSessionByConv.get(convGuid);
+  if (!hit || Date.now() - hit.at > LAST_SESSION_TTL_MS) return null;
+  return hit.sessionId;
+}
+
+// ─── Session pool wiring (Phase 2) ──────────────────────────────────────
+// Pool dispatch guid → conv guid, so the cancellation poller can interrupt a
+// live pool turn (which has no child process in `running`).
+const poolDispatches = new Map<string, string>();
+let sessionPool: SessionPool | undefined;
+
+/** Real SDK-backed query factory. The SDK is loaded lazily so a daemon with
+ *  the flag OFF never imports it. */
+const realQueryFactory: QueryFactory = (params) => {
+  const query = (globalThis as any).__gipitySdkQuery;
+  if (!query) throw new Error('Agent SDK not loaded');
+  return query(params);
+};
+
+async function getSessionPool(): Promise<SessionPool> {
+  if (sessionPool) return sessionPool;
+  if (!(globalThis as any).__gipitySdkQuery) {
+    const mod = await import('@anthropic-ai/claude-agent-sdk');
+    (globalThis as any).__gipitySdkQuery = mod.query;
+  }
+  sessionPool = new SessionPool({
+    queryFactory: realQueryFactory,
+    log,
+    hotWindowMs: SESSION_HOT_MS,
+    maxSessions: MAX_SESSIONS,
+    onStateChange: () => pokeHeartbeat(),
+  });
+  return sessionPool;
+}
+
+// Immediate-heartbeat signal: session-state changes fire this so the web
+// indicator flips hot/cold within a beat instead of waiting up to 60s.
+let heartbeatPoke: (() => void) | null = null;
+function pokeHeartbeat(): void { heartbeatPoke?.(); }
+
+/** Snapshot of live pool sessions for the session-state heartbeat. */
+export function getLiveSessionStates(): Array<{ convGuid: string; state: SessionStateKind }> {
+  return sessionPool ? sessionPool.liveConversations() : [];
+}
+
 export function getRunningDispatchGuids(): string[] {
-  return [...running.keys()];
+  return [...running.keys(), ...poolDispatches.keys()];
 }
 
 export function getRunningConvGuids(): string[] {
@@ -1246,9 +1563,9 @@ export function getRunningConvGuids(): string[] {
  *  Overridable for tests. */
 const KILL_GRACE_MS = parseInt(process.env.GIPITY_RELAY_KILL_GRACE_MS || '10000', 10);
 
-export async function killRunningForConv(convGuid: string): Promise<void> {
+export async function killRunningForConv(convGuid: string): Promise<{ killedSessionIds: string[] }> {
   const matches = [...running.values()].filter(e => e.convGuid === convGuid);
-  if (matches.length === 0) return;
+  if (matches.length === 0) return { killedSessionIds: [] };
   for (const e of matches) {
     log('info', 'interrupting previous dispatch for conv', { conv: convGuid });
     try { e.child.kill('SIGTERM'); } catch { /* ignore - already exited */ }
@@ -1272,6 +1589,7 @@ export async function killRunningForConv(convGuid: string): Promise<void> {
   // Ensure every child has actually exited (SIGKILL fires the exit event too).
   await Promise.all(matches.map(e => e.exited));
   for (const t of graceTimers) clearTimeout(t);
+  return { killedSessionIds: matches.map(e => e.sessionId).filter((s): s is string => !!s) };
 }
 
 /** Spawn `gipity claude …` in `cwd` with `--output-format stream-json
@@ -1510,6 +1828,14 @@ export async function spawnGipityClaude(
       if (entries.length === 0) return;
       entries = entries.filter(e => {
         if (e.kind === 'attach') {
+          // Record the child's session id (init event) for kill-on-new-message
+          // start→resume upgrades - on every attach, even deduped ones, since a
+          // subagent respawn re-announces the same session.
+          if (e.session_id && isSafeSessionId(e.session_id)) {
+            const entry = running.get(d.short_guid);
+            if (entry) entry.sessionId = e.session_id;
+            recordSessionForConv(d.conversation_guid, e.session_id);
+          }
           if (attached) return false;
           attached = true;
           return true;
@@ -1646,17 +1972,20 @@ async function runDispatchSync(d: ClaimedDispatch, cwd: string): Promise<{ kille
   }
 }
 
-/** SIGTERM a specific running dispatch. Returns true if one was killed,
- *  false if no such child was running on this daemon. */
+/** Stop a specific running dispatch - SIGTERM its child (spawn path) or
+ *  cleanly interrupt its live pool turn (session-pool path). Returns true if
+ *  one was stopped, false if no such dispatch is running on this daemon. */
 export function killDispatch(shortGuid: string): boolean {
   const entry = running.get(shortGuid);
-  if (!entry) return false;
-  try {
-    entry.child.kill('SIGTERM');
-    return true;
-  } catch {
-    return false;
+  if (entry) {
+    try { entry.child.kill('SIGTERM'); return true; } catch { return false; }
   }
+  const convGuid = poolDispatches.get(shortGuid);
+  if (convGuid && sessionPool) {
+    void sessionPool.interrupt(convGuid);
+    return true;
+  }
+  return false;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────

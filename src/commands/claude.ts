@@ -102,7 +102,7 @@ interface ProjectStats {
  *
  *  Returns a best-effort local fallback if the API call fails (offline,
  *  auth missing, etc.) so the prompt still builds. */
-async function fetchProjectStats(projectGuid: string, cwd: string): Promise<ProjectStats> {
+export async function fetchProjectStats(projectGuid: string, cwd: string): Promise<ProjectStats> {
   if (projectGuid) {
     try {
       const res = await get<{ data: {
