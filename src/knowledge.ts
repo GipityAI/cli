@@ -21,7 +21,7 @@ Templates:
     - \`3d-world\` - Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)
     - \`api\` - Backend service, webhook, data pipeline, chatbot, cron job - no frontend
     - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
-    - \`outreach-agent\` - AI outreach / drip-email funnel - reach a list of people with personalized, human-approved emails that auto-send on a schedule and a self-improving agent that learns from your edits
+    - \`outreach-agent\` - AI outreach / drip-email / lifecycle funnel - move a list of people through stages (sign up, activate, pay) with personalized, human-approved emails on an auto-cadence and a self-improving agent that learns from your edits
     - \`paid-app\` - App that charges users money - SaaS subscription, paid membership, digital product store, "Pro" upgrade, paywalled content (Stripe one-time + subscriptions)
     - \`notify-demo\` - App that sends push notifications / alerts / reminders to users' phones or desktops - web push, PWA notifications, "notify me when..." features
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
