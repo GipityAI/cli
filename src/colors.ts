@@ -159,7 +159,7 @@ export const underline: StyleFn = makeStyle(4, 24);
 // Colors sourced from platform/client/src/css/styles.css and
 // platform/apps/gipitsm/src/css/tokens.css
 
-export const brand: StyleFn   = makeFg(254, 166, 14, bold); // Gipity orange #fea60e (→ bold on 16-color; no orange in palette)
+export const brand: StyleFn   = makeFg(254, 166, 11, bold); // Gipity orange #fea60b (→ bold on 16-color; no orange in palette)
 export const error: StyleFn   = makeFg(239, 68, 68);    // #ef4444
 export const warning: StyleFn = makeFg(245, 158, 11);   // #f59e0b
 export const success: StyleFn = makeFg(34, 197, 94);    // #22c55e
@@ -174,7 +174,7 @@ export const cyan: StyleFn    = makeFg(9, 146, 179);    // Teal
 
 // ── Background variants ────────────────────────────────────────────────
 
-export const bgBrand: StyleFn   = makeBg(242, 101, 34);
+export const bgBrand: StyleFn   = makeBg(254, 166, 11);
 export const bgError: StyleFn   = makeBg(239, 68, 68);
 export const bgSuccess: StyleFn = makeBg(34, 197, 94);
 

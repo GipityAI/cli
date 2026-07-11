@@ -7,7 +7,7 @@ import { rgbTo256, rgbTo16 } from '../colors.js';
 // that the palette has no orange slot, while 256-color does (xterm-214). If
 // either downscale drifts, the comments in colors.ts become wrong silently.
 
-const GIPITY_ORANGE: [number, number, number] = [254, 166, 14]; // #fea60e
+const GIPITY_ORANGE: [number, number, number] = [254, 166, 11]; // #fea60b
 
 describe('rgbTo256', () => {
   it('maps Gipity orange to xterm-214 (a real orange)', () => {

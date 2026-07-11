@@ -72,12 +72,12 @@ const INFRASTRUCTURE = [
   'Deploy', 'Uploads', 'Rollback',
 ];
 
-// ── Egg color palette (shared) - gradient built around #FEA60E ───────
+// ── Egg color palette (shared) - gradient built around #FEA60B ───────
 // Colors route through fg() so they downgrade (256 / 16 / none) on terminals
 // without truecolor support instead of rendering as misparsed garbage.
 const _hi = fg(255, 215, 80);  // golden highlight
 const _lt = fg(254, 190, 45);  // light
-const _br = fg(254, 166, 14);  // base - #FEA60E
+const _br = fg(254, 166, 11);  // base - #FEA60B
 const _md = fg(218, 112, 8);   // medium-dark
 const _sh = fg(170, 68, 4);    // shadow
 
