@@ -40,11 +40,13 @@ export type IngestEntry =
   | { kind: 'system'; content: string; ts?: string; source_uuid?: string }
   // The stream's final `result` footer: a session-level total. Only the daemon
   // (stream) path sees this; the hook/transcript path never does (cost isn't in
-  // the transcript). Carries cost so the server can record it on the conversation.
+  // the transcript). Carries cost + cumulative token usage so the server can
+  // record them on the conversation. `tokens_in` is the full input side
+  // (fresh input + cache-read + cache-creation); `tokens_out` is output.
   // NOTE: a spawn with background subagents can emit SEVERAL result events
-  // (the loop re-invokes when a task completes; cost on later ones is
+  // (the loop re-invokes when a task completes; cost/usage on later ones is
   // cumulative) - the daemon buffers and posts only the last.
-  | { kind: 'result'; total_cost_usd?: number; num_turns?: number; duration_ms?: number; ts?: string; source_uuid?: string };
+  | { kind: 'result'; total_cost_usd?: number; num_turns?: number; duration_ms?: number; tokens_in?: number; tokens_out?: number; ts?: string; source_uuid?: string };
 
 // ─── Stream-json event shapes ──────────────────────────────────────────
 // Only the fields we actually read are typed - everything else is passed
@@ -95,6 +97,16 @@ export interface StreamJsonResult {
   session_id?: string;
   num_turns?: number;
   is_error?: boolean;
+  /** Cumulative token usage for the whole turn - the same figure Claude Code
+   *  derives `total_cost_usd` from. The bulk of `input_tokens` for a cached
+   *  agent loop lives in the two cache_* fields, so a real "tokens in" must
+   *  sum all three; a bare `input_tokens` massively undercounts. */
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
 }
 
 export type StreamJsonEvent =
@@ -274,17 +286,24 @@ export function mapEventToEntries(evt: StreamJsonEvent, ctx?: MapContext | Map<s
   }
 
   // `result` is the final footer — a session-level total. Emit a `result`
-  // ingest entry carrying the cost so the server can record it on the
-  // conversation. (Per-turn tokens ride on the assistant entries above; cost is
-  // only ever here, and only on the stream path.)
+  // ingest entry carrying the cost, duration, and cumulative token usage so the
+  // server can record them on the conversation. This footer is the ONLY place
+  // per-turn cost and a non-double-counted token total exist (the per-block
+  // assistant `usage` can't be summed - it excludes cache tokens and repeats
+  // across a message's blocks). Stream path only.
   if (evt.type === 'result') {
     const r = evt as StreamJsonResult;
-    if (typeof r.total_cost_usd === 'number' || typeof r.num_turns === 'number' || typeof r.duration_ms === 'number') {
+    const tokensIn = resultTokensIn(r.usage);
+    const tokensOut = typeof r.usage?.output_tokens === 'number' ? r.usage.output_tokens : undefined;
+    if (typeof r.total_cost_usd === 'number' || typeof r.num_turns === 'number'
+        || typeof r.duration_ms === 'number' || tokensIn !== undefined || tokensOut !== undefined) {
       out.push({
         kind: 'result',
         total_cost_usd: typeof r.total_cost_usd === 'number' ? r.total_cost_usd : undefined,
         num_turns: typeof r.num_turns === 'number' ? r.num_turns : undefined,
         duration_ms: typeof r.duration_ms === 'number' ? r.duration_ms : undefined,
+        tokens_in: tokensIn,
+        tokens_out: tokensOut,
       });
     }
     return out;
@@ -304,6 +323,16 @@ export function mapEventToEntries(evt: StreamJsonEvent, ctx?: MapContext | Map<s
     c.onUnmapped?.(evt.type, subtype);
   }
   return out;
+}
+
+/** Total input tokens for a turn from the `result` footer's cumulative usage:
+ *  fresh input + cache-read + cache-creation. Returns undefined when the footer
+ *  carries no usage at all (so we don't stamp a bogus 0). */
+function resultTokensIn(u: StreamJsonResult['usage']): number | undefined {
+  if (!u) return undefined;
+  const parts = [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens]
+    .filter((n): n is number => typeof n === 'number');
+  return parts.length ? parts.reduce((a, b) => a + b, 0) : undefined;
 }
 
 /** Pull token usage + model + stop_reason off an assistant stream `message`.

@@ -126,6 +126,36 @@ describe('mapEventToEntries', () => {
     const entries = mapEventToEntries({ type: 'assistant', message: { content: [] } } as any);
     assert.equal(entries.length, 0);
   });
+
+  it('result footer → tokens_in sums input + cache tokens, tokens_out from output', () => {
+    const [entry] = mapEventToEntries({
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 1.5,
+      duration_ms: 12000,
+      num_turns: 7,
+      usage: {
+        input_tokens: 300,
+        cache_read_input_tokens: 40000,
+        cache_creation_input_tokens: 1200,
+        output_tokens: 850,
+      },
+    } as any) as [IngestEntry & { kind: 'result' }];
+    assert.equal(entry.kind, 'result');
+    assert.equal(entry.tokens_in, 41500); // 300 + 40000 + 1200
+    assert.equal(entry.tokens_out, 850);
+    assert.equal(entry.total_cost_usd, 1.5);
+    assert.equal(entry.duration_ms, 12000);
+  });
+
+  it('result footer with no usage → no token fields (not a bogus 0)', () => {
+    const [entry] = mapEventToEntries({
+      type: 'result', subtype: 'success', total_cost_usd: 0.2,
+    } as any) as [IngestEntry & { kind: 'result' }];
+    assert.equal(entry.kind, 'result');
+    assert.equal(entry.tokens_in, undefined);
+    assert.equal(entry.tokens_out, undefined);
+  });
 });
 
 describe('createLineSplitter', () => {

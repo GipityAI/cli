@@ -32,7 +32,7 @@ const ALLOWED_KEYS_BY_KIND: Record<IngestEntry['kind'], readonly string[]> = {
   assistant:   ['kind', 'text', 'blocks', 'input_tokens', 'output_tokens', 'model', 'stop_reason', 'ts', 'source_uuid', 'parent_tool_use_id'],
   compact:     ['kind', 'trigger', 'ts', 'source_uuid'],
   system:      ['kind', 'content', 'ts', 'source_uuid'],
-  result:      ['kind', 'total_cost_usd', 'num_turns', 'duration_ms', 'ts', 'source_uuid'],
+  result:      ['kind', 'total_cost_usd', 'num_turns', 'duration_ms', 'tokens_in', 'tokens_out', 'ts', 'source_uuid'],
 };
 
 /** Sample stream-json events covering every branch of mapEventToEntries.
@@ -59,8 +59,9 @@ const SAMPLE_EVENTS: any[] = [
     usage: { input_tokens: 100, output_tokens: 20 },
     content: [{ type: 'text', text: 'with usage' }],
   } },
-  // result footer (session-level cost)
-  { type: 'result', subtype: 'success', total_cost_usd: 0.5, num_turns: 4, duration_ms: 9999 },
+  // result footer (session-level cost + cumulative token usage)
+  { type: 'result', subtype: 'success', total_cost_usd: 0.5, num_turns: 4, duration_ms: 9999,
+    usage: { input_tokens: 100, cache_read_input_tokens: 5000, cache_creation_input_tokens: 200, output_tokens: 60 } },
 ];
 
 function unknownKeys(entry: IngestEntry): string[] {
