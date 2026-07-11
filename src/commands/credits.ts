@@ -190,6 +190,7 @@ export const creditsCommand = new Command('credits')
       console.log(dim('Upgrade to Gipity Pro for higher limits and 20,000 credits/mo — run `gipity credits buy`.'));
     } else {
       console.log(dim('Need more credits? Run `gipity credits list` to see credit packs, then `gipity credits buy <pack>`.'));
+      console.log(dim('Manage or cancel your subscription with `gipity credits manage`.'));
     }
   }));
 
@@ -345,6 +346,48 @@ creditsCommand
         } else {
           console.log(muted(`Couldn't create a direct checkout link (${err.message}).`));
           console.log(`Complete your purchase at ${brand(PRICING_URL)}`);
+        }
+        if (opts.open) openInBrowser(PRICING_URL);
+        return;
+      }
+      throw err;
+    }
+  }));
+
+// `credits manage` is the ONE manage/cancel command: it mints a Stripe
+// Customer Portal link (cancel at period end, renew, update card, invoices).
+// Like `buy`, the link is always printed so an agent can relay it; --open
+// also launches a browser. Falls back to the pricing page on error.
+creditsCommand
+  .command('manage')
+  .alias('cancel')
+  .description('Manage or cancel your subscription (opens the Stripe billing portal)')
+  .option('--open', 'Open the billing portal in your browser')
+  .option('--json', 'Output the portal URL as JSON')
+  // optsWithGlobals(): the parent `credits` command also declares --json, which
+  // commander binds to the parent - read merged opts so --json/--open are seen here.
+  .action((_opts, cmd: Command) => run('Manage', async () => {
+    const opts = cmd.optsWithGlobals();
+    try {
+      const res = await post<{ data: { portalUrl: string } }>('/credits/portal', {});
+      const url = res.data.portalUrl;
+      if (opts.json) {
+        console.log(JSON.stringify({ portalUrl: url }));
+        return;
+      }
+      console.log(`  ${bold('Billing portal:')} ${success(url)}`);
+      console.log('');
+      console.log(dim('Open the link to cancel, renew, update your card, or view invoices. Cancelling takes effect at the end of the billing period — you keep your credits.'));
+      if (opts.open) openInBrowser(url);
+    } catch (err) {
+      // No billing account / payments not configured: point at the pricing page
+      // so the user is never dead-ended.
+      if (err instanceof ApiError) {
+        if (opts.json) {
+          console.log(JSON.stringify({ error: err.message, portalUrl: null, fallbackUrl: PRICING_URL }));
+        } else {
+          console.log(muted(`Couldn't open the billing portal (${err.message}).`));
+          console.log(`Manage your plan at ${brand(PRICING_URL)}`);
         }
         if (opts.open) openInBrowser(PRICING_URL);
         return;

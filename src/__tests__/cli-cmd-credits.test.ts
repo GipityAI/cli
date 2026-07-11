@@ -213,6 +213,43 @@ test('gipity credits buy --open exits cleanly when no browser launcher is availa
   assert.doesNotMatch(r.stderr, /Unhandled 'error' event|node:events/);
 });
 
+test('gipity credits manage prints the Stripe billing portal link', async () => {
+  mock.reset();
+  mock.on('POST /credits/portal', { body: { data: { portalUrl: 'https://billing.stripe.com/p/session/bps_test' } } });
+
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'credits', 'manage'], { env: { HOME: home } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /https:\/\/billing\.stripe\.com\/p\/session\/bps_test/);
+  assert.match(r.stdout, /cancel/i);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity credits manage --json emits the portal URL', async () => {
+  mock.reset();
+  mock.on('POST /credits/portal', { body: { data: { portalUrl: 'https://billing.stripe.com/p/session/bps_test' } } });
+
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'credits', 'manage', '--json'], { env: { HOME: home } });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.portalUrl, 'https://billing.stripe.com/p/session/bps_test');
+});
+
+test('gipity credits manage --json falls back to the pricing page on an API error', async () => {
+  // e.g. a free user with no billing account: the server 400s; the CLI must
+  // emit parseable JSON with a fallback URL, not prose or a crash.
+  mock.reset();
+  mock.on('POST /credits/portal', { status: 400, body: {
+    error: { code: 'VALIDATION_ERROR', message: "No billing account found - you haven't purchased anything yet." },
+  } });
+
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'credits', 'manage', '--json'], { env: { HOME: home } });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.match(parsed.error, /billing account/i);
+  assert.equal(parsed.portalUrl, null);
+  assert.match(parsed.fallbackUrl, /pricing/);
+});
+
 test('gipity credits usage shows recent operations with credits and timestamps', async () => {
   mock.reset();
   mock.on('GET /credits/usage', { body: { data: [
