@@ -68,6 +68,11 @@ export interface Baseline {
   projectGuid: string;
   files: Record<string, BaselineEntry>;
   lastFullSync: string | null;
+  /** Consecutive syncs that ended with the deletes pass skipped by an
+   *  incomplete download. Lets repeated runs escalate from "transient hiccup,
+   *  re-run" to "this is a wedge - report it" instead of printing the same
+   *  soothing message forever (GipityAI/cli#133). Absent/0 when converged. */
+  deletesSkippedStreak?: number;
 }
 
 interface LocalFileInfo {
@@ -296,6 +301,7 @@ export function readBaseline(projectGuid: string): Baseline {
       projectGuid,
       files: parsed.files ?? {},
       lastFullSync: parsed.lastFullSync ?? null,
+      ...(parsed.deletesSkippedStreak ? { deletesSkippedStreak: parsed.deletesSkippedStreak } : {}),
     };
   } catch {
     return { projectGuid, files: {}, lastFullSync: null };
@@ -514,9 +520,22 @@ async function downloadAll(
   return extractTarToMap(stream, DOWNLOAD_IDLE_MS, onBytes);
 }
 
-async function fetchOne(
+/** How a single-file fetch ended. 'absent' is an EXPLICIT server verdict: the
+ *  single-file tar endpoint answers 410 GONE when the path resolves to a file
+ *  whose content it can never serve (a broken storage reference) - retrying
+ *  will not change that. Everything else is 'transient': HTTP errors, truncated
+ *  or stalled streams, sha mismatches against the tree-listed hash, and even a
+ *  clean-but-empty tar - tar-stream can finish cleanly on a body cut at an
+ *  entry boundary, so an empty archive is ambiguous and gets the conservative
+ *  treatment (see the WS-00253 truncated-pull regression). */
+type FetchOneOutcome =
+  | { kind: 'ok'; buf: Buffer }
+  | { kind: 'absent' }
+  | { kind: 'transient' };
+
+async function fetchOneOutcome(
   projectGuid: string, path: string, expectedSha?: string | null,
-): Promise<Buffer | null> {
+): Promise<FetchOneOutcome> {
   // Byte-exact single-file recovery over the tar path only (FIX M3). We used to
   // prefer `/files/read` for text-extension files, but that returns the content as
   // a JSON *string* which we re-encoded as UTF-8 - a non-UTF-8 file (latin-1
@@ -533,18 +552,27 @@ async function fetchOne(
     const want = normalizeTreePath(path);
     const files = await extractTarToMap(stream, DOWNLOAD_IDLE_MS, undefined, (p) => p === want);
     const buf = files.get(want) ?? null;
+    if (!buf) return { kind: 'transient' };
     // Verify the bytes against the expected content hash when the caller knows it
     // (the recovery path records this sha into the baseline). A mismatch means a
     // truncated/partial entry - treat it as a failed fetch and leave the file for
     // the tar/next run rather than writing bytes that don't match what we'll record.
-    if (buf && expectedSha) {
+    if (expectedSha) {
       const sha = createHash('sha256').update(buf).digest('hex');
-      if (sha !== expectedSha) return null;
+      if (sha !== expectedSha) return { kind: 'transient' };
     }
-    return buf;
-  } catch {
-    return null;
+    return { kind: 'ok', buf };
+  } catch (e) {
+    if (e instanceof ApiError && e.statusCode === 410) return { kind: 'absent' };
+    return { kind: 'transient' };
   }
+}
+
+async function fetchOne(
+  projectGuid: string, path: string, expectedSha?: string | null,
+): Promise<Buffer | null> {
+  const out = await fetchOneOutcome(projectGuid, path, expectedSha);
+  return out.kind === 'ok' ? out.buf : null;
 }
 
 // ─── Classification ────────────────────────────────────────────
@@ -993,8 +1021,15 @@ async function syncInner(
   // A delete is only safe against a complete, authoritative view, so an
   // incomplete download disarms the deletes pass below - this is what breaks
   // the "truncated pull → files missing locally → next sync deletes them"
-  // amplification loop.
+  // amplification loop. Only TRANSIENT failures set it: paths the server itself
+  // consistently refuses to serve (see `unretrievable`) can never arrive, so
+  // they must not wedge the deletes pass forever (GipityAI/cli#133).
   let downloadIncomplete = false;
+  // Paths whose single-file recovery got an explicit 410 GONE on every attempt:
+  // the server lists them in the tree but can never serve their bytes (a ghost
+  // node whose storage reference is broken). Reported as errors, but excluded
+  // from the downloadIncomplete flip - retrying next run gives the same answer.
+  const unretrievable = new Set<string>();
   const wantedDownloads = plannedToApply.filter(a => a.kind === 'download' || a.kind === 'conflict');
   if (wantedDownloads.length) {
     // The tree endpoint streams the *whole* remote tree as one tar (the caller
@@ -1044,17 +1079,31 @@ async function syncInner(
         // rejected (FIX M3) rather than written and then re-uploaded as corruption.
         const expectedSha = remote.get(a.path)?.sha256 ?? undefined;
         let buf: Buffer | null = null;
+        let attempts = 0;
+        let absent = 0;
         for (let attempt = 0; attempt < 3 && !buf; attempt++) {
-          buf = await fetchOne(config.projectGuid, a.path, expectedSha);
+          const out = await fetchOneOutcome(config.projectGuid, a.path, expectedSha);
+          attempts++;
+          if (out.kind === 'ok') buf = out.buf;
+          else if (out.kind === 'absent') absent++;
         }
         if (buf) downloadedBytes.set(a.path, buf);
+        // Every attempt got an explicit 410 GONE: the server is consistently
+        // saying "these bytes can never be served". One transient failure in
+        // the mix keeps the conservative treatment (retry next run).
+        else if (absent === attempts) unretrievable.add(a.path);
       }
     }
 
     // Anything still missing is a hard failure: the plan needs bytes we could
     // not retrieve. Mark the download incomplete so the deletes pass is skipped;
-    // the per-path "Download missing" errors below carry the detail.
-    if (wantedDownloads.some(a => !downloadedBytes.has(a.path))) downloadIncomplete = true;
+    // the per-path errors below carry the detail. Unretrievable paths are
+    // excluded: they are a permanent server-side condition, not a truncated
+    // pull, and blocking every (unrelated) deletion on them would wedge sync
+    // forever - the exact failure in GipityAI/cli#133.
+    if (wantedDownloads.some(a => !downloadedBytes.has(a.path) && !unretrievable.has(a.path))) {
+      downloadIncomplete = true;
+    }
   }
 
   // ── Writes pass: uploads, downloads, conflicts (rename + download + upload copy) ──
@@ -1112,7 +1161,9 @@ async function syncInner(
   for (const a of downloadQueue) {
     const buf = downloadedBytes.get(a.path);
     if (!buf) {
-      errors.push(`Download missing: ${a.path}`);
+      errors.push(unretrievable.has(a.path)
+        ? `Unretrievable on server: ${a.path} - the remote tree lists this file but its content cannot be served (broken server-side reference). Deletions are NOT blocked by this; report the path so the server data can be repaired.`
+        : `Download missing: ${a.path}`);
       continue;
     }
     let full: string;
@@ -1354,7 +1405,9 @@ async function syncInner(
   // download phase couldn't retrieve everything it planned, the local tree is
   // not a trustworthy deletion signal - this is exactly how a truncated pull
   // turns "files we failed to fetch" into "delete those files." Skip ALL deletes
-  // this run and let a clean sync replan them once the pull succeeds.
+  // this run and let a clean sync replan them once the pull succeeds. Paths the
+  // server consistently reports as unservable do NOT disarm this pass (they are
+  // reported above and can never download); only transient failures do.
   let deletesSkippedIncomplete = 0;
   // Directories that lost a file to a delete-local this run. Only these are
   // candidates for empty-dir cleanup — see cleanupEmptyDirs.
@@ -1440,10 +1493,21 @@ async function syncInner(
   }
 
   if (deletesSkippedIncomplete > 0) {
+    // Escalate after repeated wedges: a transient truncation clears in a run
+    // or two, so the same skip N syncs in a row means something persistent
+    // (bad connection, or a server-side file that can never download).
+    baseline.deletesSkippedStreak = (baseline.deletesSkippedStreak ?? 0) + 1;
+    const streak = baseline.deletesSkippedStreak;
     errors.push(
       `Skipped ${deletesSkippedIncomplete} deletion${deletesSkippedIncomplete === 1 ? '' : 's'} because the download was incomplete - ` +
-      `nothing was deleted. Re-run \`gipity sync\` once the pull finishes to apply any real deletions.`,
+      `nothing was deleted. Re-run \`gipity sync\` once the pull finishes to apply any real deletions.` +
+      (streak >= 3
+        ? ` Deletions have now been skipped ${streak} syncs in a row - this looks stuck, not transient. ` +
+          `Check the "Download missing" paths above; if they never resolve, report them (the server may be unable to serve those files).`
+        : ''),
     );
+  } else {
+    delete baseline.deletesSkippedStreak;
   }
 
   // Clean up local directories emptied by this run's delete-local actions.
