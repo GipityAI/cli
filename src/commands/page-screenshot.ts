@@ -77,12 +77,36 @@ function printAuthLine(auth?: ScreenshotMeta['auth']): void {
     : `${warning('Auth: session NOT established')}${auth.detail ? ` — ${auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
 }
 
-/** A failed --action still yields a screenshot - of the page the action never
+/** A failed pre-capture script still yields a screenshot - of the page it never
  *  touched. Silence there is the trap: the image looks plausible and the command
- *  reports success, so the caller trusts a capture of the wrong state. Say so. */
-function printActionErrorLine(actionError?: string): void {
+ *  reports success, so the caller trusts a capture of the wrong state. Say so —
+ *  and say WHICH half failed, since --wait-for and --action ride the same script:
+ *  a gate that never matched is a different problem (and a different fix) from a
+ *  click that threw. */
+export function printActionErrorLine(actionError?: string): void {
   if (!actionError) return;
+  if (/wait-for:/.test(actionError)) {
+    console.log(`${warning('⚠ --wait-for never matched:')} ${actionError.replace(/^EvalError:\s*/, '')} ${muted('(the image below is the state the page WAS in when the gate gave up)')}`);
+    return;
+  }
   console.log(`${warning('⚠ --action failed:')} ${actionError} ${muted('(this image shows the page BEFORE the action ran)')}`);
+}
+
+/** The browser sandbox has one wall-clock budget for the entire capture, and
+ *  --action's own runtime spends it. When the sandbox times out on a run that
+ *  passed --action, the server's message ("platform-side failure, the page was
+ *  never reached") is the whole story only if the action was cheap — so append
+ *  the lever the caller actually has. Exported for tests. */
+export function augmentSandboxTimeout(message: string): string {
+  if (!/did not respond within/i.test(message)) return message;
+  return (
+    `${message}\n` +
+    `A pre-capture script was set (--action and/or the --wait-for gate), and its runtime is spent INSIDE ` +
+    `that same sandbox budget — a script that waits on slow work (a WASM/model download, a network fetch, ` +
+    `a long animation) can exhaust the budget on its own. Keep --action to the interaction itself (a click, ` +
+    `a keypress), let the page do the slow work on load, and absorb that with --wait <ms> or a tighter ` +
+    `--wait-for '<selector>' gate instead.`
+  );
 }
 
 function fmtPerformance(p: PagePerformance): string {
@@ -201,14 +225,55 @@ function appendOption(value: string, previous: string[] = []): string[] {
 // script) and redirect precisely — same pattern as `page eval`'s JS_DECOY_FLAGS.
 const ACTION_DECOY_FLAGS = ['--eval', '--js', '--javascript', '--script', '--code', '--exec'];
 
+/** A capture is worthless if it fires before the app reaches the state you meant
+ *  to photograph, and the only lever used to be a blind millisecond delay — so a
+ *  camera/vision app got screenshotted with a guessed duration (`--wait 22000`).
+ *  `--wait-for '<selector>'` is the same deterministic gate `page eval` and
+ *  `page inspect` take, and it runs here as the head of the pre-capture script:
+ *  poll for the element, then let any --action run. Timing out THROWS, so the
+ *  server reports it (the shot still happens) instead of silently handing back a
+ *  picture of the wrong moment. Exported for tests. */
+export function buildWaitForGate(selector: string, timeoutMs: number): string {
+  const sel = JSON.stringify(selector);
+  return (
+    `await (async () => { const __t0 = Date.now(); ` +
+    `while (Date.now() - __t0 < ${timeoutMs}) { ` +
+    `try { if (document.querySelector(${sel})) return; } catch (e) { throw new Error('wait-for: invalid selector ' + ${sel}); } ` +
+    `await new Promise((r) => setTimeout(r, 100)); } ` +
+    `throw new Error('wait-for: nothing matched ' + ${sel} + ' within ${timeoutMs}ms — the page never reached that state (raise --wait-timeout, fix the selector, or check the app actually gets there headlessly)'); })();`
+  );
+}
+
+/** Max ms the selector gate may wait. The gate runs inside the capture's sandbox
+ *  exec budget (page load + delay + script + settle + render), and 15s is what
+ *  that budget actually covers — asking for more would blow the whole capture and
+ *  come back as "the browser sandbox did not respond", blaming the platform for a
+ *  wait the CLI accepted. A state that takes longer than this to appear is not a
+ *  screenshot problem: gate it on `page eval --wait-for` (30s) and read it there. */
+export const WAIT_FOR_MAX_MS = 15_000;
+export const WAIT_FOR_DEFAULT_MS = 15_000;
+
+/** The server's cap on the post-load delay. Over it, the request is rejected by
+ *  schema validation with no mention of the flag — clamp and explain instead. */
+export const MAX_POST_LOAD_DELAY_MS = 30_000;
+
+/** A camera app has nothing to photograph 1s after load: getUserMedia has to come
+ *  up and the vision model (WASM + weights) has to download before the app can
+ *  draw a single box or label. Same window `page eval --camera` takes — without it
+ *  every camera screenshot is a picture of a loading screen, and the caller is
+ *  left guessing a duration. */
+export const CAMERA_DEFAULT_DELAY_MS = 15_000;
+
 export const pageScreenshotCommand = new Command('screenshot')
   .description('Screenshot a web page')
   .argument('<url>', 'URL to screenshot')
-  // No commander default: a default here makes opts.postLoadDelay always set,
-  // so the `?? opts.wait` merge below would never see the --wait alias. Default
-  // is applied in the merge instead.
-  .option('--post-load-delay <ms>', 'Delay after DOMContentLoaded before capture, in ms (default: 1000)')
-  .option('--action <js>', 'Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./…\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
+  // No commander default: a default here would make the value always set, so the
+  // merge below could not tell "caller chose a delay" from "nobody did" — which
+  // is what --camera's model-load default and the --wait-for gate both hinge on.
+  .option('--wait <ms>', `Sleep this many ms after DOMContentLoaded before capturing (default 1000, max ${MAX_POST_LOAD_DELAY_MS}). With --camera it defaults to ${CAMERA_DEFAULT_DELAY_MS} so the vision model is up. Same flag as page eval/inspect.`)
+  .option('--wait-for <selector>', `Wait until this CSS selector appears before capturing, then capture (deterministic - beats guessing a --wait). Same flag as page eval/inspect. Gate on what you are photographing ('[data-vision="ready"]', '#verdict:not(:empty)'). Max ${WAIT_FOR_MAX_MS}ms (--wait-timeout).`)
+  .option('--wait-timeout <ms>', `Max ms to wait for --wait-for before giving up (default ${WAIT_FOR_DEFAULT_MS}, max ${WAIT_FOR_MAX_MS}). Timing out is reported - the capture still happens, so you see the state it got stuck in.`)
+  .option('--action <js>','Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./…\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
@@ -219,7 +284,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
-  .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
+  .addOption(new Option('--post-load-delay <ms>', 'Alias for --wait').hideHelp())
   // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
   // so agents reach for it by reflex. Accept it as a hidden alias for `--full`
   // rather than reject it as an unknown option and send them on a --help detour.
@@ -234,13 +299,49 @@ export const pageScreenshotCommand = new Command('screenshot')
         `before the capture, e.g. gipity page screenshot "<url>" --action "document.getElementById('play').click()"`,
       );
     }
-    // --wait is a hidden alias for --post-load-delay (agents reach for it because
-    // sibling `page inspect`/`eval` name the flag --wait). Canonical name wins if
-    // both given; fall back to the 1000ms default when neither is set.
-    const delayRaw = opts.postLoadDelay ?? opts.wait ?? '1000';
-    const postLoadDelayMs = delayRaw !== undefined ? parseInt(String(delayRaw), 10) : undefined;
-    if (postLoadDelayMs !== undefined && (!Number.isFinite(postLoadDelayMs) || postLoadDelayMs < 0)) {
-      throw new Error('--post-load-delay must be a non-negative integer (ms)');
+    // --wait is the canonical name (it is what `page inspect`/`page eval` call it);
+    // --post-load-delay stays as a hidden alias. Whether the caller named EITHER is
+    // what decides the defaults below, so keep the raw "was it set" signal.
+    const delayRaw = opts.wait ?? opts.postLoadDelay;
+    const chosenDelay = delayRaw !== undefined;
+    let postLoadDelayMs = chosenDelay ? parseInt(String(delayRaw), 10) : 1000;
+    if (!Number.isFinite(postLoadDelayMs) || postLoadDelayMs < 0) {
+      throw new Error('--wait must be a non-negative integer (ms)');
+    }
+    if (postLoadDelayMs > MAX_POST_LOAD_DELAY_MS) {
+      console.error(warning(
+        `--wait ${postLoadDelayMs}ms exceeds the ${MAX_POST_LOAD_DELAY_MS}ms cap — using ${MAX_POST_LOAD_DELAY_MS}ms. ` +
+        `Waiting longer is rarely the fix: gate on the state you want with --wait-for '<selector>' instead of guessing a duration.`,
+      ));
+      postLoadDelayMs = MAX_POST_LOAD_DELAY_MS;
+    }
+
+    const waitForTimeoutRaw = opts.waitTimeout !== undefined ? parseInt(String(opts.waitTimeout), 10) : WAIT_FOR_DEFAULT_MS;
+    if (!Number.isFinite(waitForTimeoutRaw) || waitForTimeoutRaw < 0) {
+      throw new Error('--wait-timeout must be a non-negative integer (ms)');
+    }
+    const waitForTimeoutMs = Math.min(waitForTimeoutRaw, WAIT_FOR_MAX_MS);
+    if (waitForTimeoutRaw > WAIT_FOR_MAX_MS) {
+      console.error(warning(
+        `--wait-timeout ${waitForTimeoutRaw}ms exceeds the ${WAIT_FOR_MAX_MS}ms the capture's browser budget covers — using ${WAIT_FOR_MAX_MS}ms. ` +
+        `A state that takes longer than that to appear is not a screenshot problem: watch for it with ` +
+        `\`gipity page eval <url> --wait-for '<selector>' --wait-timeout 30000\` (a wider budget), then capture it.`,
+      ));
+    }
+    if (opts.waitTimeout !== undefined && !opts.waitFor) {
+      throw new Error("--wait-timeout only means something with --wait-for '<selector>' (it bounds that gate)");
+    }
+
+    // A camera app is a loading screen at the 1s default: the model has to come up
+    // first. Give it the same window `page eval --camera` takes, unless the caller
+    // said otherwise — either with their own --wait, or by gating on --wait-for,
+    // which ends the moment the app is actually ready.
+    if (opts.camera && !chosenDelay && !opts.waitFor) {
+      postLoadDelayMs = CAMERA_DEFAULT_DELAY_MS;
+      console.error(muted(
+        `--camera: waiting ${CAMERA_DEFAULT_DELAY_MS / 1000}s before the capture so the camera and the app's vision ` +
+        `model finish loading. Override with --wait <ms>, or use --wait-for '<ready-selector>' to shoot the moment it's ready.`,
+      ));
     }
 
     const deviceNames = splitCsv(opts.device as string[]);
@@ -282,6 +383,15 @@ export const pageScreenshotCommand = new Command('screenshot')
       camera = await uploadCameraFeed(projectGuid, opts.camera);
     }
 
+    // The pre-capture script the server runs after the post-load delay: the
+    // --wait-for gate first (so the shot waits for the state, deterministically),
+    // then the caller's --action. Both are the same in-page primitive, so they
+    // compose into one script rather than needing a second server round-trip.
+    const preCapture = [
+      opts.waitFor ? buildWaitForGate(opts.waitFor, waitForTimeoutMs) : '',
+      opts.action ?? '',
+    ].filter(Boolean).join('\n');
+
     const body = {
       url,
       postLoadDelayMs,
@@ -293,7 +403,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       ...(opts.fakeMedia || camera ? { fakeMedia: true } : {}),
       ...(camera ? { cameraUrl: camera.url } : {}),
       ...(opts.auth ? { auth: true } : {}),
-      ...(opts.action ? { action: opts.action } : {}),
+      ...(preCapture ? { action: preCapture } : {}),
       ...(save ? { save } : {}),
     };
 
@@ -303,9 +413,17 @@ export const pageScreenshotCommand = new Command('screenshot')
     const doShoot = () => postForTarEntries('/tools/browser/screenshot', body);
     let entries;
     try {
-      entries = opts.json
-        ? await doShoot()
-        : await withSpinner('Capturing…', doShoot, { done: null });
+      try {
+        entries = opts.json
+          ? await doShoot()
+          : await withSpinner('Capturing…', doShoot, { done: null });
+      } catch (err) {
+        // The sandbox budget covers the WHOLE capture — load, --action, settle,
+        // render. The server's timeout text (rightly) says the page was never
+        // reached, which reads as "nothing you can do" and leaves a long-running
+        // --action looking innocent. Name it, so the retry is an informed one.
+        throw preCapture ? new Error(augmentSandboxTimeout((err as Error).message)) : err;
+      }
     } finally {
       if (camera) {
         try {
@@ -423,14 +541,14 @@ export const pageScreenshotCommand = new Command('screenshot')
 // the script) — the action turns any of them into the "--action" redirect above.
 for (const f of ACTION_DECOY_FLAGS) pageScreenshotCommand.addOption(new Option(`${f} <value>`).hideHelp());
 
-// `screenshot` captures the page AFTER load + settle (+ optional --action). There
-// is no scroll-to-a-position or wait-for-a-selector lever (agents reach for
-// --scroll/--selector and get an unknown-option detour) — but `--full` does walk
-// the page top→bottom→top before the shot so scroll-reveal content paints in.
-// State the supported levers right here, so the help (rendered on any bad flag,
-// and this 'after' block survives `| tail`/`| grep`) ends the hunt in one shot.
-// --action covers "click, then shoot"; --full + crop covers off-screen regions
-// (and triggers reveals); `page eval` reads data without a picture.
+// `screenshot` captures the page AFTER load + settle (+ optional --wait-for gate
+// and --action). There is no scroll-to-a-position lever (agents reach for
+// --scroll and get an unknown-option detour) — but `--full` does walk the page
+// top→bottom→top before the shot so scroll-reveal content paints in. State the
+// supported levers right here, so the help (rendered on any bad flag, and this
+// 'after' block survives `| tail`/`| grep`) ends the hunt in one shot.
+// --wait-for covers "shoot once it's ready"; --action covers "click, then shoot";
+// --full + crop covers off-screen regions; `page eval` reads data, no picture.
 pageScreenshotCommand.addHelpText('after', `
 Examples:
   gipity page screenshot "https://dev.gipity.ai/me/app/"
@@ -438,11 +556,21 @@ Examples:
   gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
   gipity page screenshot "https://dev.gipity.ai/me/app/" \\
     --action "document.getElementById('play').click()"                   # capture an in-game frame
+  # Camera / vision app: play a real frame in as the webcam and shoot once the app
+  # says it's ready — same --camera / --wait-for flags as 'page eval', no guessed delay:
+  gipity page screenshot "https://dev.gipity.ai/me/app/" --camera fist.png \\
+    --wait-for '[data-vision="ready"]'
+
+Waiting for the page to reach a state before the shot?
+  --wait-for '<selector>' gates the capture on the app's own signal (deterministic).
+  Reach for --wait <ms> only when there is nothing to gate on — a guessed duration
+  either shoots too early or wastes the difference.
 
 Capturing a state that needs an interaction (start a game, open a menu, dismiss a modal)?
-  Use --action to run JS in the page before the shot — it fires after the post-load
-  delay, then settles again so the result has painted. Do NOT hand-roll a 'page eval'
-  that returns a base64 image: the eval result is capped (~16KB) and truncates the PNG.
+  Use --action to run JS in the page before the shot — it fires after the wait
+  (and after any --wait-for gate), then settles again so the result has painted. Do
+  NOT hand-roll a 'page eval' that returns a base64 image: the eval result is capped
+  (~16KB) and truncates the PNG.
 
 Capturing an off-screen region or reading element data?
     • --full captures the ENTIRE scrollable page (then crop to the region).

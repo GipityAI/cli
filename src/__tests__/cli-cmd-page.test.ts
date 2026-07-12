@@ -6,8 +6,13 @@ import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
-import { timestampSlug, defaultFilename } from '../commands/page-screenshot.js';
-import { summarizeExpr } from '../commands/page-eval.js';
+import { timestampSlug, defaultFilename, augmentSandboxTimeout } from '../commands/page-screenshot.js';
+import {
+  summarizeExpr, evalWorkBudgetMs, pollEvalResult, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
+  capScriptBudgetMs, budgetOverrunHint, isEmptyStateResult,
+  EVAL_SCRIPT_BUDGET_MS, EVAL_SCRIPT_BUDGET_CAMERA_MS, EVAL_SCRIPT_BUDGET_MAX_MS,
+} from '../commands/page-eval.js';
+import { assertLocalAsset } from '../page-fixtures.js';
 
 let mock: MockServer;
 let home: string;
@@ -161,20 +166,27 @@ test('gipity page eval redirects a JS-intent flag guess to the positional <expr>
   assert.equal(mock.requests().some(q => q.url === '/tools/browser/eval'), false);
 });
 
-test('gipity page inspect --fake-media forwards fakeMedia in the request body', async () => {
+// A headless browser with NO camera makes every getUserMedia app report a
+// NotFoundError that says nothing about the page — and stops the app at its
+// error path, so the pipeline the agent wanted inspected never runs. A real
+// user has a camera, so the probe has one too, by default. A page that never
+// asks for media is unaffected.
+test('gipity page inspect grants the synthetic camera by default', async () => {
   mock.reset();
   mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
-  const r = await run(['page', 'inspect', 'https://example.com', '--fake-media']);
+  const r = await run(['page', 'inspect', 'https://example.com']);
   assert.equal(r.status, 0, r.stderr);
   const req = mock.requests().find(q => q.url === '/tools/browser/inspect');
   assert.ok(req, 'inspect request was received');
   assert.equal((req!.body as { fakeMedia?: boolean }).fakeMedia, true);
 });
 
-test('gipity page inspect omits fakeMedia when --fake-media is absent', async () => {
+// The no-device path is still reachable — but only by asking for it, because
+// inspecting THAT fallback is a deliberate choice, not the default reading.
+test('gipity page inspect --no-fake-media takes the camera away', async () => {
   mock.reset();
   mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
-  const r = await run(['page', 'inspect', 'https://example.com']);
+  const r = await run(['page', 'inspect', 'https://example.com', '--no-fake-media']);
   assert.equal(r.status, 0, r.stderr);
   const req = mock.requests().find(q => q.url === '/tools/browser/inspect');
   assert.equal((req!.body as { fakeMedia?: boolean }).fakeMedia, undefined);
@@ -212,6 +224,92 @@ test('gipity page eval clamps --wait over the 30s cap in the kickoff body', asyn
   const req = mock.requests().find(q => q.url === '/tools/browser/eval');
   assert.equal((req!.body as { waitMs?: number }).waitMs, 30000);
   assert.match(r.stderr, /30000ms cap/);
+});
+
+// ── the in-page budget must be a FLAG, not a wall you discover by hitting it ──
+// The server has always taken a per-call script budget (`timeoutMs`, up to 90s)
+// and its overrun message even says to "raise the eval timeout" — but the CLI
+// exposed no way to do it. An agent tracing a game round guessed `--timeout
+// 90000` (the right knob), got a usage dump, and spent two more calls grepping
+// --help. The guess now IS the flag.
+test('gipity page eval --timeout sets the in-page script budget on the kickoff body', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-t', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-t', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '1', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '1', '--timeout', '90000']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { timeoutMs?: number }).timeoutMs, 90000);
+});
+
+test('gipity page eval sends the default in-page budget when --timeout is omitted', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-t2', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-t2', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '1', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '1']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { timeoutMs?: number }).timeoutMs, EVAL_SCRIPT_BUDGET_MS);
+});
+
+test('capScriptBudgetMs defaults roomier under synthetic media and clamps over the max', () => {
+  assert.equal(capScriptBudgetMs(undefined, false), EVAL_SCRIPT_BUDGET_MS);
+  assert.equal(capScriptBudgetMs(undefined, true), EVAL_SCRIPT_BUDGET_CAMERA_MS);
+  assert.equal(capScriptBudgetMs('60000', false), 60_000);
+  assert.equal(capScriptBudgetMs('999999', false), EVAL_SCRIPT_BUDGET_MAX_MS);
+  // Garbage falls back to the default rather than sending an invalid budget.
+  assert.equal(capScriptBudgetMs('soon', false), EVAL_SCRIPT_BUDGET_MS);
+});
+
+// The server names the budget but not the flag that raises it. The CLI must.
+test('budgetOverrunHint names --timeout, and stops recommending it at the max', () => {
+  const hint = budgetOverrunHint('Your script was still running after its 45s in-page budget', 45_000);
+  assert.match(hint!, /--timeout/);
+  assert.match(hint!, new RegExp(String(EVAL_SCRIPT_BUDGET_MAX_MS)));
+  const atMax = budgetOverrunHint('… in-page budget …', EVAL_SCRIPT_BUDGET_MAX_MS);
+  assert.match(atMax!, /maximum/i);
+  assert.match(atMax!, /--wait-for/);
+  // Unrelated failures are never editorialized.
+  assert.equal(budgetOverrunHint('404 Not Found', 30_000), null);
+});
+
+test('gipity page eval appends the --timeout hint to a server budget overrun', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-ov', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-ov', { body: { data: {
+    status: 'error', httpStatus: 400, code: 'EVAL_STALLED',
+    reason: 'Your script was still running after its 30s in-page budget, so it returned nothing.',
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'await forever()']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--timeout/);
+});
+
+// A fixed --wait samples ONE instant. When the state the script read is gone by
+// then, the run "succeeds" with `{}` — the failure mode that cost an agent a
+// whole turn of reasoning to even notice. Say it, don't make them infer it.
+test('isEmptyStateResult flags empty containers, not real values', () => {
+  assert.equal(isEmptyStateResult('{}'), true);
+  assert.equal(isEmptyStateResult('[]'), true);
+  assert.equal(isEmptyStateResult('{"you":null,"cpu":null,"winner":""}'), true);
+  assert.equal(isEmptyStateResult('{"you":"rock","cpu":"scissors"}'), false);
+  assert.equal(isEmptyStateResult('0'), false);
+  assert.equal(isEmptyStateResult('"scissors"'), false);
+});
+
+test('gipity page eval explains an empty-state result instead of reporting a silent pass', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-e', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-e', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '{}', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'window.round']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /--wait-for|Poll INSIDE the body/);
 });
 
 test('gipity page inspect --json emits the raw inspect bundle', async () => {
@@ -453,10 +551,20 @@ test('gipity page eval translates the CDP execution-budget timeout into guidance
   } } });
   const r = await run(['page', 'eval', 'https://example.com', '(async()=>{})()']);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /in-page execution budget/);
-  assert.match(r.stderr, /separate from --wait/);
+  assert.match(r.stderr, /in-page budget/);
+  assert.match(r.stderr, /--wait sleeps BEFORE the script and does not extend it/);
+  // The budget is a flag, so the error names it (and the value this run used).
+  assert.match(r.stderr, /--timeout/);
   assert.doesNotMatch(r.stderr, /CDP command timed out/);
+  // A one-time init (a model/WASM download) is re-paid by every fresh page load,
+  // so "just split the body up" is a trap: the guidance must name the pre-eval
+  // window (--wait / --wait-for) as the lever instead of sending the caller into
+  // a retry loop that hits the identical wall.
+  assert.match(r.stderr, /ONE-TIME page init/);
+  assert.match(r.stderr, /do NOT split the body/);
+  assert.match(r.stderr, /--wait-for/);
 });
+
 
 // ── page eval --fixture (host a real file, inject fixtureUrl, auto-delete) ──
 // --fixture uploads a local file to the app's public store, splices a fetch-able
@@ -502,6 +610,175 @@ test('page eval --fixture hosts a file, injects fixtureUrl + fixtures, and delet
     mock.requests().some((q) => q.method === 'DELETE' && q.url === '/api/p_TestProj/uploads/f_1'),
     'fixture was auto-deleted',
   );
+});
+
+// A camera app cannot produce a labelled frame inside the default 500ms pre-eval
+// window: getUserMedia has to come up and the vision model (WASM + weights) has
+// to download first. That warm-up does not fit in the eval body's own ~20s budget
+// either, so the ONE window that isn't on the eval's clock has to be wide enough
+// by default — otherwise every camera run either reads an empty DOM or trips the
+// budget, and the caller learns both limits only by hitting them.
+test('page eval --camera widens the pre-eval wait so a vision model can load', async () => {
+  mock.reset();
+  mockFixtureUpload('f_cam', 'https://media.gipity.ai/app-files/p_TestProj/2026-06/f_cam/rock.png');
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-cam', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-cam', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"rock"', truncated: false,
+  } } });
+
+  const png = join(home, 'rock.png');
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const projectDir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'eval', 'https://example.com', 'document.title', '--camera', png],
+    { env: { HOME: home }, cwd: projectDir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+
+  const evalReq = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  const body = evalReq!.body as { waitMs: number; fakeMedia?: boolean; cameraUrl?: string };
+  assert.equal(body.waitMs, 15_000, 'a --camera run waits long enough for the model to load');
+  assert.equal(body.fakeMedia, true);
+  assert.match(r.stderr, /vision model finish loading/);
+});
+
+// An empty read on a --camera run must NOT get the generic empty-state advice.
+// That hint says "poll inside the body and raise --timeout" — sound on a normal
+// page, actively wrong here: --camera loops ONE still, so a longer budget re-runs
+// the same deterministic inference on the same pixels for the same nothing. The
+// agent that filed this followed it into three escalating evals (60s → 70s → 80s)
+// and learned nothing from any of them; the real question was always whether the
+// FRAME was readable at all. Say that, and never advertise a bigger timeout.
+test('page eval --camera: an empty detection says do-not-escalate, not raise --timeout', async () => {
+  mock.reset();
+  mockFixtureUpload('f_cam3', 'https://media.gipity.ai/app-files/p_TestProj/2026-06/f_cam3/fist.png');
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-cam3', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-cam3', { body: { data: {
+    status: 'done', url: 'https://example.com', truncated: false,
+    result: '{"gesture":null,"hands":null}',   // app ran fine; the model saw no hand
+  } } });
+
+  const png = join(home, 'fist.png');
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const projectDir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'eval', 'https://example.com', 'readGesture()', '--camera', png],
+    { env: { HOME: home }, cwd: projectDir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /do not escalate/i);
+  assert.match(r.stdout, /RAW output/);                  // the one run that disambiguates frame vs app
+  assert.doesNotMatch(r.stdout, /raise --timeout/);      // the escalation that cost the turns
+  assert.doesNotMatch(r.stdout, /A fixed --wait samples ONE moment/); // generic hint stayed away
+});
+
+// ── --step: N assertions, ONE page load ───────────────────────────────────────
+// Verifying a camera app used to cost one full page load per assertion — and a
+// camera page load is ~30s of getUserMedia + model download before it can answer
+// anything. An agent checking a gesture, then the label, then the score therefore
+// paid that boot three times (and got its batched shell loop killed by a command
+// timeout). The page's expensive boot is a fixed cost: --step spends it once.
+test('page eval --step runs extra expressions against the same page load', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-st', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-st', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"Closed_Fist"', truncated: false,
+    stepResults: ['"✊ Rock"', '{"score":"1","verdict":"You win"}'],
+  } } });
+  const r = await run([
+    'page', 'eval', 'https://example.com', 'gesture()',
+    '--step', "document.getElementById('see').textContent",
+    '--step', '({ score: score.textContent, verdict: verdict.textContent })',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+
+  const body = mock.requests().find((q) => q.url === '/tools/browser/eval')!.body as { steps?: string[] };
+  assert.deepEqual(body.steps, [
+    "document.getElementById('see').textContent",
+    '({ score: score.textContent, verdict: verdict.textContent })',
+  ], 'steps ride on the one eval request, not one request each');
+
+  // Every step's result is reported, attributed to the expression that produced it.
+  assert.match(r.stdout, /Closed_Fist/);
+  assert.match(r.stdout, /Step 1/);
+  assert.match(r.stdout, /✊ Rock/);
+  assert.match(r.stdout, /Step 2/);
+  assert.match(r.stdout, /You win/);
+});
+
+test('page eval refuses more steps than one page load carries', async () => {
+  mock.reset();
+  const r = await run([
+    'page', 'eval', 'https://example.com', '1',
+    '--step', '2', '--step', '3', '--step', '4', '--step', '5', '--step', '6',
+  ]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /at most 4 --step/);
+  assert.equal(mock.requests().some((q) => q.url === '/tools/browser/eval'), false);
+});
+
+// ── --wait alongside --wait-for: gate, THEN settle ────────────────────────────
+// The selector gate replaces the blind pre-eval sleep server-side, so a --wait
+// passed with it was silently dropped: the script fired the instant the selector
+// appeared and read a sequence still in flight (a round mid-countdown), which
+// reads as an app bug — the agent that filed this went off debugging its own app.
+// Both flags now mean what they say: wait for the gate, then settle.
+test('page eval --wait with --wait-for settles AFTER the gate instead of being dropped', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-gs', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-gs', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"done"', truncated: false,
+  } } });
+  const r = await run([
+    'page', 'eval', 'https://example.com', 'verdict.textContent',
+    '--wait-for', '[data-vision="ready"]', '--wait', '6000',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+
+  const body = mock.requests().find((q) => q.url === '/tools/browser/eval')!.body as
+    { expr: string; waitMs?: number; waitForSelector?: string; timeoutMs?: number };
+  assert.equal(body.waitForSelector, '[data-vision="ready"]');
+  // The settle moved INTO the script (the only place that runs after the gate),
+  // so it is not also slept before it — and the script's budget covers it.
+  assert.match(body.expr, /setTimeout\(r, 6000\)/);
+  assert.match(body.expr, /return \(verdict\.textContent\);/);
+  assert.equal(body.waitMs, 0, 'the pre-gate sleep must not double-count the settle');
+  assert.equal(body.timeoutMs, EVAL_SCRIPT_BUDGET_MS + 6000);
+});
+
+// ...but a --wait with NO gate keeps its plain meaning: sleep, then evaluate.
+test('page eval --wait without --wait-for stays a plain pre-eval sleep', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-gs2', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-gs2', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"x"', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'document.title', '--wait', '4000']);
+  assert.equal(r.status, 0, r.stderr);
+  const body = mock.requests().find((q) => q.url === '/tools/browser/eval')!.body as { expr: string; waitMs?: number };
+  assert.equal(body.waitMs, 4000);
+  assert.doesNotMatch(body.expr, /setTimeout/);
+});
+
+// ...and an explicit --wait still wins: the widened default is a default, not a floor.
+test('page eval --camera keeps an explicit --wait', async () => {
+  mock.reset();
+  mockFixtureUpload('f_cam2', 'https://media.gipity.ai/app-files/p_TestProj/2026-06/f_cam2/rock.png');
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-cam2', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-cam2', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"rock"', truncated: false,
+  } } });
+
+  const png = join(home, 'rock2.png');
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const projectDir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'eval', 'https://example.com', 'document.title', '--camera', png, '--wait', '3000'],
+    { env: { HOME: home }, cwd: projectDir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const evalReq = mock.requests().find((q) => q.url === '/tools/browser/eval');
+  assert.equal((evalReq!.body as { waitMs: number }).waitMs, 3000);
 });
 
 test('page eval --fixture still deletes the hosted file when the eval itself fails', async () => {
@@ -817,7 +1094,7 @@ test('gipity page inspect without --device sends no device', async () => {
   assert.equal((req!.body as { device?: string }).device, undefined);
 });
 
-test('gipity page screenshot honors --wait as an alias for --post-load-delay', async () => {
+test('gipity page screenshot takes --wait, the name its sibling page commands use', async () => {
   mock.reset();
   await mockScreenshot();
   const r = await run(['page', 'screenshot', 'https://example.com', '--wait', '6000', '-o', join(home, 'shot.png')]);
@@ -827,13 +1104,87 @@ test('gipity page screenshot honors --wait as an alias for --post-load-delay', a
   assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 6000, '--wait must reach the server, not be silently dropped');
 });
 
-test('gipity page screenshot lets the canonical --post-load-delay win over --wait', async () => {
+test('gipity page screenshot lets the canonical --wait win over the --post-load-delay alias', async () => {
   mock.reset();
   await mockScreenshot();
   const r = await run(['page', 'screenshot', 'https://example.com', '--post-load-delay', '2000', '--wait', '6000', '-o', join(home, 'shot.png')]);
   assert.equal(r.status, 0, r.stderr);
   const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
-  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 2000);
+  assert.equal((req!.body as { postLoadDelayMs?: number }).postLoadDelayMs, 6000);
+});
+
+// ── --wait-for parity across the page family ──────────────────────────────────
+// `page eval` and `page inspect` both take --wait-for; screenshot took only a
+// blind --wait. An agent that had just gated four evals on '[data-vision="ready"]'
+// reached for the same flag on screenshot, got "unknown option", and fell back to
+// guessing a duration (--wait 22000). One namespace, one wait vocabulary.
+test('gipity page screenshot --wait-for gates the capture on a selector', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run([
+    'page', 'screenshot', 'https://example.com',
+    '--wait-for', '[data-vision="ready"]', '-o', join(home, 'shot.png'),
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  const body = mock.requests().find((q) => q.url === '/tools/browser/screenshot')!.body as { action?: string };
+  assert.match(body.action!, /data-vision/, 'the gate must reach the page as a pre-capture script');
+  assert.match(body.action!, /querySelector/);
+});
+
+test('gipity page screenshot composes --wait-for with --action, gate first', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run([
+    'page', 'screenshot', 'https://example.com',
+    '--wait-for', '#ready', '--action', "document.getElementById('play').click()",
+    '-o', join(home, 'shot.png'),
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  const action = (mock.requests().find((q) => q.url === '/tools/browser/screenshot')!.body as { action: string }).action;
+  assert.ok(action.indexOf('#ready') < action.indexOf("getElementById('play')"), 'the gate runs before the action');
+});
+
+// A gate that never matched must not hand back a plausible-looking picture of the
+// wrong moment in silence — and it must not be reported as "--action failed" when
+// the caller never passed one.
+test('gipity page screenshot reports a --wait-for that never matched', async () => {
+  mock.reset();
+  await mockScreenshot({ actionError: 'EvalError: wait-for: nothing matched #never within 15000ms' });
+  const r = await run([
+    'page', 'screenshot', 'https://example.com', '--wait-for', '#never', '-o', join(home, 'shot.png'),
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /--wait-for never matched/);
+  assert.doesNotMatch(r.stdout, /--action failed/);
+});
+
+test('gipity page screenshot --wait-timeout without --wait-for is rejected', async () => {
+  mock.reset();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--wait-timeout', '9000', '-o', join(home, 'shot.png')]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /--wait-timeout only means something with --wait-for/);
+});
+
+// A camera app is a loading screen 1s after load: the model has not downloaded.
+// Without a camera-sized default the caller has to guess a duration — which is
+// exactly what happened (--wait 22000, picked out of the air).
+test('gipity page screenshot --camera waits for the vision model by default', async () => {
+  mock.reset();
+  mockFixtureUpload('f_shot', 'https://media.gipity.ai/app-files/p_TestProj/2026-06/f_shot/rock.png');
+  await mockScreenshot();
+  const png = join(home, 'shot-rock.png');
+  writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const projectDir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'screenshot', 'https://example.com', '--camera', png, '-o', join(home, 'shot.png')],
+    { env: { HOME: home }, cwd: projectDir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const body = mock.requests().find((q) => q.url === '/tools/browser/screenshot')!.body as
+    { postLoadDelayMs?: number; fakeMedia?: boolean };
+  assert.equal(body.postLoadDelayMs, 15_000, 'a --camera capture must outlast the model load, not guess');
+  assert.equal(body.fakeMedia, true);
+  assert.match(r.stderr, /vision model finish loading/);
 });
 
 test('gipity page screenshot defaults to 1000ms when neither delay flag is given', async () => {
@@ -1253,4 +1604,126 @@ test('gipity page screenshot --camera rejects a non-media file locally', async (
   const r = await run(['page', 'screenshot', 'https://example.com', '--camera', bad]);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr + r.stdout, /unsupported file type/);
+});
+
+// The sandbox budget covers the WHOLE capture, and --action's own runtime is
+// spent inside it. The server's timeout text says the page was never reached —
+// true, but it reads as "platform-side, nothing you can do", which leaves a
+// slow --action (waiting on a model download) looking innocent and the caller
+// with no lever. When --action was set, the CLI names it.
+test('augmentSandboxTimeout points a sandbox timeout at the --action that spent the budget', () => {
+  const raw = 'The browser sandbox did not respond within 42s, so https://x/ was never captured.';
+  const out = augmentSandboxTimeout(raw);
+  assert.match(out, /never captured/);          // the server's own text survives
+  assert.match(out, /--action/);
+  assert.match(out, /--wait/);                  // the lever the caller actually has
+});
+
+// Any other failure passes through untouched — this must not editorialize on
+// errors that have nothing to do with the sandbox clock.
+test('augmentSandboxTimeout leaves unrelated failures alone', () => {
+  const raw = 'Page screenshot failed: 404 Not Found';
+  assert.equal(augmentSandboxTimeout(raw), raw);
+});
+
+// ── the client's patience must cover the work the caller asked for ──
+// The eval job runs server-side and the CLI polls it. The client budget used to
+// be `--wait + 60s`, which counted NONE of the other legs the caller can pay
+// for: the eval body's own 20s in-page budget, --wait-for's timeout, and (worst)
+// --camera's feed fetch/encode. A --camera run therefore blew a deadline that
+// was never big enough to hold it, and the CLI reported the caller's expression
+// as the problem. Every leg is now inside the budget.
+test('evalWorkBudgetMs covers the eval body, not just the pre-eval wait', () => {
+  // Even the plainest eval may legitimately use its full in-page budget.
+  assert.ok(evalWorkBudgetMs({ waitMs: 500 }) > 500 + 19_000);
+});
+
+test('evalWorkBudgetMs counts --wait-for, the reload leg, and --camera setup', () => {
+  const base = evalWorkBudgetMs({ waitMs: 1000 });
+  assert.ok(evalWorkBudgetMs({ waitMs: 1000, waitForTimeoutMs: 30_000 }) >= base + 30_000);
+  assert.equal(evalWorkBudgetMs({ waitMs: 1000, hasReload: true }), base * 2);
+  assert.ok(evalWorkBudgetMs({ waitMs: 1000, hasCamera: true }) > base);
+});
+
+// The regression guard for the actual failure: a default --camera run's budget
+// must comfortably exceed the 15s warm-up wait the same flag imposes. (The old
+// budget WAS that wait, so the deadline expired on work still in flight.)
+test('evalWorkBudgetMs leaves a default --camera run room to finish', () => {
+  const budget = evalWorkBudgetMs({ waitMs: CAMERA_DEFAULT_WAIT_MS, hasCamera: true });
+  assert.ok(budget > CAMERA_DEFAULT_WAIT_MS * 3, `camera budget too tight: ${budget}ms`);
+});
+
+// ── a missing local asset must say where it looked, and where the file IS ──
+// The bare `ENOENT: ... stat './tmp/fist.jpg'` from the upload path cost an
+// agent an ls + a mv to work out that its generated frames were one directory
+// up. The error now resolves the path, names the cwd it resolved against, and
+// finds the file by basename inside the project.
+test('assertLocalAsset points at the file when it exists elsewhere in the project', () => {
+  const proj = makeProjectDir({ apiBase: mock.apiBase });
+  const stray = join(proj, 'fist.jpg');
+  writeFileSync(stray, 'x');
+  const cwd0 = process.cwd();
+  process.chdir(proj);
+  try {
+    assert.throws(
+      () => assertLocalAsset('--camera', './tmp/fist.jpg'),
+      (err: Error) => {
+        assert.match(err.message, /no such file/);
+        assert.match(err.message, /tmp[/\\]fist\.jpg/);           // the path we tried, resolved
+        assert.match(err.message, /--camera .*fist\.jpg/);        // the path that WOULD work
+        assert.match(err.message, /DOES exist/);
+        return true;
+      },
+    );
+  } finally { process.chdir(cwd0); }
+});
+
+test('assertLocalAsset says so plainly when the file is nowhere, and passes an existing file', () => {
+  const proj = makeProjectDir({ apiBase: mock.apiBase });
+  const real = join(proj, 'ok.jpg');
+  writeFileSync(real, 'x');
+  assert.doesNotThrow(() => assertLocalAsset('--camera', real));
+  assert.throws(() => assertLocalAsset('--fixture', join(proj, 'nope.jpg')), /Nothing named "nope\.jpg"/);
+});
+
+// ── slow render on a --camera run must never invite a wall-clock escalation ──
+// A vision app has no loop to step: it infers once per painted frame. Telling it
+// to call `core.advance()` is noise. And --camera loops ONE still image, so every
+// painted frame is the same pixels and the model is deterministic on them: a
+// re-run with a bigger --wait/--timeout is guaranteed to return the identical
+// answer. An earlier version of this message said "few frames — raise --wait and
+// re-read", and that is exactly what it bought: three escalating 60s/70s/80s
+// evals that each re-ran the same inference on the same picture. Whatever the
+// frame count, the verdict is the same and the suspects are the frame or the app.
+test('slowRenderMessage on a camera run reports frames seen and refuses to escalate', () => {
+  for (const [fps, waitMs, frames] of [[0.8, 9000, /7 frames/], [5, 15_000, /75 frames/]] as const) {
+    const msg = slowRenderMessage(fps, { camera: true, waitMs });
+    assert.match(msg, frames);                       // fps × wait — what the model actually saw
+    assert.match(msg, /Do not escalate the wait/);
+    assert.doesNotMatch(msg, /raise --wait/);        // the advice that burned the agent that filed this
+    assert.doesNotMatch(msg, /core\.advance/);
+  }
+});
+
+test('slowRenderMessage without a camera keeps the animation-clock advice', () => {
+  const msg = slowRenderMessage(2, { camera: false, waitMs: 500 });
+  assert.match(msg, /core\.advance/);
+  assert.doesNotMatch(msg, /frames/);
+});
+
+// When the client DOES give up, the message must not send the caller at --wait.
+// On a camera run the wait is what lets the vision model load, so "lower --wait"
+// trades a loud timeout for a silent empty read — the advice that burned the
+// agent that filed this. A negative budget expires the deadline immediately.
+test('an eval that outlives the client budget never advises lowering --wait', async () => {
+  await assert.rejects(
+    () => pollEvalResult('job-never', -60_000),
+    (err: Error) => {
+      assert.match(err.message, /does NOT help/);
+      assert.match(err.message, /not your expression being too big/);
+      assert.match(err.message, /run the same command again/);
+      assert.doesNotMatch(err.message, /narrow the expression/);
+      return true;
+    },
+  );
 });

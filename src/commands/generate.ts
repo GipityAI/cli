@@ -34,11 +34,61 @@ async function downloadFile(url: string, filename: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  ensureOutputDir(filename);
-  writeFileSync(filename, buffer);
-  const savedPath = resolvePath(filename);
+  const outPath = correctExtension(filename, buffer);
+  ensureOutputDir(outPath);
+  writeFileSync(outPath, buffer);
+  const savedPath = resolvePath(outPath);
   await pushGenerated(savedPath);
   return savedPath;
+}
+
+/** What these bytes ACTUALLY are, by magic number — the only trustworthy source.
+ *  A provider hands back whatever its model produced (BFL's "png" request comes
+ *  back as JPEG), so neither the caller's -o extension nor the response's
+ *  content_type describes the file on disk. */
+function sniffExt(buf: Buffer): string | undefined {
+  // subarray past the end yields a short string, so every compare below is
+  // length-safe on its own — no blanket minimum (which would skip the check
+  // entirely on a small file and hand back the misnamed path).
+  const ascii = (start: number, end: number) => buf.subarray(start, end).toString('latin1');
+  if (buf.length < 4) return undefined;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (ascii(0, 8) === '\x89PNG\r\n\x1a\n') return 'png';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'webp';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WAVE') return 'wav';
+  if (ascii(0, 3) === 'GIF') return 'gif';
+  if (ascii(4, 8) === 'ftyp') return 'mp4';
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return 'webm';
+  if (ascii(0, 3) === 'ID3' || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0)) return 'mp3';
+  return undefined;
+}
+
+/** Extensions that name the same format, so a .jpeg holding JPEG bytes is right. */
+const EXT_ALIASES: Record<string, string> = { jpeg: 'jpg', htm: 'html', yml: 'yaml' };
+const canonicalExt = (ext: string) => EXT_ALIASES[ext] ?? ext;
+
+/** The format's name, for the note — "JPEG", not the "JPG" of its extension. */
+const formatName = (ext: string) => (canonicalExt(ext) === 'jpg' ? 'JPEG' : ext.toUpperCase());
+
+/** Save under an extension that matches the bytes. A file whose extension lies
+ *  about its format is not a cosmetic problem: `page eval --camera` validates and
+ *  dispatches on the extension, image tools and browsers sniff it, and an agent
+ *  that Reads a "*.png" full of JPEG bytes has to stop and work out which one is
+ *  lying. The caller's -o path is a request, not a fact — honour its directory and
+ *  stem, and let the bytes name the format. */
+function correctExtension(filename: string, buf: Buffer): string {
+  const actual = sniffExt(buf);
+  if (!actual) return filename; // unrecognized bytes — nothing better to say
+  const dot = filename.lastIndexOf('.');
+  const asked = dot > 0 ? filename.slice(dot + 1).toLowerCase() : '';
+  if (canonicalExt(asked) === actual) return filename;
+
+  const corrected = `${dot > 0 ? filename.slice(0, dot) : filename}.${actual}`;
+  console.error(muted(
+    `Note: the model returned ${formatName(actual)}, not ${asked ? formatName(asked) : 'the requested format'} — `
+    + `saving as ${corrected} so the extension matches the actual bytes.`,
+  ));
+  return corrected;
 }
 
 /** Create the parent directory of an -o path, so `-o src/audio/ding.mp3` works
@@ -124,10 +174,13 @@ Examples:
       } else {
         const sizeKb = Math.round(result.size_bytes / 1024);
         console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
-        console.log(success(`Saved to ${savedPath}`));
         if (result.seed !== undefined) {
           console.log(muted(`Seed ${result.seed} — pass --seed ${result.seed} to keep the next image coherent`));
         }
+        // Saved-path last: a caller reading a truncated tail of this output (an
+        // agent batching several generates in one shell call) must still see
+        // WHERE the bytes landed - that is the one line the next command needs.
+        console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
       printCommandError('Image generation', err);
