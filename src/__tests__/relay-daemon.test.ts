@@ -24,6 +24,7 @@ interface Dispatch {
   project_slug: string;
   account_slug: string;
   conversation_guid?: string;
+  attachments?: Array<{ path: string; original_name: string; media_type: string; bytes: number }> | null;
 }
 
 let server: Server;
@@ -374,6 +375,62 @@ describe('daemon: kill-on-new-message start→resume upgrade', () => {
     const byGuid = Object.fromEntries(acks.map(a => [a.guid, a.status]));
     assert.equal(byGuid['rds_first1'], 'cancelled');
     assert.equal(byGuid['rds_second1'], 'done');
+  });
+});
+
+describe('daemon: web-attached files trigger a pre-run sync', () => {
+  // A dispatch carrying `attachments` names VFS files that were just uploaded
+  // from the web composer - the daemon must pull them into the local tree
+  // (`gipity sync`) BEFORE launching the agent, even when the project dir
+  // already exists (the bootstrapped-only sync would skip it).
+  function argLoggingCmd(home: string): { cmd: string; argsLog: string } {
+    const argsLog = join(home, 'spawn-args.log');
+    const cmd = join(home, 'fake-cmd.sh');
+    writeFileSync(cmd, [
+      '#!/bin/sh',
+      `printf 'ARGS::%s\\n' "$(printf '%s ' "$@" | tr '\\n' ' ')" >> "${argsLog}"`,
+      'exit 0',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    return { cmd, argsLog };
+  }
+
+  it('syncs before the agent runs when attachments are present (existing project dir)', async () => {
+    resetMock();
+    const { home } = freshHome(); // preseeded dir → bootstrapped=false
+    const { cmd, argsLog } = argLoggingCmd(home);
+    pending.push(dispatchRow({
+      short_guid: 'rds_attach1',
+      message: 'what is this?',
+      attachments: [{ path: 'uploads/photo.png', original_name: 'photo.png', media_type: 'image/png', bytes: 17301 }],
+    }));
+
+    await runDaemon(home, cmd);
+
+    assert.equal(acks.length, 1);
+    assert.equal(acks[0].status, 'done', `got ${acks[0].status}: ${acks[0].error}`);
+    const lines = readFileSync(argsLog, 'utf-8').trim().split('\n');
+    const firstClaude = lines.findIndex(l => l.startsWith('ARGS::claude -p'));
+    const firstSync = lines.findIndex(l => l.startsWith('ARGS::sync --json'));
+    assert.notEqual(firstClaude, -1, `no claude spawn in: ${lines.join(' | ')}`);
+    assert.notEqual(firstSync, -1, `no sync spawn in: ${lines.join(' | ')}`);
+    assert.ok(firstSync < firstClaude, `sync must precede claude: ${lines.join(' | ')}`);
+  });
+
+  it('does not pre-sync a plain dispatch on an existing project dir', async () => {
+    resetMock();
+    const { home } = freshHome();
+    const { cmd, argsLog } = argLoggingCmd(home);
+    pending.push(dispatchRow({ short_guid: 'rds_plain1', message: 'hi' }));
+
+    await runDaemon(home, cmd);
+
+    assert.equal(acks.length, 1);
+    assert.equal(acks[0].status, 'done', `got ${acks[0].status}: ${acks[0].error}`);
+    const lines = readFileSync(argsLog, 'utf-8').trim().split('\n');
+    // The agent spawn must be FIRST - any sync (the post-dispatch push-back)
+    // comes after it.
+    assert.ok(lines[0].startsWith('ARGS::claude -p'), `expected claude first: ${lines.join(' | ')}`);
   });
 });
 

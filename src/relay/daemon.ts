@@ -503,6 +503,11 @@ interface ClaimedDispatch {
    *  use the local agent's own default. Forwarded to the spawned agent as
    *  `--model`. Resolved server-side at claim time, so the latest choice wins. */
   model: string | null;
+  /** Files the user attached in the web CLI, already uploaded into the
+   *  project VFS at these project-relative paths. The message text already
+   *  carries a server-appended note listing them; the daemon's job is to
+   *  pull them into the local tree (sync) before launching the agent. */
+  attachments: Array<{ path: string; original_name: string; media_type: string; bytes: number }> | null;
 }
 
 async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
@@ -998,22 +1003,35 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   }
 
   // Explicit, user-visible, timeout-bounded project sync BEFORE starting Claude -
-  // only on a freshly bootstrapped dir (the files aren't there yet). Pull the
-  // project's files first so Claude works against the real tree; a hung/slow sync
-  // is killed at PROJECT_SYNC_TIMEOUT_MS and reported instead of silently stalling
-  // the dispatch (the old in-process bootstrap sync could hang forever).
-  if (bootstrapped) {
-    pushSystem('Syncing project files…');
+  // on a freshly bootstrapped dir (the files aren't there yet), and whenever the
+  // dispatch carries web-attached files (they were just uploaded to the project
+  // VFS; pull them so the agent finds them at the paths the message names).
+  // A hung/slow sync is killed at PROJECT_SYNC_TIMEOUT_MS and reported instead
+  // of silently stalling the dispatch.
+  const hasAttachments = (d.attachments?.length ?? 0) > 0;
+  if (bootstrapped || hasAttachments) {
+    pushSystem(bootstrapped ? 'Syncing project files…' : 'Syncing attached files…');
     let syncKilled = false;
+    let syncFailed = false;
     try {
       syncKilled = (await runDispatchSync(d, cwd)).killed;
     } catch (err: any) {
       const msg = `project sync ${err?.message || 'failed'}`;
-      log('error', 'project sync failed - aborting dispatch', { id: d.short_guid, err: err?.message });
-      pushSystem(`Claude Code not started - ${msg}`);
-      await flushQueue();
-      await ack(d.short_guid, 'error', msg);
-      return;
+      if (!bootstrapped) {
+        syncFailed = true;
+        // Attachment pre-sync on an EXISTING tree: degrade instead of
+        // aborting - the message's attachment note already tells the agent
+        // to `gipity sync` any missing file itself, and the rest of the
+        // project is present. Only a bootstrap (no files at all) is fatal.
+        log('error', 'attachment pre-sync failed - continuing', { id: d.short_guid, err: err?.message });
+        pushSystem(`Attached-file sync failed (${err?.message || 'failed'}) - Claude will sync on demand.`);
+      } else {
+        log('error', 'project sync failed - aborting dispatch', { id: d.short_guid, err: err?.message });
+        pushSystem(`Claude Code not started - ${msg}`);
+        await flushQueue();
+        await ack(d.short_guid, 'error', msg);
+        return;
+      }
     }
     if (syncKilled) {
       // The user cancelled (or a newer message for this conv superseded us)
@@ -1025,7 +1043,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
       await ack(d.short_guid, 'cancelled');
       return;
     }
-    pushSystem('Project files synced.');
+    if (!syncFailed) pushSystem(bootstrapped ? 'Project files synced.' : 'Attached files synced.');
   }
 
   // Phase 2: if the session pool is enabled, try to run this turn in a
