@@ -235,7 +235,7 @@ new Audio(url).play();
 
 ### Image generation - `POST /services/image`
 
-OpenAI (`gpt-image-2`, `gpt-image-1.5`), BFL/Flux (default), Gemini.
+OpenAI (`gpt-image-2`), BFL/Flux (default), Gemini.
 
 ```js
 const r = await fetch(`https://a.gipity.ai/api/${APP}/services/image`, {

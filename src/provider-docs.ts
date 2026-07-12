@@ -49,21 +49,21 @@ export const IMAGE_GEMINI_ASPECT_RATIOS = `1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 
 
 export const IMAGE_GEMINI_SIZES = `512, 1K, 2K, 4K`;
 
-export const IMAGE_MODELS_DOC = `openai: gpt-image-2, gpt-image-1.5. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-dev. gemini: gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
+export const IMAGE_MODELS_DOC = `openai: gpt-image-2. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b. gemini: gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
 
-export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2, gpt-image-1.5\`
-- **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-dev\`
-- **Gemini/Nano Banana**: \`gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image\``;
+export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2\`
+- **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b\`
+- **Gemini/Nano Banana**: \`gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image\``;
 
 export const IMAGE_PROVIDERS_LIST = `openai, bfl, gemini`;
 
 export const IMAGE_PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  'openai': `OpenAI (gpt-image-2, gpt-image-1.5)`,
-  'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-dev)`,
-  'gemini': `Gemini/Nano Banana (gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image)`,
+  'openai': `OpenAI (gpt-image-2)`,
+  'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b)`,
+  'gemini': `Gemini/Nano Banana (gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image)`,
 };
 
-export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-4.1-nano (cheapest), gpt-5.4-mini (cheap reasoning). Anthropic: claude-haiku-4-5 (cheapest). Gemini: gemini-2.5-flash-lite (cheapest, 1M context)`;
+export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-5.4-nano (cheapest), gpt-5.4-mini (cheap reasoning). Anthropic: claude-haiku-4-5 (cheapest). Gemini: gemini-2.5-flash-lite (cheapest, 1M context)`;
 
 export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini`;
 
@@ -81,9 +81,9 @@ export const TTS_PROVIDER_DESCRIPTIONS: Record<string, string> = {
 
 export const VIDEO_ASPECT_RATIOS = `16:9 (landscape), 9:16 (portrait), 1:1 (square)`;
 
-export const VIDEO_MODELS_DOC = `veo-3.1-generate-preview (best quality, ~$0.40/sec), veo-3.1-fast-generate-preview (faster, ~$0.15/sec), veo-3.1-lite-generate-preview (budget, ~$0.07/sec)`;
+export const VIDEO_MODELS_DOC = `veo-3.1-generate-preview (best quality, up to 4K, ~$0.40/sec), veo-3.1-fast-generate-preview (faster, ~$0.10/sec), veo-3.1-lite-generate-preview (budget, ~$0.05/sec), gemini-omni-flash-preview (3-10s @ 720p, conversational editing, ~$0.10/sec)`;
 
-export const VIDEO_MODELS_LIST = `veo-3.1-generate-preview, veo-3.1-fast-generate-preview, veo-3.1-lite-generate-preview`;
+export const VIDEO_MODELS_LIST = `veo-3.1-generate-preview, veo-3.1-fast-generate-preview, veo-3.1-lite-generate-preview, gemini-omni-flash-preview`;
 
 export const VIDEO_RESOLUTIONS = `720p, 1080p, 4k`;
 
