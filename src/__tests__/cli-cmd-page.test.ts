@@ -1222,3 +1222,35 @@ test('gipity page screenshot says nothing about --action when it ran clean', asy
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /--action failed/);
 });
+
+// ── --camera: a real webcam feed for vision apps ────────────────────────────
+// A headless browser has no webcam, so without this a camera app's getUserMedia
+// rejects and the app's whole pipeline (frames → model → app logic) never runs —
+// which is what pushes agents into stubbing the model and exporting internals
+// just to test around the missing device. A wrong file type must fail locally,
+// before an upload and a browser launch, and must name what IS accepted.
+test('gipity page eval --camera rejects a non-media file locally, naming the accepted types', async () => {
+  mock.reset();
+  const bad = join(home, 'notes.txt');
+  writeFileSync(bad, 'not a frame');
+  const r = await run(['page', 'eval', 'https://example.com', '--camera', bad, 'document.title']);
+  assert.notEqual(r.status, 0);
+  const out = r.stderr + r.stdout;
+  assert.match(out, /unsupported file type/);
+  assert.match(out, /\.png/);
+  assert.match(out, /\.mp4/);
+  // Points at the in-platform way to produce a frame rather than leaving the
+  // caller to find one.
+  assert.match(out, /gipity generate image/);
+  // Nothing was uploaded — the validation is local.
+  assert.equal(mock.requests().filter((q) => q.url.includes('/uploads/')).length, 0);
+});
+
+test('gipity page screenshot --camera rejects a non-media file locally', async () => {
+  mock.reset();
+  const bad = join(home, 'notes2.txt');
+  writeFileSync(bad, 'not a frame');
+  const r = await run(['page', 'screenshot', 'https://example.com', '--camera', bad]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /unsupported file type/);
+});
