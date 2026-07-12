@@ -5,7 +5,7 @@ import { brand, bold, muted, warning, success } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { getAuth } from '../auth.js';
 import { resolveProjectContext } from '../config.js';
-import { uploadPublicFixture, deleteFixture, HostedFixture } from '../page-fixtures.js';
+import { uploadPublicFixture, uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 export interface EvalResult {
   url: string;
@@ -205,6 +205,11 @@ export const pageEvalCommand = new Command('eval')
     'After the first eval, reload the page IN PLACE (localStorage/sessionStorage/cookies preserved) and evaluate this second expression against the post-reload DOM. One command verifies persisted state survives a reload: seed/assert state with <expr>, then assert the restored UI here.',
   )
   .option('--reload-file <path>', 'Read the post-reload expression from a file instead of inline --reload (mutually exclusive)')
+  .option(
+    '--camera <path>',
+    'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, so a camera app\'s real pipeline (getUserMedia → MediaPipe/YOLOX → your app logic) runs headlessly on frames you choose. A still image loops as a one-frame feed. Implies --fake-media. No frame handy? gipity generate image "a hand making a closed fist, palm to camera".',
+  )
+  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so a voice/camera app runs headlessly instead of hitting its no-camera path. The feed is a built-in test pattern (and a tone) — nothing a vision model can recognize; to drive a vision app use --camera <path> instead.')
   .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
   .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
   .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
@@ -275,12 +280,26 @@ export const pageEvalCommand = new Command('eval')
     // exprs (wrapped in `return (...)`) and --file scripts. Cleanup in `finally`.
     const fixturePaths: string[] = opts.fixture ?? [];
     const hosted: HostedFixture[] = [];
+    // The webcam feed is hosted like a fixture but is NOT exposed to the eval
+    // body as `fixtures`/`fixtureUrl` — the page never fetches it; the browser
+    // plays it as the camera device. Tracked separately so it still gets
+    // cleaned up, without shifting the fixture map the caller indexes into.
+    let camera: HostedFixture | undefined;
     let projectGuid: string | undefined;
     let sentExpr = expr;
+    // Validate the camera file locally first: a wrong file type should cost one
+    // instant error, not an upload plus an opaque browser-side failure.
+    if (opts.camera) assertCameraFile(opts.camera);
     try {
-      if (fixturePaths.length) {
+      if (fixturePaths.length || opts.camera) {
         const { config } = await resolveProjectContext({});
         projectGuid = config.projectGuid;
+      }
+      if (opts.camera) {
+        console.log(muted(`Hosting camera feed ${opts.camera}…`));
+        camera = await uploadCameraFeed(projectGuid!, opts.camera);
+      }
+      if (fixturePaths.length) {
         for (const p of fixturePaths) {
           console.log(muted(`Hosting fixture ${p}…`));
           hosted.push(await uploadPublicFixture(projectGuid!, p));
@@ -297,6 +316,10 @@ export const pageEvalCommand = new Command('eval')
         waitForSelector: opts.waitFor || undefined,
         waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
         auth: opts.auth || undefined,
+        // A camera feed needs the synthetic devices in place to be played into,
+        // so --camera implies --fake-media rather than failing on the pairing.
+        fakeMedia: opts.fakeMedia || !!camera || undefined,
+        cameraUrl: camera?.url,
       });
       // The reload leg re-runs the settle before its eval — budget for both.
       const d = await pollEvalResult(kickoff.data.evalJobId, reloadExpr !== undefined ? waitMs * 2 : waitMs);
@@ -337,6 +360,7 @@ export const pageEvalCommand = new Command('eval')
           ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
           : `${warning('Auth: session NOT established')}${d.auth.detail ? ` — ${d.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
       }
+      if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
       console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
@@ -349,7 +373,7 @@ export const pageEvalCommand = new Command('eval')
         if (d.reloadTruncated) console.log(muted('(reload result truncated to fit context - narrow the expression for the full value)'));
       }
     } finally {
-      for (const h of hosted) {
+      for (const h of [...hosted, ...(camera ? [camera] : [])]) {
         try {
           await deleteFixture(projectGuid!, h.guid);
         } catch (err) {
@@ -384,6 +408,13 @@ Examples:
   gipity page eval "https://dev.gipity.ai/me/app/" \\
     "localStorage.setItem('todo','milk'); document.title" \\
     --reload "({ restored: localStorage.getItem('todo'), heading: document.querySelector('h1')?.textContent })"
+
+  # Camera app (MediaPipe / YOLOX / any getUserMedia app): play a real image as
+  # the webcam so the app's OWN pipeline runs on a frame you control — no need to
+  # stub the model or export internals just to test around a missing camera.
+  gipity generate image "a hand making a closed fist, palm to camera, plain background" -o fist.png
+  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png --wait 4000 \\
+    "document.querySelector('#detected-gesture').textContent"
 
 Module resolution: dynamic import() specifiers starting with ./ or ../ resolve
 against the PAGE URL, so import('./packages/i18n/index.js') loads the app's own

@@ -8,6 +8,7 @@ import { brand, bold, muted, success, warning } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
+import { uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number; device?: string };
 
@@ -213,7 +214,8 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
-  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
+  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern — to capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
+  .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture — so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
   .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
@@ -268,13 +270,28 @@ export const pageScreenshotCommand = new Command('screenshot')
     const projectGuid = getConfig()?.projectGuid;
     const save = !opts.ephemeral && projectGuid ? { project_guid: projectGuid, names } : undefined;
 
+    // The webcam frame is hosted in the project's public file store for the
+    // browser container to fetch, so it needs a linked project. Validate the
+    // file locally first — a bad file type costs one instant error, not an
+    // upload plus an opaque browser-side failure.
+    let camera: HostedFixture | undefined;
+    if (opts.camera) {
+      assertCameraFile(opts.camera);
+      if (!projectGuid) throw new Error('--camera needs a linked project (the frame is hosted for the browser to fetch) — run `gipity link` first.');
+      console.log(muted(`Hosting camera feed ${opts.camera}…`));
+      camera = await uploadCameraFeed(projectGuid, opts.camera);
+    }
+
     const body = {
       url,
       postLoadDelayMs,
       full: !!(opts.full || opts.fullPage),
       reloadBetween: opts.reloadBetween !== false,
       ...(userSpecifiedViewports ? { viewports: customViewports } : {}),
-      ...(opts.fakeMedia ? { fakeMedia: true } : {}),
+      // A camera feed is played into the synthetic devices, so --camera implies
+      // --fake-media rather than failing on the pairing.
+      ...(opts.fakeMedia || camera ? { fakeMedia: true } : {}),
+      ...(camera ? { cameraUrl: camera.url } : {}),
       ...(opts.auth ? { auth: true } : {}),
       ...(opts.action ? { action: opts.action } : {}),
       ...(save ? { save } : {}),
@@ -284,9 +301,20 @@ export const pageScreenshotCommand = new Command('screenshot')
     // seconds; animate the wait, then clear so the saved-files summary is the
     // result. JSON mode skips the spinner (shares stdout).
     const doShoot = () => postForTarEntries('/tools/browser/screenshot', body);
-    const entries = opts.json
-      ? await doShoot()
-      : await withSpinner('Capturing…', doShoot, { done: null });
+    let entries;
+    try {
+      entries = opts.json
+        ? await doShoot()
+        : await withSpinner('Capturing…', doShoot, { done: null });
+    } finally {
+      if (camera) {
+        try {
+          await deleteFixture(projectGuid!, camera.guid);
+        } catch (err) {
+          console.error(warning(`⚠ Could not auto-delete camera feed "${camera.name}" (${camera.guid}) — still hosted at ${camera.url}: ${(err as Error).message}`));
+        }
+      }
+    }
 
     const metaEntry = entries.find((e) => e.name === 'meta.json');
     if (!metaEntry) throw new Error('Server response missing meta.json');
