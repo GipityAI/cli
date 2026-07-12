@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
@@ -888,6 +888,74 @@ test('gipity page screenshot rejects a guessed --eval flag but still shows the s
   assert.match(r.stderr, /page eval|--full captures the ENTIRE scrollable page/);
   // It must NOT have actually captured against the server.
   assert.equal(mock.requests().some((q) => q.url === '/tools/browser/screenshot'), false);
+});
+
+// ── screenshot VFS history (save payload) ──────────────────────────────────
+// From a linked project dir, the CLI asks the server to persist the capture to
+// the project's screenshots/ history under the SAME filename it writes locally.
+
+type SaveBody = { save?: { project_guid: string; names?: string[] } };
+
+test('gipity page screenshot from a linked project sends save with matching names', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const proj = makeProjectDir();
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'screenshot', 'https://example.com'],
+    { env: { HOME: home }, cwd: proj },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  const save = (req!.body as SaveBody).save;
+  assert.ok(save, 'expected a save block when a project is linked');
+  assert.equal(save!.project_guid, 'p_TestProj');
+  assert.equal(save!.names!.length, 1);
+  assert.match(save!.names![0], /^ss-example-com-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.png$/);
+  // The local copy landed in the project's screenshots/ dir under that name.
+  assert.ok(existsSync(join(proj, 'screenshots', save!.names![0])));
+});
+
+test('gipity page screenshot --ephemeral skips the history save', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const proj = makeProjectDir();
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'screenshot', 'https://example.com', '--ephemeral'],
+    { env: { HOME: home }, cwd: proj },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as SaveBody).save, undefined);
+});
+
+test('gipity page screenshot outside a project sends no save block', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'noproj.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as SaveBody).save, undefined);
+});
+
+test('gipity page screenshot prints the Gipity history line when the server saved to VFS', async () => {
+  mock.reset();
+  await mockScreenshot({
+    screenshots: [{
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+      width: 1280, height: 720, screenshotSizeBytes: 4, phase: 'initial-load',
+      vfs: {
+        guid: 'file-abc12345', url: '/files/vfs/file-abc12345',
+        thumb_url: '/files/thumbnail/file-abc12345', path: 'screenshots/ss-example-com-x.png',
+      },
+    }],
+  });
+  const proj = makeProjectDir();
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'page', 'screenshot', 'https://example.com'],
+    { env: { HOME: home }, cwd: proj },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Gipity history.*screenshots\/ss-example-com-x\.png/);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────

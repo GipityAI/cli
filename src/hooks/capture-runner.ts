@@ -53,6 +53,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { getDevice } from '../relay/state.js';
 import { deviceFetch } from '../relay/device-http.js';
+import { ImageBlockRewriter } from '../relay/media-upload.js';
 import { getConfig } from '../config.js';
 import {
   parseTranscript,
@@ -378,7 +379,14 @@ async function handleStopFamily(
       result = parseTranscript(content, null);
     }
 
-    const ok = await postEntries(convGuid, result.entries);
+    // Base64 image blocks (Read-of-image tool results) upload to VFS and
+    // become image_ref blocks — same no-inline-base64 chokepoint as the
+    // daemon's stream path. Content-hash storage keeps replays idempotent.
+    const rewriter = new ImageBlockRewriter(convGuid);
+    if (hook.cwd) rewriter.setCwd(hook.cwd);
+    const entries = await rewriter.rewrite(result.entries);
+
+    const ok = await postEntries(convGuid, entries);
     if (ok) {
       // Stamp the flush time even when no new lines landed, so the throttle
       // above measures from the last attempt. Keep the watermark if unchanged.

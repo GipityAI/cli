@@ -40,6 +40,7 @@ import {
   mapEventToEntries,
 } from './stream-json.js';
 import { IngestQueue } from './ingest-queue.js';
+import { ImageBlockRewriter } from './media-upload.js';
 import { DeltaAccumulator, DeltaBatcher } from './stream-delta.js';
 import type { DeltaFlush } from './stream-delta.js';
 import { randomUUID } from 'crypto';
@@ -980,8 +981,17 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   // retry instead of the old fire-and-forget loss on network errors.
   // Daemon-authored entries get a random source_uuid so retried batches
   // dedup server-side.
+  // The rewriter uploads any base64 image blocks (Read-of-screenshot
+  // results) to VFS and swaps in image_ref blocks before the batch posts —
+  // transcripts carry URLs, never image bytes. Retries re-enter it, which
+  // is safe: rewritten entries have nothing left to upload, and the server
+  // stores by content hash so a replayed upload dedups.
+  const rewriter = new ImageBlockRewriter(
+    d.conversation_guid,
+    (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }),
+  );
   const queue = new IngestQueue(
-    (entries) => postIngest(d.conversation_guid, entries),
+    async (entries) => postIngest(d.conversation_guid, await rewriter.rewrite(entries)),
     { onWarn: (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }) },
   );
   const pushSystem = (content: string) => {
@@ -995,6 +1005,9 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   let bootstrapped: boolean;
   try {
     ({ cwd, bootstrapped } = await resolveCwdForProject(d));
+    // Lets the rewriter map an absolute Read path (…/screenshots/x.png)
+    // to its project-relative VFS path for content-hash dedup.
+    rewriter.setCwd(cwd);
     log('debug', 'resolved project cwd', { id: d.short_guid, project: d.project_slug, cwd, bootstrapped });
   } catch (err: any) {
     log('error', 'could not resolve project cwd', { id: d.short_guid, err: err?.message });
@@ -1708,10 +1721,17 @@ export async function spawnGipityClaude(
     // no longer drops stream content permanently (source_uuid dedup makes
     // the retries safe). Falls back to a local queue when the caller
     // didn't pass one (tests, direct invocation).
-    const q = queue ?? new IngestQueue(
-      (entries) => postIngest(d.conversation_guid, entries),
-      { onWarn: (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }) },
-    );
+    const q = queue ?? (() => {
+      const rw = new ImageBlockRewriter(
+        d.conversation_guid,
+        (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }),
+      );
+      rw.setCwd(cwd);
+      return new IngestQueue(
+        async (entries) => postIngest(d.conversation_guid, await rw.rewrite(entries)),
+        { onWarn: (msg, meta) => log('warn', msg, { id: d.short_guid, ...meta }) },
+      );
+    })();
     const ownQueue = !queue;
 
     // Progress heartbeat state. Measured at the daemon boundary - this is

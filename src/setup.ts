@@ -54,7 +54,10 @@ export const AIDER_CONF_FILE = '.aider.conf.yml';
  *  scratch (the `_vsd_tmp/`/`_convert_tmp/` dirs that bloated past deploys)
  *  can't leak in either. Reference material to KEEP (diagrams, decks, ADRs) goes
  *  in `docs/` instead - synced and versioned, but outside `src/` so it's never
- *  deployed. Gitignore-glob form, matched by the `ignore` package in config.ts. */
+ *  deployed. Build screenshots follow the same keep-but-don't-deploy pattern in
+ *  `screenshots/` (page-screenshot.ts writes there; the server excludes both
+ *  dirs from root deploys in s3-deploy.ts). Gitignore-glob form, matched by the
+ *  `ignore` package in config.ts. */
 export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', '.gipityscratch/'];
 
 export const DEFAULT_SYNC_IGNORE = [

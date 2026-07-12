@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join, resolve as resolvePath } from 'path';
 import { postForTarEntries } from '../api.js';
-import { getProjectRoot } from '../config.js';
+import { getConfig, getProjectRoot } from '../config.js';
 import { getAuth } from '../auth.js';
 import { brand, bold, muted, success, warning } from '../colors.js';
 import { formatSize } from '../utils.js';
@@ -49,6 +49,9 @@ type ScreenshotMeta = {
     height: number;
     screenshotSizeBytes: number;
     phase: 'initial-load' | 'reload' | 'no-reload';
+    // VFS persistence result when `save` was sent: the stored reference, or
+    // {error} when that one save failed (the capture itself still succeeded).
+    vfs?: { guid: string; url: string; thumb_url: string | null; path: string } | { error: string };
   }>;
 };
 
@@ -109,13 +112,15 @@ function dimSuffix(vp: Viewport): string {
   return dpr === 1 ? `${vp.width}x${vp.height}` : `${vp.width}x${vp.height}@${dpr}`;
 }
 
-/** Default screenshot directory: `<project-root>/.gipity/screenshots`, falling
- *  back to `./.gipity/screenshots` in one-off mode (no linked project). `.gipity/`
- *  is sync-ignored, so these verification artifacts never sync to Gipity or
- *  deploy to the CDN - and they stay out of the project root. */
+/** Default screenshot directory: `<project-root>/screenshots`, falling back
+ *  to `./screenshots` in one-off mode (no linked project). Screenshots are
+ *  part of the project's build history: the dir syncs to Gipity (the server
+ *  also persists captures to VFS `screenshots/` directly — same names, so
+ *  sync reconciles by content hash) but is excluded from every deploy
+ *  server-side. Timestamped filenames make the history browsable. */
 function defaultScreenshotDir(): string {
   const root = getProjectRoot();
-  return join(root ?? '.', '.gipity', 'screenshots');
+  return join(root ?? '.', 'screenshots');
 }
 
 /** `yyyy-mm-dd_hh-mm-ss` per the repo timestamp convention - sorts chronologically,
@@ -210,6 +215,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly (audio is a built-in tone, not real speech)')
   .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
+  .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--wait <ms>', 'Alias for --post-load-delay').hideHelp())
   // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
@@ -249,6 +255,19 @@ export const pageScreenshotCommand = new Command('screenshot')
     // Server defaults to 1280×720 when viewports is omitted - don't send it in
     // the no-flag case so the filename stays unsuffixed (no viewport segment).
     const userSpecifiedViewports = customViewports.length > 0;
+
+    // Filenames are decided before the request so the server can persist the
+    // captures to the project VFS under the SAME names the local files get —
+    // the local screenshots/ dir and the VFS screenshot history stay 1:1 and
+    // sync reconciles them by content hash instead of duplicating.
+    const slug = slugFromUrl(url);
+    const ts = timestampSlug();
+    const shotName = (vp?: Viewport) =>
+      defaultFilename(slug, ts, vp && userSpecifiedViewports ? dimSuffix(vp) : undefined);
+    const names = userSpecifiedViewports ? customViewports.map(shotName) : [shotName()];
+    const projectGuid = getConfig()?.projectGuid;
+    const save = !opts.ephemeral && projectGuid ? { project_guid: projectGuid, names } : undefined;
+
     const body = {
       url,
       postLoadDelayMs,
@@ -258,6 +277,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       ...(opts.fakeMedia ? { fakeMedia: true } : {}),
       ...(opts.auth ? { auth: true } : {}),
       ...(opts.action ? { action: opts.action } : {}),
+      ...(save ? { save } : {}),
     };
 
     // Load + render across viewports runs server-side and can take many
@@ -277,16 +297,12 @@ export const pageScreenshotCommand = new Command('screenshot')
       throw new Error(`Server returned ${pngs.length} PNGs but ${meta.screenshots.length} metadata entries`);
     }
 
-    const slug = slugFromUrl(url);
-    const ts = timestampSlug();
     const dir = defaultScreenshotDir();
     const savedFiles: string[] = [];
     for (let i = 0; i < pngs.length; i++) {
-      const shot = meta.screenshots[i];
-      const suffix = userSpecifiedViewports ? dimSuffix(shot.viewport) : undefined;
       const target = opts.output
         ? opts.output
-        : join(dir, defaultFilename(slug, ts, suffix));
+        : join(dir, names[i] ?? shotName(meta.screenshots[i].viewport));
       // Create the target's parent dir so a `-o` path under a not-yet-existing
       // directory (e.g. .gipity/screenshots/home.png) writes cleanly instead of
       // failing with a raw ENOENT and forcing a manual `mkdir -p`.
@@ -320,10 +336,21 @@ export const pageScreenshotCommand = new Command('screenshot')
           size_bytes: s.screenshotSizeBytes,
           full_page: meta.full,
           phase: s.phase,
+          ...(s.vfs ? { gipity: s.vfs } : {}),
         })),
       }));
       return;
     }
+
+    /** One-line VFS-history status for a screenshot ("saved to Gipity" or why not). */
+    const printVfsLine = (s: ScreenshotMeta['screenshots'][number]) => {
+      if (!s.vfs) return;
+      if ('error' in s.vfs) {
+        console.log(`${warning('⚠ Gipity save failed:')} ${s.vfs.error} ${muted('(local file is fine)')}`);
+      } else {
+        console.log(`${label('Gipity history')} ${s.vfs.path} ${muted('(synced, not deployed)')}`);
+      }
+    };
 
     if (meta.screenshots.length === 1) {
       const s = meta.screenshots[0];
@@ -339,6 +366,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       console.log(`${label('Screenshot size')} ${sizePart}`);
       if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
       console.log(`${label('Screenshot file')} ${success(savedFiles[0])}`);
+      printVfsLine(s);
       return;
     }
 
@@ -359,6 +387,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       console.log(`${label('Screenshot size')} ${sizePart}`);
       if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
       console.log(`${label('Screenshot file')} ${success(savedFiles[i])}`);
+      printVfsLine(s);
     }
   }));
 

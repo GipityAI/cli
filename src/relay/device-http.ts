@@ -34,6 +34,33 @@ export function bridgeAbort(outer: AbortSignal, inner: AbortController): () => v
   return () => outer.removeEventListener('abort', onAbort);
 }
 
+/** Device-auth binary POST — raw bytes body (no JSON/base64 wrapping).
+ *  Used by the transcript-media upload, where the whole point is that the
+ *  image travels as bytes instead of base64. */
+export async function deviceFetchBinary(
+  method: string,
+  path: string,
+  body: Buffer,
+  contentType: string,
+  timeoutMs?: number,
+): Promise<Response> {
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort('timeout'), timeoutMs) : null;
+  try {
+    return await fetch(`${apiBase()}${path}`, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${deviceToken()}`,
+        'Content-Type': contentType,
+      },
+      body: new Uint8Array(body),
+      signal: controller?.signal,
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Device-auth HTTP helper. Sends `Authorization: Bearer <device-token>`
  *  + `Content-Type: application/json` to the configured API base. */
 export async function deviceFetch(
