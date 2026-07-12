@@ -9,10 +9,59 @@
 // service exposes, with `public: true`. Cleanup goes through the matching
 // DELETE /api/:appGuid/uploads/:guid, which removes the public object too.
 
-import { readFileSync, statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { readFileSync, statSync, existsSync, readdirSync } from 'node:fs';
+import { basename, resolve, relative, join } from 'node:path';
 import { post, del } from './api.js';
+import { getProjectRoot } from './config.js';
 import { guessMime } from './upload.js';
+
+/** Dirs a hand-made asset is never in, and that are expensive to walk. */
+const FIND_SKIP = new Set(['node_modules', '.git', '.gipity', 'dist', 'build', '.next', 'coverage']);
+
+/** Find files named `name` anywhere under `root` (breadth-first, bounded). */
+function findByBasename(root: string, name: string, limit = 3): string[] {
+  const hits: string[] = [];
+  const queue = [root];
+  let visited = 0;
+  while (queue.length && hits.length < limit && visited < 500) {
+    const dir = queue.shift()!;
+    visited++;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (!FIND_SKIP.has(e.name)) queue.push(join(dir, e.name));
+      } else if (e.name === name && hits.length < limit) {
+        hits.push(join(dir, e.name));
+      }
+    }
+  }
+  return hits;
+}
+
+/** Every `page` flag that takes a local file resolves it against the CURRENT
+ *  DIRECTORY, and a bare ENOENT from deep inside the upload path ("stat
+ *  './tmp/fist.jpg'") tells the caller nothing about where we looked or where
+ *  the file actually is. That costs an ls/find round-trip every time a file was
+ *  written somewhere other than where the caller assumed - which is exactly what
+ *  happens after a `cd` that failed, or a `gipity generate` run from a different
+ *  directory. So: name the absolute path we tried, the directory it was resolved
+ *  against, and - when a file with that basename exists elsewhere in the project
+ *  - the path that would have worked. Recovery becomes copy-paste, not a search. */
+export function assertLocalAsset(flag: string, localPath: string): void {
+  const abs = resolve(localPath);
+  if (existsSync(abs)) return;
+
+  const root = getProjectRoot() ?? process.cwd();
+  const elsewhere = findByBasename(root, basename(localPath)).filter(p => p !== abs);
+  const found = elsewhere.length
+    ? `\nThat file DOES exist here — pass this path instead:\n${elsewhere.map(p => `  ${flag} ${relative(process.cwd(), p) || p}`).join('\n')}`
+    : `\nNothing named "${basename(localPath)}" under ${root} either. Generate a frame with \`gipity generate image "<description>" -o ${localPath}\`, or check the path.`;
+
+  throw new Error(
+    `${flag} ${localPath}: no such file — looked for ${abs} (relative paths resolve against the current directory, ${process.cwd()}).${found}`,
+  );
+}
 
 export interface HostedFixture {
   /** Upload guid - the handle for deletion. */
@@ -26,7 +75,8 @@ export interface HostedFixture {
 }
 
 /** Upload a local file to the app's public file store and return its URL. */
-export async function uploadPublicFixture(projectGuid: string, localPath: string): Promise<HostedFixture> {
+export async function uploadPublicFixture(projectGuid: string, localPath: string, flag = '--fixture'): Promise<HostedFixture> {
+  assertLocalAsset(flag, localPath);
   const name = basename(localPath);
   const size = statSync(localPath).size;
   const contentType = guessMime(localPath);
@@ -87,6 +137,7 @@ const CAMERA_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.webm', '.y4m', 
  *  and the in-platform way to produce a frame, so a wrong file type costs one
  *  local error instead of an upload plus an opaque browser failure. */
 export function assertCameraFile(localPath: string): void {
+  assertLocalAsset('--camera', localPath);
   const ext = localPath.slice(localPath.lastIndexOf('.')).toLowerCase();
   if (CAMERA_EXTS.includes(ext)) return;
   throw new Error(
@@ -101,5 +152,5 @@ export function assertCameraFile(localPath: string): void {
  *  deleted the same way), validated first. */
 export async function uploadCameraFeed(projectGuid: string, localPath: string): Promise<HostedFixture> {
   assertCameraFile(localPath);
-  return uploadPublicFixture(projectGuid, localPath);
+  return uploadPublicFixture(projectGuid, localPath, '--camera');
 }

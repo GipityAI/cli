@@ -11,6 +11,8 @@ export interface EvalResult {
   url: string;
   result: string;
   truncated: boolean;
+  // Results of --step expressions, in order, each run against the SAME page load.
+  stepResults?: string[];
   // Result of the second expression run after an in-place reload (--reload).
   reloadResult?: string;
   reloadTruncated?: boolean;
@@ -62,6 +64,56 @@ export function normalizeEvalResult(raw: string): { result: string; noValue: boo
   return { result: raw, noValue: false };
 }
 
+// Shown when a run returns a structurally empty value ({}, [], or an object whose
+// every field is null/''). That is NOT the same as "no value": the script ran and
+// read the page — it just read it at an instant where the state it wanted did not
+// exist. A fixed --wait samples ONE moment, and transient state (a round result,
+// a toast, a frame's detection) may have already been cleared by then, so the run
+// looks like a pass and the agent has to reason its way to "I sampled too late".
+export const EVAL_EMPTY_STATE_HINT =
+  'The eval returned an empty value — the script ran, but the state it read was not there at that instant. ' +
+  'A fixed --wait samples ONE moment; transient state (a round result, a toast, a detection) can be gone by then. ' +
+  'Poll INSIDE the body and return the moment the condition holds (raise --timeout if the sequence needs longer), ' +
+  "or gate the read on the app's own signal with --wait-for '<selector>'.";
+
+// The one-run experiment that separates "the frame is unreadable" from "the app
+// never routes frames to the model" — the ambiguity that otherwise costs a
+// re-generate-and-re-run cycle per candidate image. Named once, reused by every
+// camera-run message below so the caller is told the same thing wherever it
+// notices something is off.
+const CAMERA_FRAME_CHECK =
+  "in the eval body, run the model on the frame YOURSELF (grab the app's <video> element, or the app's own "
+  + "detector on it) and return its RAW output alongside the app's state. Model saw nothing => the frame is at fault: "
+  + 'regenerate it (subject filling the frame, plain background, even light), do not re-run the same one. '
+  + "Model saw it but the app's state is empty => the bug is in the app's wiring, not the picture.";
+
+// A camera run that comes back empty must NOT be sent down the generic
+// "raise --timeout and poll harder" path below: on a looped still frame that is
+// a guaranteed-identical re-run, and that escalation (60s, then 70s, then 80s)
+// is the single most expensive way a vision app gets verified. Give it the
+// verdict and the disambiguating experiment instead.
+export const EVAL_CAMERA_EMPTY_HINT =
+  'The eval returned an empty value on a --camera run. --camera loops ONE still image, and the model is deterministic '
+  + 'on it, so a longer --wait/--timeout re-runs the identical inference and returns the identical nothing — do not escalate. '
+  + `Two suspects: the frame, or the app's wiring. Tell them apart in one run: ${CAMERA_FRAME_CHECK} `
+  + "(If the app only starts its pipeline on a click, a headless run never clicks — start it on load and gate this eval on "
+  + "the app's own ready signal with --wait-for '<selector>'.)";
+
+/** True when the eval came back with a structurally empty container: `{}`, `[]`,
+ *  or an object whose every value is null/undefined/''. Exported for tests. */
+export function isEmptyStateResult(result: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result);
+  } catch {
+    return false;
+  }
+  if (Array.isArray(parsed)) return parsed.length === 0;
+  if (!parsed || typeof parsed !== 'object') return false;
+  const values = Object.values(parsed as Record<string, unknown>);
+  return values.every((v) => v === null || v === undefined || v === '');
+}
+
 // A one-line inline expr is worth echoing back — it's the thing you're asserting
 // on. A multi-line driver script is not: echoing 30 lines of the caller's own
 // source above the result buries the value, and an echo that lands right before
@@ -111,14 +163,175 @@ export function capWaitMs(rawWait: string, url: string): number {
   return MAX_WAIT_MS;
 }
 
+// How many --step expressions may ride on one page load (mirrors the server's
+// MAX_EVAL_STEPS). Past this, the run is really two verifications.
+export const MAX_EVAL_STEPS = 4;
+
+// Ceiling the server accepts for the --wait-for gate (its WAIT_FOR_MAX_MS).
+export const WAIT_FOR_MAX_MS = 30_000;
+
+/** Parse --wait-timeout, clamping to the gate's server-side ceiling. Over the cap
+ *  the server answers with a zod 400 that names neither the flag nor the limit, so
+ *  clamp and say so on stderr (--json stdout stays clean). Exported for tests. */
+export function capWaitForTimeoutMs(raw: string): number {
+  const parsed = parseInt(raw, 10);
+  const ms = Number.isFinite(parsed) && parsed >= 0 ? parsed : 5_000;
+  if (ms <= WAIT_FOR_MAX_MS) return ms;
+  console.error(warning(
+    `--wait-timeout ${ms}ms exceeds the ${WAIT_FOR_MAX_MS}ms cap on the selector gate — using ${WAIT_FOR_MAX_MS}ms. ` +
+    `A state that takes longer than that to appear is not a settling delay: have the page reach it on load, ` +
+    `or watch for it INSIDE the script (--timeout ${EVAL_SCRIPT_BUDGET_MAX_MS}).`,
+  ));
+  return WAIT_FOR_MAX_MS;
+}
+
+/** True when `s` is an expression (`document.title`, an IIFE) rather than a
+ *  statement body (`const x = …; return x`). Mirrors the server's own parse
+ *  choice: only an expression may be spliced into `return (…)`. Nothing is
+ *  executed — Function() parses and throws on a statement body. */
+export function parsesAsExpression(s: string): boolean {
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(`return (${s}\n);`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Prepend a prelude (fixture bindings, a post-gate settle) to a caller script.
+ *  A prelude makes the whole thing a statement body, so an expression script has
+ *  to become `return (expr)` — a statement-body script is spliced as-is. */
+export function withPrelude(script: string, prelude: string): string {
+  if (!prelude) return script;
+  return parsesAsExpression(script)
+    ? `${prelude}\nreturn (${script});`
+    : `${prelude}\n${script}`;
+}
+
+// A camera app's first useful frame is never 500ms away: getUserMedia has to
+// come up, then the vision pipeline downloads and initializes its model (WASM +
+// weights) before it can label anything. Evaluating at the default --wait always
+// reads an empty/"loading" DOM, and pushing that warm-up into the eval body
+// instead blows the in-page execution budget. So --camera raises the pre-eval
+// window (which is NOT on the eval's clock) to something a model load fits in.
+export const CAMERA_DEFAULT_WAIT_MS = 15_000;
+
+// Playing a real frame into the browser's webcam costs the server real time
+// before the page is even navigated: it fetches the hosted feed and encodes it
+// into the synthetic capture device. That is server-side setup the caller cannot
+// shorten, so it has to be inside the client's patience — otherwise the CLI
+// abandons a job that was always going to take this long.
+const CAMERA_SETUP_BUDGET_MS = 30_000;
+
+// How long the script may run INSIDE the page. The server enforces this (it is
+// the `timeoutMs` on the eval request) and picks the roomier default on a
+// synthetic-media run, where a WASM/model download IS the wait. These mirror the
+// server's EVAL_SCRIPT_BUDGET_* constants; --timeout names any value up to MAX.
+export const EVAL_SCRIPT_BUDGET_MS = 30_000;
+export const EVAL_SCRIPT_BUDGET_CAMERA_MS = 45_000;
+export const EVAL_SCRIPT_BUDGET_MAX_MS = 90_000;
+
+/** The in-page budget this call gets: the caller's --timeout when given, else the
+ *  default for the kind of run (roomier under --camera/--fake-media). Clamped to
+ *  the server's accepted range — a value over the max is clamped and explained on
+ *  stderr rather than bounced back as an opaque 400. Exported for tests. */
+export function capScriptBudgetMs(rawTimeout: string | undefined, hasMedia: boolean): number {
+  const fallback = hasMedia ? EVAL_SCRIPT_BUDGET_CAMERA_MS : EVAL_SCRIPT_BUDGET_MS;
+  if (rawTimeout === undefined) return fallback;
+  const parsed = parseInt(rawTimeout, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  if (parsed > EVAL_SCRIPT_BUDGET_MAX_MS) {
+    console.error(warning(
+      `--timeout ${parsed}ms exceeds the ${EVAL_SCRIPT_BUDGET_MAX_MS}ms max in-page budget — using ${EVAL_SCRIPT_BUDGET_MAX_MS}ms. ` +
+      `A body that needs longer than that is doing its waiting in the wrong place: start the slow work on page load and ` +
+      `absorb it in the pre-eval window (--wait-for '<ready-selector>'), keeping the body to a quick read.`,
+    ));
+    return EVAL_SCRIPT_BUDGET_MAX_MS;
+  }
+  return Math.max(1_000, parsed);
+}
+
+/** Upper bound on the server-side work this eval asked for. EVERY leg the caller
+ *  can lengthen has to be in here, or the client gives up on a job that is still
+ *  legitimately running and reports it as the caller's fault:
+ *    - the pre-eval window (--wait, and --wait-for's own timeout)
+ *    - every script leg (<expr> plus each --step), each allowed its full in-page
+ *      budget (--timeout) — they share ONE page load but not one clock
+ *    - the reload leg, which repeats settle + eval
+ *    - --camera's feed fetch/encode, paid before the page loads
+ *  Browser cold-start/open overhead is NOT here; it's the flat headroom in
+ *  pollEvalResult. Exported for tests. */
+export function evalWorkBudgetMs(o: {
+  waitMs: number;
+  waitForTimeoutMs?: number;
+  hasReload?: boolean;
+  hasCamera?: boolean;
+  scriptBudgetMs?: number;
+  legs?: number;
+}): number {
+  const script = o.scriptBudgetMs ?? (o.hasCamera ? EVAL_SCRIPT_BUDGET_CAMERA_MS : EVAL_SCRIPT_BUDGET_MS);
+  const legs = Math.max(1, o.legs ?? 1);
+  const settle = o.waitMs + (o.waitForTimeoutMs ?? 0);
+  const firstPass = settle + script * legs;
+  return firstPass + (o.hasReload ? settle + script : 0) + (o.hasCamera ? CAMERA_SETUP_BUDGET_MS : 0);
+}
+
+/** The server refuses a script that outran its in-page budget with a message that
+ *  names the budget and says to "raise the eval timeout" — but not the flag that
+ *  does it. Name it, with the value this run actually used, so the fix is one
+ *  edit away instead of a guess (or a trip through --help). */
+export function budgetOverrunHint(reason: string, usedBudgetMs: number): string | null {
+  if (!/in-page budget/i.test(reason)) return null;
+  if (usedBudgetMs >= EVAL_SCRIPT_BUDGET_MAX_MS) {
+    return `This run already used the maximum in-page budget (--timeout ${EVAL_SCRIPT_BUDGET_MAX_MS}). ` +
+      `More time is not the answer: have the page start its slow work on load, wait it out in the pre-eval window ` +
+      `(--wait-for '<ready-selector>' --wait-timeout ${MAX_WAIT_MS}), and keep the body to a quick read.`;
+  }
+  return `That budget was ${Math.round(usedBudgetMs / 1000)}s. Raise it with --timeout <ms> ` +
+    `(up to ${EVAL_SCRIPT_BUDGET_MAX_MS}), e.g. --timeout ${EVAL_SCRIPT_BUDGET_MAX_MS} — ` +
+    `or gate on a ready signal instead: --wait-for '<selector>' --wait-timeout ${MAX_WAIT_MS}.`;
+}
+
+/** The headless browser paints slowly, and what that MEANS depends on what the
+ *  page is doing — so the one-size warning was actively misleading on a --camera
+ *  run. A vision app has no loop to step: its pipeline is driven by camera
+ *  frames, one inference per painted frame.
+ *
+ *  The trap this message exists to close: a slow-render warning next to a "no
+ *  detection" result reads as "the renderer starved you", so the caller re-runs
+ *  with a bigger --wait/--timeout, several times, and gets the identical answer
+ *  each time. It cannot be otherwise. A --camera still is played as a LOOPED
+ *  feed — every painted frame is the same pixels — and a vision model is
+ *  deterministic on the same pixels. Frame count therefore buys attempts, not
+ *  information: once the model has run once, more time cannot change the verdict.
+ *  So this says so, and names the two real suspects (the frame, the app) plus the
+ *  deterministic way to wait (--wait-for) instead of inviting a wall-clock
+ *  escalation that is guaranteed to be wasted. Exported for tests. */
+export function slowRenderMessage(fps: number, o: { camera: boolean; waitMs: number }): string {
+  if (o.camera) {
+    const frames = Math.max(1, Math.round(fps * (o.waitMs / 1000)));
+    return `${warning('⚠ Slow render:')} page painted at ${fps} fps, so the app's vision pipeline ran on roughly `
+      + `${bold(`${frames} frame${frames === 1 ? '' : 's'}`)} during the ${Math.round(o.waitMs / 1000)}s before this eval `
+      + `(it infers once per painted frame). ${bold('That is enough:')} --camera loops your still image, so every one of `
+      + `those frames is the SAME pixels and the model returns the SAME answer on each — re-running with a bigger `
+      + `--wait/--timeout cannot change the result. ${bold('Do not escalate the wait.')} If a detection landed, it is real. `
+      + `If nothing was detected, the suspect is the ${bold('frame')} (a model needs the whole subject in shot — a tight crop, `
+      + `an odd angle or a busy background reads as nothing) or the ${bold('app')} (frames never reach the model) — never the frame rate. `
+      + `Settle it in ONE run: ${CAMERA_FRAME_CHECK}`;
+  }
+  return `${warning('⚠ Slow render:')} page painted at ${fps} fps. `
+    + `Waiting on real time (setTimeout) advances animation/physics time far slower than it looks — `
+    + `assertions after a wall-clock wait can report a false negative. `
+    + `Step the app's own loop deterministically instead (3D templates: ${bold('core.advance(seconds)')}).`;
+}
+
 /** Poll the async eval job until it finishes. Eval runs server-side as a
  *  short-lived job (so a long --wait can't trip the gateway idle timeout);
  *  we submit, then poll the result out of the job store. `expectedWorkMs` is
- *  the time the server-side work is expected to take (settle + any in-page
- *  awaits); the client budget is that plus 60s of headroom. */
+ *  the time the server-side work is expected to take (see evalWorkBudgetMs);
+ *  the client budget is that plus 60s of headroom for browser open/cold start. */
 export async function pollEvalResult(evalJobId: string, expectedWorkMs: number): Promise<EvalResult> {
-  // Generous client budget: the server work is bounded by --wait plus browser
-  // open/settle overhead; give it that plus headroom before giving up.
   const deadline = Date.now() + expectedWorkMs + 60_000;
   let missCount = 0;
   while (Date.now() < deadline) {
@@ -138,22 +351,29 @@ export async function pollEvalResult(evalJobId: string, expectedWorkMs: number):
     if (rec.status === 'error') throw new ApiError(rec.httpStatus, rec.code, rec.reason);
     await sleep(1000);
   }
-  throw new ApiError(504, 'EVAL_TIMEOUT', 'Eval did not finish in time; narrow the expression or lower --wait');
+  // This is the CLIENT giving up, not the page failing — and the budget above
+  // already covers everything the caller asked for, so "your expression is too
+  // big" is the one thing it is NOT. Never advise lowering --wait: on a camera /
+  // vision run the wait is what lets the model load, so that "fix" swaps a
+  // timeout for a silently empty read, which is worse.
+  throw new ApiError(
+    504,
+    'EVAL_TIMEOUT',
+    `the browser did not report back within ${Math.round((expectedWorkMs + 60_000) / 1000)}s — that budget already ` +
+    `covers --wait, --wait-for, the eval body and any --camera setup, so this is the browser itself being slow or ` +
+    `stuck (a cold sandbox, a heavy page), not your expression being too big. Lowering --wait does NOT help and on ` +
+    `a --camera run actively hurts (the wait is what lets the vision model load — cut it and the eval reads an ` +
+    `empty page instead). Just run the same command again: the sandbox is warm on the second hit.`,
+  );
 }
 
-// The in-page execution budget for an eval body's OWN runtime (its `await`/
-// `setTimeout` pauses), enforced by agent-browser's per-command CDP timeout
-// (AGENT_BROWSER_DEFAULT_TIMEOUT) — distinct from --wait, which only sleeps
-// BEFORE the eval. Used to translate the opaque timeout envelope into guidance.
-const EVAL_EXEC_BUDGET_MS = 20_000;
-
-/** When the eval body's own runtime overruns the in-page execution budget,
- *  agent-browser aborts the `Runtime.evaluate` CDP call and the failure comes
- *  back as a `{success:false, error:"CDP command timed out: Runtime.evaluate"}`
- *  envelope that the server surfaces verbatim as the eval `result` — opaque to
- *  the caller (no timeout named, no distinction from the page or --wait). Detect
- *  exactly that envelope and return an actionable message; null otherwise. */
-export function evalExecTimeoutMessage(result: string): string | null {
+/** When the script's own runtime overruns the in-page budget, agent-browser can
+ *  abort the `Runtime.evaluate` CDP call and the failure comes back as a
+ *  `{success:false, error:"CDP command timed out: Runtime.evaluate"}` envelope
+ *  that the server surfaces verbatim as the eval `result` — opaque to the caller
+ *  (no budget named, no flag to raise it). Detect exactly that envelope and
+ *  return an actionable message; null otherwise. */
+export function evalExecTimeoutMessage(result: string, budgetMs: number): string | null {
   let parsed: { success?: unknown; error?: unknown };
   try {
     parsed = JSON.parse(result);
@@ -162,12 +382,15 @@ export function evalExecTimeoutMessage(result: string): string | null {
   }
   if (!parsed || parsed.success !== false || typeof parsed.error !== 'string') return null;
   if (!/CDP command timed out:\s*Runtime\.evaluate/i.test(parsed.error)) return null;
+  const budget = Math.round(budgetMs / 1000);
   return (
-    `the expression hit the ~${EVAL_EXEC_BUDGET_MS / 1000}s in-page execution budget — the eval body ` +
-    `(including its own await/setTimeout pauses) ran longer than that. This budget is the time the ` +
-    `expression itself is allowed to run; it is separate from --wait, which only sleeps BEFORE the eval ` +
-    `and cannot extend it. Split a long interactive check into several shorter 'page eval' calls (e.g. ` +
-    `one per state to verify), keeping each body's in-page waits well under ${EVAL_EXEC_BUDGET_MS / 1000}s.`
+    `the script hit its ${budget}s in-page budget — the body (including its own await/setTimeout ` +
+    `pauses) ran longer than that. --wait sleeps BEFORE the script and does not extend it.\n` +
+    (budgetOverrunHint('in-page budget', budgetMs) ?? '') + '\n' +
+    `If the slow part is a ONE-TIME page init (a WASM/model download, a big asset, a first-frame ` +
+    `pipeline warm-up), do NOT split the body across several 'page eval' calls — every call is a fresh ` +
+    `page load that re-pays that init, so each one hits this same wall. Have the page kick it off on ` +
+    `load (not behind a click) and absorb it in the pre-eval window instead.`
   );
 }
 
@@ -192,8 +415,14 @@ const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', 
 export const pageEvalCommand = new Command('eval')
   .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script). ONE client per call - to verify realtime/presence across concurrent clients use `page test --observe` instead')
   .argument('<url>', 'URL to load')
-  .argument('[expr]', 'JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file. Time budget: the body has ~20s to finish after page load - keep driver scripts within it.')
-  .option('--file <path>', 'Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work. Same ~20s post-load budget as <expr>.')
+  .argument('[expr]', `JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file. Time budget: the body has ${EVAL_SCRIPT_BUDGET_MS / 1000}s to finish after page load (${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s with --camera) - raise it with --timeout, max ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s.`)
+  .option('--file <path>', `Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work. Same post-load budget as <expr> (--timeout).`)
+  .option(
+    '--step <expr>',
+    `Run another expression against the SAME loaded page, after <expr> (repeat, max ${MAX_EVAL_STEPS}). Whatever that page load paid for — a vision model coming up, a game booting, a socket connecting — stays up for every step, so an N-part check costs ONE page load instead of N. Each step gets its own in-page budget and its own reported result.`,
+    (val: string, prev: string[]) => [...prev, val],
+    [] as string[],
+  )
   .option(
     '--fixture <path>',
     'Host a local file and expose it to the eval as `fixtureUrl` (and under `fixtures` by basename) to fetch in-page. For verifying a render/parse path against a real binary (an MP3, an image) - no size limit, auto-deleted after the run. Repeat for several files (single-value so it never swallows the inline <expr>).',
@@ -207,12 +436,16 @@ export const pageEvalCommand = new Command('eval')
   .option('--reload-file <path>', 'Read the post-reload expression from a file instead of inline --reload (mutually exclusive)')
   .option(
     '--camera <path>',
-    'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, so a camera app\'s real pipeline (getUserMedia → MediaPipe/YOLOX → your app logic) runs headlessly on frames you choose. A still image loops as a one-frame feed. Implies --fake-media. No frame handy? gipity generate image "a hand making a closed fist, palm to camera".',
+    `Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser's WEBCAM feed, so a camera app's real pipeline (getUserMedia → MediaPipe/YOLOX → your app logic) runs headlessly on a frame you choose. Implies --fake-media and waits ${CAMERA_DEFAULT_WAIT_MS / 1000}s for the vision model to load. No frame handy? gipity generate image "a hand making a closed fist, palm to camera".`,
   )
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so a voice/camera app runs headlessly instead of hitting its no-camera path. The feed is a built-in test pattern (and a tone) — nothing a vision model can recognize; to drive a vision app use --camera <path> instead.')
-  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000)', '500')
-  .option('--wait-for <selector>', 'Wait until this CSS selector appears before evaluating (deterministic; replaces --wait)')
-  .option('--wait-timeout <ms>', 'Max ms to wait for --wait-for before giving up', '5000')
+  .option('--wait <ms>', 'Sleep this many ms after DOMContentLoaded before evaluating (lets late async work settle; max 30000). With --wait-for, it elapses AFTER the selector appears - gate, then settle.', '500')
+  .option('--wait-for <selector>', `Wait until this CSS selector appears before evaluating, then evaluate (deterministic - beats guessing a --wait). Gate on the state you are ASSERTING, not just a ready flag: '#verdict:not(:empty)' returns the instant the round lands, where a fixed wait snapshots mid-sequence. Same flag on page inspect/screenshot. Max ${WAIT_FOR_MAX_MS}ms (--wait-timeout).`)
+  .option('--wait-timeout <ms>', `Max ms to wait for --wait-for before giving up (max ${WAIT_FOR_MAX_MS})`, '5000')
+  .option(
+    '--timeout <ms>',
+    `How long the script itself may run IN the page - its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
+  )
   .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
@@ -269,15 +502,53 @@ export const pageEvalCommand = new Command('eval')
       }
     }
 
-    const waitMs = capWaitMs(opts.wait, url);
-    const parsedTimeout = parseInt(opts.waitTimeout, 10);
-    const waitForTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout >= 0 ? parsedTimeout : 5000;
+    const steps: string[] = opts.step ?? [];
+    if (steps.length > MAX_EVAL_STEPS) {
+      pageEvalCommand.error(
+        `error: at most ${MAX_EVAL_STEPS} --step expressions ride on one page load (got ${steps.length}) — ` +
+        `do more per step, or split this into two evals`,
+      );
+    }
+
+    let waitMs = capWaitMs(opts.wait, url);
+    const waitForTimeoutMs = capWaitForTimeoutMs(opts.waitTimeout);
+
+    // The in-page budget for the script itself. Always sent, so the caller (and
+    // every error message below) is talking about one known number rather than a
+    // server-side default nobody can see.
+    const hasMedia = !!opts.camera || !!opts.fakeMedia;
+    const scriptBudgetMs = capScriptBudgetMs(opts.timeout, hasMedia);
+
+    // Camera runs get a model-load-sized pre-eval window unless the caller chose
+    // their own wait (either flag). Doing this by default is the whole point: the
+    // eval body must not be where a vision app's warm-up happens.
+    const explicitWait = pageEvalCommand.getOptionValueSource('wait') !== 'default';
+    const chosenWait = explicitWait || !!opts.waitFor;
+    if (opts.camera && !chosenWait) {
+      waitMs = CAMERA_DEFAULT_WAIT_MS;
+      console.error(muted(
+        `--camera: waiting ${CAMERA_DEFAULT_WAIT_MS / 1000}s before the eval so the camera and the app's ` +
+        `vision model finish loading (they cannot warm up inside the eval body — that has a ` +
+        `${scriptBudgetMs / 1000}s budget of its own, --timeout to change it). Override with --wait <ms>, or use ` +
+        `--wait-for '<ready-selector>' to stop as soon as the app is ready.`,
+      ));
+    }
+
+    // The selector gate REPLACES the blind pre-eval sleep server-side, so a
+    // --wait passed alongside it was silently dropped: the script ran the instant
+    // the selector appeared and read a half-finished sequence (a round still
+    // counting down), which looks exactly like an app bug. Honour both, in the
+    // only order that means anything — gate, THEN settle — by moving the sleep to
+    // the head of the first script and paying for it out of that script's budget.
+    const settleAfterGateMs = opts.waitFor && explicitWait ? waitMs : 0;
+    const sentWaitMs = settleAfterGateMs > 0 ? 0 : waitMs;
+    const sentScriptBudgetMs = Math.min(scriptBudgetMs + settleAfterGateMs, EVAL_SCRIPT_BUDGET_MAX_MS);
 
     // --fixture: host each file publicly, then splice `fixtures` / `fixtureUrl`
-    // into the eval scope so the page can fetch the bytes. The prelude makes the
-    // body a statement (const/return), so the server's expression form fails to
-    // parse and it falls back to the function-body form - which runs both inline
-    // exprs (wrapped in `return (...)`) and --file scripts. Cleanup in `finally`.
+    // into the eval scope so the page can fetch the bytes. A prelude makes the
+    // body a statement (const/return), so an expression script is spliced into
+    // `return (...)` and a statement body is kept as-is (withPrelude). Every leg
+    // (<expr> and each --step) gets the fixture bindings. Cleanup in `finally`.
     const fixturePaths: string[] = opts.fixture ?? [];
     const hosted: HostedFixture[] = [];
     // The webcam feed is hosted like a fixture but is NOT exposed to the eval
@@ -287,6 +558,7 @@ export const pageEvalCommand = new Command('eval')
     let camera: HostedFixture | undefined;
     let projectGuid: string | undefined;
     let sentExpr = expr;
+    let sentSteps = steps;
     // Validate the camera file locally first: a wrong file type should cost one
     // instant error, not an upload plus an opaque browser-side failure.
     if (opts.camera) assertCameraFile(opts.camera);
@@ -307,33 +579,74 @@ export const pageEvalCommand = new Command('eval')
         const map: Record<string, string> = {};
         for (const h of hosted) map[h.name] = h.url;
         const prelude = `const fixtures=${JSON.stringify(map)};const fixtureUrl=${JSON.stringify(hosted[0].url)};`;
-        sentExpr = opts.file ? `${prelude}\n${expr}` : `${prelude}\nreturn (${expr});`;
+        sentExpr = withPrelude(sentExpr, prelude);
+        sentSteps = sentSteps.map((s) => withPrelude(s, prelude));
+      }
+      // The post-gate settle rides at the head of the FIRST script only: the
+      // later steps run on a page the gate + settle already carried forward.
+      if (settleAfterGateMs > 0) {
+        sentExpr = withPrelude(sentExpr, `await new Promise((r) => setTimeout(r, ${settleAfterGateMs}));`);
       }
 
       const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
-        url, expr: sentExpr, waitMs,
+        url, expr: sentExpr, waitMs: sentWaitMs,
+        steps: sentSteps.length ? sentSteps : undefined,
         reloadExpr,
         waitForSelector: opts.waitFor || undefined,
         waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
+        timeoutMs: sentScriptBudgetMs,
         auth: opts.auth || undefined,
         // A camera feed needs the synthetic devices in place to be played into,
         // so --camera implies --fake-media rather than failing on the pairing.
         fakeMedia: opts.fakeMedia || !!camera || undefined,
         cameraUrl: camera?.url,
       });
-      // The reload leg re-runs the settle before its eval — budget for both.
-      const d = await pollEvalResult(kickoff.data.evalJobId, reloadExpr !== undefined ? waitMs * 2 : waitMs);
+      let d: EvalResult;
+      try {
+        d = await pollEvalResult(kickoff.data.evalJobId, evalWorkBudgetMs({
+          waitMs: sentWaitMs,
+          waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : 0,
+          hasReload: reloadExpr !== undefined,
+          hasCamera: !!camera,
+          scriptBudgetMs: sentScriptBudgetMs,
+          legs: 1 + sentSteps.length,
+        }));
+      } catch (err) {
+        // The server's overrun message names the budget but not the flag that
+        // raises it — and the flag is what the caller needs next. Name it, with
+        // the value THIS run used, so the retry is an edit rather than a guess.
+        const msg = (err as Error)?.message ?? '';
+        const hint = budgetOverrunHint(msg, scriptBudgetMs);
+        if (!hint) throw err;
+        throw new Error(`${msg}\n${hint}`);
+      }
       const { result, noValue } = normalizeEvalResult(d.result);
       const reload = d.reloadResult !== undefined ? normalizeEvalResult(d.reloadResult) : undefined;
 
-      const execTimeout = evalExecTimeoutMessage(d.result);
+      const execTimeout = evalExecTimeoutMessage(d.result, scriptBudgetMs);
       if (execTimeout) throw new Error(execTimeout);
+
+      // Each --step is reported on its own, against the expression that produced
+      // it — N results in one blob would be unreadable and unattributable.
+      const stepOut = steps.map((stepExpr, i) => {
+        const raw = d.stepResults?.[i];
+        const norm = raw !== undefined ? normalizeEvalResult(raw) : undefined;
+        return { expr: stepExpr, result: norm?.result ?? '', noValue: norm?.noValue ?? true };
+      });
+
+      const emptyState = !noValue && isEmptyStateResult(result);
+      // An empty read on a camera run has a different cause and a different fix
+      // than an empty read on a normal page: the generic hint's "poll harder,
+      // raise --timeout" is guaranteed-wasted advice against a looped still.
+      const emptyHint = camera ? EVAL_CAMERA_EMPTY_HINT : EVAL_EMPTY_STATE_HINT;
 
       if (opts.json) {
         console.log(JSON.stringify({
           ...d, result,
+          ...(stepOut.length ? { stepResults: stepOut.map((s) => s.result) } : {}),
           ...(reload ? { reloadResult: reload.result } : {}),
           ...(noValue ? { hint: EVAL_NO_VALUE_HINT } : {}),
+          ...(emptyState ? { hint: emptyHint } : {}),
         }));
         return;
       }
@@ -347,10 +660,7 @@ export const pageEvalCommand = new Command('eval')
       // `setTimeout(2000)` may advance only a fraction of a second of app time.
       // Without this line the eval returns a plausible-looking false negative.
       if (d.slowRender) {
-        console.log(`${warning('⚠ Slow render:')} page painted at ${d.slowRender.fps} fps. `
-          + `Waiting on real time (setTimeout) advances animation/physics time far slower than it looks — `
-          + `assertions after a wall-clock wait can report a false negative. `
-          + `Step the app's own loop deterministically instead (3D templates: ${bold('core.advance(seconds)')}).`);
+        console.log(slowRenderMessage(d.slowRender.fps, { camera: !!camera, waitMs }));
       }
       // Auth state: without this line an agent can't distinguish "signed-in
       // eval" from "--auth silently no-op'd against the anonymous page".
@@ -365,7 +675,14 @@ export const pageEvalCommand = new Command('eval')
       console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
       if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
+      if (emptyState) console.log(muted(`\n${emptyHint}`));
       if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
+      for (let i = 0; i < stepOut.length; i++) {
+        const s = stepOut[i];
+        console.log(`\n${bold(`Step ${i + 1}`)} ${muted(summarizeExpr(s.expr))} ${muted('(same page load)')}`);
+        console.log(s.result.trim() ? s.result : muted('(empty result)'));
+        if (s.noValue) console.log(muted(EVAL_NO_VALUE_HINT));
+      }
       if (reload) {
         console.log(`\n${bold('After reload')} ${muted('(page reloaded in place — storage preserved)')}`);
         console.log(reload.result.trim() ? reload.result : muted('(empty result)'));
@@ -412,19 +729,49 @@ Examples:
   # Camera app (MediaPipe / YOLOX / any getUserMedia app): play a real image as
   # the webcam so the app's OWN pipeline runs on a frame you control — no need to
   # stub the model or export internals just to test around a missing camera.
+  # --camera waits ${CAMERA_DEFAULT_WAIT_MS / 1000}s before evaluating (model load + first frame); the script
+  # itself then gets ${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s in the page (--timeout, max ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s).
   gipity generate image "a hand making a closed fist, palm to camera, plain background" -o fist.png
-  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png --wait 4000 \\
+  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png \\
     "document.querySelector('#detected-gesture').textContent"
+  # Camera app that only starts on a click? Start it on page load instead (a headless
+  # run has no user), and expose a ready signal so the wait ends the moment it's up:
+  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png \\
+    --wait-for "#detected-gesture:not(:empty)" --wait-timeout ${WAIT_FOR_MAX_MS} \\
+    "document.querySelector('#detected-gesture').textContent"
+  # Several assertions about the SAME page? Use --step, not several commands: a camera
+  # page load pays for getUserMedia + the vision model ONCE and every step reuses it.
+  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png \\
+    --wait-for '[data-vision="ready"]' \\
+    "window.__vision.gesture()" \\
+    --step "document.getElementById('see').textContent" \\
+    --step "({ score: score.textContent, verdict: verdict.textContent })"
 
 Module resolution: dynamic import() specifiers starting with ./ or ../ resolve
 against the PAGE URL, so import('./packages/i18n/index.js') loads the app's own
 module without hand-building the deployed /account/project/ path. Absolute paths
 and full URLs pass through unchanged.
 
-The eval body runs under a ~20s in-page execution budget (its own await/setTimeout
-pauses count; --wait only sleeps BEFORE the eval and does not extend it). For a long
-interactive sequence, split it into several shorter evals (one per state to verify)
-rather than one body with many long waits.
+Time budget: the script runs under a ${EVAL_SCRIPT_BUDGET_MS / 1000}s in-page budget (${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s with --camera/--fake-media),
+counting its own await/setTimeout pauses. Two separate knobs:
+  --timeout <ms>  how long the SCRIPT may run in the page (max ${EVAL_SCRIPT_BUDGET_MAX_MS}) — raise this to
+                  trace a sequence that unfolds over time (a game round, an animation)
+  --wait / --wait-for  how long to settle BEFORE the script runs — a blind sleep, a
+                  selector gate, or both (gate first, then sleep). Neither extends --timeout.
+Which one:
+  - waiting for the app to REACH a state before you read it → --wait-for '<selector>'
+    (gate on the end state — '#verdict:not(:empty)' — not just a ready flag; a bare
+    --wait samples one arbitrary instant and can land mid-sequence). Passing both means
+    gate first, then settle --wait ms.
+  - watching state evolve (poll until a result lands, record a trace) → --timeout
+  - a slow ONE-TIME init (WASM/model download, big asset) → do NOT split the body across
+    calls; every call re-loads the page and re-pays it. Start that work on page load and
+    absorb it in the pre-eval window: --wait <ms> (max ${MAX_WAIT_MS}) or, better,
+    --wait-for '<ready-selector>' --wait-timeout ${WAIT_FOR_MAX_MS}.
+
+Several things to check on one page? Pass --step (max ${MAX_EVAL_STEPS}) instead of running
+'page eval' N times: the steps run in order against the ONE loaded page, so a slow
+boot (vision model, game, socket) is paid once, not once per assertion.
 
 Testing realtime/shared state across clients?
   Separate 'page eval' calls run sequentially (one finishes before the next

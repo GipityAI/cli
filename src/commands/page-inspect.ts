@@ -70,7 +70,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--no-reprobe', 'Skip the automatic second probe that filters one-time transient console errors - roughly halves inspect time on a page with any console error, at the cost of possibly reporting a cold-load transient as real')
   .option('--no-truncate', 'Show full URLs instead of truncating long ones with middle-ellipsis')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
-  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps run headlessly (audio is a built-in tone, not real speech)')
+  .option('--no-fake-media', "Inspect with NO camera or microphone present, so a getUserMedia app takes its no-device error path (use this only when that fallback IS what you're inspecting)")
   .option('--device <name>', `Inspect as a real touch device: ${INSPECT_DEVICES.join(', ')}. Emulates touch events, mobile user-agent and DPR, so a touch-gated mobile layout is what gets inspected.`)
   .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
@@ -111,11 +111,17 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     const truncate = opts.truncate !== false;
     const showAll = opts.all === true;
 
+    // The headless browser has a synthetic camera + mic BY DEFAULT. A real user
+    // inspecting a camera app has a camera; a browser without one makes every
+    // getUserMedia app report a NotFoundError that is an artifact of the probe,
+    // not a defect in the page — and worse, the app stops at its error path, so
+    // the pipeline the agent actually wanted inspected never runs. A synthetic
+    // device costs a page that never asks for media exactly nothing.
     const inspectBody = {
       url, waitMs,
       waitForSelector: opts.waitFor || undefined,
       waitForTimeoutMs: opts.waitFor ? waitForTimeoutMs : undefined,
-      fakeMedia: opts.fakeMedia || undefined,
+      fakeMedia: opts.fakeMedia !== false ? true : undefined,
       device: opts.device ? resolveTouchDevice(opts.device) : undefined,
       auth: opts.auth || undefined,
     };

@@ -29,10 +29,24 @@ export const deployCommand = new Command('deploy')
   .option('--no-optimize', 'Skip build optimization and upload files as-is - the escape hatch for plain-HTML apps whose <script src> tags are not type="module"')
   .option('--json', 'Output as JSON')
   .option('--inspect [path]', 'After a successful deploy, run `page inspect` on the deployed URL (or URL + path) in the same command - one build-loop step instead of two. With --json, emits two JSON lines: deploy, then inspect.')
+  // The settle knobs `page inspect` already has. An app whose first paint is behind
+  // a model load / async boot inspects as an empty page without them, so a caller
+  // that reaches for `--inspect` on such an app needs them HERE - it should not have
+  // to abandon the combined command and re-run inspect standalone just to wait.
+  .option('--wait <ms>', 'With --inspect: sleep this many ms before capturing (max 30000)')
+  .option('--wait-for <selector>', "With --inspect: wait until this CSS selector appears before capturing (deterministic; the app's own ready signal)")
+  .option('--wait-timeout <ms>', 'With --inspect: max ms to wait for --wait-for before giving up', '5000')
   .action((target: string, opts) => run('Deploy', async () => {
       if (target !== 'dev' && target !== 'prod') {
         console.error(clrError('Target must be "dev" or "prod"'));
         process.exit(1);
+      }
+
+      // A settle flag only means one thing on a deploy: "verify the page once it's
+      // up, and give it time to come up." Asking for it without --inspect is not an
+      // error to bounce back — it's the intent, so honour it.
+      if (!opts.inspect && (opts.waitFor || deployCommand.getOptionValueSource('wait') !== undefined)) {
+        opts.inspect = true;
       }
 
       const config = requireConfig();
@@ -80,7 +94,12 @@ export const deployCommand = new Command('deploy')
         const url = typeof opts.inspect === 'string' ? new URL(opts.inspect, d.url).toString() : d.url;
         if (!opts.json) console.log('');
         try {
-          await inspectPage(url, { json: opts.json });
+          await inspectPage(url, {
+            json: opts.json,
+            wait: opts.wait,
+            waitFor: opts.waitFor,
+            waitTimeout: opts.waitTimeout,
+          });
         } catch (err: any) {
           console.error(warning(`Inspect failed (deploy itself succeeded): ${err?.message ?? err}`));
         }

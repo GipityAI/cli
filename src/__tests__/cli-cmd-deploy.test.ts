@@ -67,6 +67,48 @@ test('gipity deploy database-cap failure points at db list --all / db drop', asy
   assert.match(r.stdout, /Deploy failed/);
 });
 
+// `deploy --inspect` verifies the page it just shipped — but an app whose first
+// paint waits on an async boot (a vision model, a WASM download) inspects as an
+// empty page unless you can settle first. An agent reached for exactly this
+// (`deploy dev --inspect --wait-for '[data-vision="ready"]'`), got a usage dump,
+// and fell back to two separate commands. The settle knobs now live here too,
+// and asking for one is itself the request to inspect.
+test('gipity deploy --inspect forwards --wait-for to the inspect probe', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, phases: [],
+  } } });
+  mock.on('POST /tools/browser/inspect', { body: { data: {
+    url: 'https://dev.gipity.ai/x/y/', title: 'Y', console: [], failedResources: [],
+    timing: { ttfb: 1, domReady: 2, load: 3 }, elementCount: 1, totalBytes: 1,
+    largeResources: [], renderBlocking: [], oversizedImages: [], lcp: null, overflow: null,
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync', '--inspect', '--wait-for', '[data-vision="ready"]', '--wait-timeout', '20000']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/inspect');
+  assert.ok(req, 'inspect never ran');
+  const body = req!.body as { waitForSelector?: string; waitForTimeoutMs?: number };
+  assert.equal(body.waitForSelector, '[data-vision="ready"]');
+  assert.equal(body.waitForTimeoutMs, 20000);
+});
+
+test('gipity deploy treats a settle flag as a request to inspect', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, phases: [],
+  } } });
+  mock.on('POST /tools/browser/inspect', { body: { data: {
+    url: 'https://dev.gipity.ai/x/y/', title: 'Y', console: [], failedResources: [],
+    timing: { ttfb: 1, domReady: 2, load: 3 }, elementCount: 1, totalBytes: 1,
+    largeResources: [], renderBlocking: [], oversizedImages: [], lcp: null, overflow: null,
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync', '--wait', '3000']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/inspect');
+  assert.ok(req, 'a --wait alone should still inspect');
+  assert.equal((req!.body as { waitMs?: number }).waitMs, 3000);
+});
+
 test('gipity deploy fails when target is invalid', async () => {
   mock.reset();
   const r = await fresh(['deploy', 'staging', '--no-sync']);

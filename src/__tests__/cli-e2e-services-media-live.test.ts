@@ -184,20 +184,20 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
 
   // ── page inspect/screenshot --fake-media ────────────────────────
 
-  it('page inspect --fake-media grants a synthetic mic+cam (getUserMedia resolves)', () => {
-    const r = cli(['page', 'inspect', appUrl, '--fake-media', '--wait', '2500', '--json'], { timeout: 60000 });
+  it('page inspect grants a synthetic mic+cam by default (getUserMedia resolves)', () => {
+    const r = cli(['page', 'inspect', appUrl, '--wait', '2500', '--json'], { timeout: 60000 });
     assert.equal(r.status, 0, `inspect failed: ${r.stderr || r.stdout}`);
     const bundle = JSON.parse(r.stdout);
     const consoleText = (bundle.console || []).join(' | ');
     assert.match(consoleText, /MEDIA_OK audio=[1-9]/, `expected MEDIA_OK, got: ${consoleText}`);
   });
 
-  it('page inspect WITHOUT --fake-media has no media access (getUserMedia rejects)', () => {
-    const r = cli(['page', 'inspect', appUrl, '--wait', '2500', '--json'], { timeout: 60000 });
+  it('page inspect --no-fake-media has no media access (getUserMedia rejects)', () => {
+    const r = cli(['page', 'inspect', appUrl, '--no-fake-media', '--wait', '2500', '--json'], { timeout: 60000 });
     assert.equal(r.status, 0, `inspect failed: ${r.stderr || r.stdout}`);
     const bundle = JSON.parse(r.stdout);
     const consoleText = (bundle.console || []).join(' | ');
-    assert.doesNotMatch(consoleText, /MEDIA_OK/, `fake media leaked into a normal call: ${consoleText}`);
+    assert.doesNotMatch(consoleText, /MEDIA_OK/, `a camera was granted despite --no-fake-media: ${consoleText}`);
     assert.match(consoleText, /MEDIA_FAIL/, `expected MEDIA_FAIL, got: ${consoleText}`);
   });
 
