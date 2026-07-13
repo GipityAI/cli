@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
  */
 export interface ClientContext {
   cli: string;
-  harness: 'claude-code' | 'codex' | 'cursor' | 'aider' | 'gemini' | 'ci' | 'manual';
+  harness: 'claude-code' | 'codex' | 'grok' | 'cursor' | 'aider' | 'gemini' | 'ci' | 'manual';
   harnessVersion?: string;
   harnessSession?: string;
   node?: string;
@@ -51,6 +51,7 @@ export function detectHarness(): Pick<ClientContext, 'harness' | 'harnessVersion
     return { harness: 'claude-code', harnessVersion: version, harnessSession: process.env.CLAUDE_CODE_SESSION_ID };
   }
   if (hasEnvPrefix('CODEX_')) return { harness: 'codex' };
+  if (hasEnvPrefix('GROK_')) return { harness: 'grok', harnessSession: process.env.GROK_SESSION_ID };
   if (process.env.CURSOR_TRACE_ID || hasEnvPrefix('CURSOR_') || (process.env.TERM_PROGRAM ?? '').toLowerCase().includes('cursor')) {
     return { harness: 'cursor' };
   }

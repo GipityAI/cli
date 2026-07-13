@@ -12,14 +12,14 @@ import { Command } from 'commander';
 import { existsSync, rmSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
 import { homedir, platform as osPlatform } from 'os';
 import { join, resolve } from 'path';
-import { spawnSyncCommand } from '../platform.js';
+import { spawnSyncCommand, resolveCommand } from '../platform.js';
 import { post } from '../api.js';
 import { getAuth } from '../auth.js';
 import { confirm, getAutoConfirm } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
 import * as relayState from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
-import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, stripGipityHooks } from '../setup.js';
+import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, stripGipityHooks, grokInstallState, agentSkillsState, AGENTS_SKILLS_DIR } from '../setup.js';
 
 /** Remove Gipity's entries from the user-scope Claude Code settings: the
  *  plugin enablement, the marketplace registration, and any legacy hook
@@ -193,7 +193,27 @@ export const uninstallCommand = new Command('uninstall')
       console.log(`${muted('No Gipity entries in Claude Code settings.')}`);
     }
 
-    // 5. Wipe ~/.gipity/.
+    // 4b. Uninstall the Gipity plugin from Grok Build and remove the skills
+    //     the CLI copied into the cross-agent ~/.agents/skills dir for Codex.
+    //     Both best-effort: neither existing is the common case.
+    if (grokInstallState().exists) {
+      spawnSyncCommand(resolveCommand('grok'), ['plugin', 'uninstall', 'gipity', '--confirm'], {
+        stdio: 'ignore',
+        timeout: 60_000,
+      });
+      console.log(`${success('Gipity plugin removed from Grok.')}`);
+    }
+    const agentSkills = agentSkillsState();
+    if (agentSkills.skills.length) {
+      for (const name of agentSkills.skills) {
+        // Only names our manifest recorded - never someone else's skills.
+        try { rmSync(join(AGENTS_SKILLS_DIR, name), { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+      console.log(`${success(`Removed ${agentSkills.skills.length} Gipity skills from ~/.agents/skills.`)}`);
+    }
+
+    // 5. Wipe ~/.gipity/ (this also removes the agent-hooks scripts and the
+    //    agent-skills manifest, which live under it).
     if (existsSync(gipityDir)) {
       try {
         rmSync(gipityDir, { recursive: true, force: true });

@@ -9,7 +9,7 @@ import { get, post, ApiError, getAccountSlug } from '../api.js';
 import { interactiveLogin } from '../login-flow.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync, type SyncResult } from '../sync.js';
-import { slugify, setupClaudeHooks, ensureGipityPluginInstalled, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
+import { slugify, ensureGipityPluginInstalled, setupProjectTools, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
   buildProjectContextBlock as buildProjectContextBlockText,
   buildNewProjectPrompt,
@@ -535,10 +535,7 @@ export const claudeCommand = new Command('claude')
           console.log(`  ${warning('Could not sync files (will retry on next prompt):')} ${(err as Error).message}`);
         }
 
-        setupClaudeHooks();
-        setupClaudeMd();
-        setupAgentsMd();
-        setupGitignore();
+        setupProjectTools();
 
         if (nonInteractive) {
           // Headless: the -p message is wrapped later (Step 3). Just record
@@ -557,10 +554,7 @@ export const claudeCommand = new Command('claude')
         // cwd already has (or inherits) a .gipity.json - run inside it.
         console.log(`  Project: ${brand(existing.projectSlug)} ${muted(`(${existing.projectGuid})`)}`);
         console.log(`  ${success('Already set up.')}\n`);
-        setupClaudeHooks();
-        setupClaudeMd();
-        setupAgentsMd();
-        setupGitignore();
+        setupProjectTools();
 
         // Warn before syncing a very large project tree. An oversized root
         // (or a config accidentally rooted high up, e.g. at $HOME) makes the
@@ -720,10 +714,7 @@ export const claudeCommand = new Command('claude')
         // Claude directly what they want to build or do.
         initialPrompt = '';
 
-        setupClaudeHooks();
-        setupClaudeMd();
-        setupAgentsMd();
-        setupGitignore();
+        setupProjectTools();
 
         console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
       }

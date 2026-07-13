@@ -7,7 +7,7 @@
 import { clearConfigCache, saveConfigAt, getApiBaseOverride, DEFAULT_API_BASE, GipityConfig } from './config.js';
 import { sync } from './sync.js';
 import { createProgressReporter } from './progress.js';
-import { setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
+import { setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from './setup.js';
 import { substituteDir } from './template-vars.js';
 import { muted } from './colors.js';
 
@@ -90,13 +90,7 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
     // soft mode - swallow; caller can log
   }
 
-  const tools = opts.tools ?? DEFAULT_TOOLS;
-  // Claude hooks (file-sync + capture) only matter if the Claude primer is
-  // being written. Skipping them for Codex/Gemini/Cursor-only inits avoids
-  // littering `.claude/settings.json` into projects that don't use Claude.
-  if (tools.some(t => t.key === 'claude')) setupClaudeHooks();
-  for (const t of tools) t.setup();
-  setupGitignore();
+  setupProjectTools(opts.tools ?? DEFAULT_TOOLS);
 
   return { applied };
 }

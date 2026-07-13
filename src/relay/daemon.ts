@@ -29,7 +29,7 @@ import { homedir, hostname, platform as osPlatform, loadavg, freemem, totalmem, 
 import { join } from 'path';
 import { getApiBaseOverride, DEFAULT_API_BASE } from '../config.js';
 import { getProjectsRoot } from './paths.js';
-import { setupClaudeHooks, setupClaudeMd, setupAgentsMd, setupGitignore, DEFAULT_SYNC_IGNORE } from '../setup.js';
+import { setupProjectTools, DEFAULT_SYNC_IGNORE } from '../setup.js';
 import { getAuth, readAuthFresh, refreshTokenIfNeeded, accessTokenExpired } from '../auth.js';
 import { post } from '../api.js';
 import * as state from './state.js';
@@ -1479,10 +1479,7 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<{ cwd: string; 
   const origCwd = process.cwd();
   try {
     process.chdir(path);
-    setupClaudeHooks();
-    setupClaudeMd();
-    setupAgentsMd();
-    setupGitignore();
+    setupProjectTools();
   } finally {
     process.chdir(origCwd);
   }

@@ -2,8 +2,8 @@
  * Shared project setup helpers used by both `init` and `claude`.
  */
 import { resolve, join, dirname } from 'path';
-import { homedir } from 'os';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { homedir, tmpdir } from 'os';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, mkdtempSync, rmSync, cpSync, readdirSync } from 'fs';
 import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 
@@ -32,6 +32,7 @@ export { SKILLS_CONTENT };
 export const PRIMER_FILES = {
   claude: 'CLAUDE.md',
   codex: 'AGENTS.md',
+  grok: 'AGENTS.md', // Grok Build reads the AGENTS.md family (and CLAUDE.md) natively
   aider: 'AGENTS.md', // shares the Codex primer; aider is pointed at it via .aider.conf.yml
   gemini: 'GEMINI.md',
   copilot: '.github/copilot-instructions.md',
@@ -61,7 +62,7 @@ export const AIDER_CONF_FILE = '.aider.conf.yml';
 export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', '.gipityscratch/'];
 
 export const DEFAULT_SYNC_IGNORE = [
-  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.gitignore', AIDER_CONF_FILE,
+  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.codex/', '.gitignore', AIDER_CONF_FILE,
   // Home-directory junk: a project created inside a real home dir (or one that
   // shells out) sweeps in a cache dir + shell dotfiles that are never app
   // files. `.cache/` alone can be gigabytes (it was 2.4 GB on one project),
@@ -156,7 +157,7 @@ export const LEGACY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
 // an installed plugin when the marketplace advances - only an explicit
 // `plugin install`/`update` does - so this constant is how a CLI upgrade tells
 // ensureGipityPluginInstalled() to refresh a stale user-scope install.
-export const GIPITY_PLUGIN_VERSION = '0.5.0';
+export const GIPITY_PLUGIN_VERSION = '0.6.0';
 
 /** True for hook commands the CLI itself wrote into settings.json in past
  *  versions. Matched by signature so migration strips exactly our own
@@ -292,8 +293,8 @@ export function userScopePluginCurrent(): boolean {
   return userScopeInstallState().current;
 }
 
-function claudeOnPath(): boolean {
-  const probe = spawnSyncCommand(process.platform === 'win32' ? 'where' : 'which', ['claude'], {
+function binaryOnPath(bin: string): boolean {
+  const probe = spawnSyncCommand(process.platform === 'win32' ? 'where' : 'which', [bin], {
     encoding: 'utf-8',
   });
   return probe.status === 0 && !!probe.stdout?.toString().trim();
@@ -316,7 +317,7 @@ function claudeOnPath(): boolean {
 export function ensureGipityPluginInstalled(): void {
   const state = userScopeInstallState();
   if (state.current) return;
-  if (!claudeOnPath()) return;
+  if (!binaryOnPath('claude')) return;
   // Refresh the marketplace clone so install/update resolves the current version.
   // resolveCommand: on Windows `claude` is a .cmd shim that spawn can't launch
   // without an explicit path, so resolve it (otherwise the command silently
@@ -340,6 +341,201 @@ export function ensureGipityPluginInstalled(): void {
     stdio: 'ignore',
     timeout: 120_000,
   });
+}
+
+// --- Grok Build (xAI) ------------------------------------------------------
+// Grok Build reads Claude-format plugins natively - skills/, commands/,
+// hooks/hooks.json, and the .claude-plugin/plugin.json manifest - and sets
+// CLAUDE_PLUGIN_ROOT/CLAUDE_PLUGIN_DATA aliases for plugin hooks, so the one
+// GipityAI/skills repo serves both agents. A user-scope install
+// (`grok plugin install <repo> --trust`) is trusted and enabled automatically,
+// which gives Grok sessions the same skills and file-sync hooks as Claude Code.
+
+/** Parsed install state for the Gipity plugin in Grok Build, read straight
+ *  from ~/.grok/installed-plugins/registry.json (no subprocess). Mirrors
+ *  {@link userScopeInstallState} for Claude Code. */
+export function grokInstallState(): { exists: boolean; current: boolean } {
+  try {
+    const p = join(homedir(), '.grok', 'installed-plugins', 'registry.json');
+    const data = JSON.parse(readFileSync(p, 'utf-8'));
+    const versions: string[] = [];
+    for (const repo of Object.values<any>(data?.repos ?? {})) {
+      const v = repo?.plugins?.gipity?.version;
+      if (typeof v === 'string') versions.push(v);
+    }
+    return {
+      exists: versions.length > 0,
+      current: versions.some((v) => versionGte(v, GIPITY_PLUGIN_VERSION)),
+    };
+  } catch {
+    return { exists: false, current: false };
+  }
+}
+
+/** Install (or upgrade) the Gipity plugin in Grok Build. Best-effort and
+ *  non-fatal, like the Claude Code counterpart: skips instantly when Grok
+ *  isn't installed or the plugin is already current, so the steady-state cost
+ *  is one registry.json read. */
+export function ensureGrokPluginInstalled(): void {
+  const state = grokInstallState();
+  if (state.current) return;
+  if (!binaryOnPath('grok')) return;
+  const grokCmd = resolveCommand('grok');
+  // `install` clones the repo; on an existing install `update <name>` is the
+  // verb that refetches the source and advances the recorded version.
+  const verb = state.exists
+    ? ['plugin', 'update', 'gipity']
+    : ['plugin', 'install', GIPITY_MARKETPLACE_REPO, '--trust'];
+  const res = spawnSyncCommand(grokCmd, verb, { stdio: 'ignore', timeout: 120_000 });
+  if (!state.exists && res.status === 0) {
+    console.log('Installed the Gipity plugin for Grok (skills + file-sync hooks).');
+  }
+}
+
+// --- OpenAI Codex ------------------------------------------------------------
+// Codex has no Claude-plugin compatibility, but it reads the same SKILL.md
+// skill format from the cross-agent `~/.agents/skills` directory (also read by
+// OpenClaw and other agentskills.io adopters), and supports project hooks in
+// `.codex/hooks.json` with Claude-style matcher groups (`Edit|Write` aliases
+// its apply_patch tool). So Codex setup = copy the plugin's skills into
+// ~/.agents/skills, stage its hook scripts under ~/.gipity/agent-hooks, and
+// write a project .codex/hooks.json pointing at them. Codex requires the user
+// to approve non-managed hooks once via /hooks - there is no supported way to
+// pre-trust, so we print a nudge on first write.
+
+export const AGENTS_SKILLS_DIR = join(homedir(), '.agents', 'skills');
+export const AGENT_HOOKS_DIR = join(homedir(), '.gipity', 'agent-hooks');
+/** Records what ensureAgentSkillsInstalled() put on this machine: the plugin
+ *  version and the exact skill names copied, so upgrades replace and uninstall
+ *  removes precisely those. */
+export const AGENT_SKILLS_MANIFEST = join(homedir(), '.gipity', 'agent-skills.json');
+
+export function agentSkillsState(): { current: boolean; skills: string[] } {
+  try {
+    const m = JSON.parse(readFileSync(AGENT_SKILLS_MANIFEST, 'utf-8'));
+    return {
+      current: typeof m?.version === 'string' && versionGte(m.version, GIPITY_PLUGIN_VERSION),
+      skills: Array.isArray(m?.skills) ? m.skills : [],
+    };
+  } catch {
+    return { current: false, skills: [] };
+  }
+}
+
+/** Materialize the Gipity skills into ~/.agents/skills (the cross-agent skills
+ *  dir Codex reads) and the plugin's hook scripts into ~/.gipity/agent-hooks.
+ *  Source of truth is the same GipityAI/skills repo the Claude/Grok plugin
+ *  installs clone - fetched with a shallow git clone into a temp dir.
+ *  Best-effort: no git, no network, or a failed clone all leave things as they
+ *  were; the next init retries. */
+export function ensureAgentSkillsInstalled(): void {
+  if (agentSkillsState().current) return;
+  if (!binaryOnPath('git')) return;
+  const tmp = mkdtempSync(join(tmpdir(), 'gipity-skills-'));
+  try {
+    const clone = spawnSyncCommand(
+      resolveCommand('git'),
+      ['clone', '--depth', '1', `https://github.com/${GIPITY_MARKETPLACE_REPO}.git`, join(tmp, 'repo')],
+      { stdio: 'ignore', timeout: 120_000 },
+    );
+    if (clone.status !== 0) return;
+    const repo = join(tmp, 'repo');
+
+    let version = GIPITY_PLUGIN_VERSION;
+    try {
+      const manifest = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'plugin.json'), 'utf-8'));
+      if (typeof manifest?.version === 'string') version = manifest.version;
+    } catch { /* keep the CLI's pinned version */ }
+
+    const skillsSrc = join(repo, 'skills');
+    const names: string[] = [];
+    for (const entry of readdirSync(skillsSrc, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!existsSync(join(skillsSrc, entry.name, 'SKILL.md'))) continue;
+      mkdirSync(AGENTS_SKILLS_DIR, { recursive: true });
+      cpSync(join(skillsSrc, entry.name), join(AGENTS_SKILLS_DIR, entry.name), {
+        recursive: true,
+        force: true,
+      });
+      names.push(entry.name);
+    }
+
+    mkdirSync(AGENT_HOOKS_DIR, { recursive: true });
+    for (const script of readdirSync(join(repo, 'hooks', 'scripts'))) {
+      cpSync(join(repo, 'hooks', 'scripts', script), join(AGENT_HOOKS_DIR, script), { force: true });
+    }
+
+    writeFileSync(AGENT_SKILLS_MANIFEST, JSON.stringify({ version, skills: names }, null, 2) + '\n');
+    console.log(`Installed ${names.length} Gipity skills for Codex (~/.agents/skills).`);
+  } catch { /* best-effort - never break setup */ } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Pure core of the .codex/hooks.json merge: given the file's current content
+ *  (`null` when absent), return the new content, or `null` when no change is
+ *  needed. Adds the Gipity sync hook groups (push on file edits, pull before
+ *  each prompt) while preserving any user-authored hooks; our groups are
+ *  recognized by their agent-hooks script paths. Exported for unit testing. */
+export function applyCodexHooks(existing: string | null): string | null {
+  const launcher = join(AGENT_HOOKS_DIR, 'launch.sh');
+  const cmd = (script: string): string =>
+    `sh "${launcher}" "${join(AGENT_HOOKS_DIR, script)}"`;
+  const wanted: Array<{ event: string; matcher?: string; command: string; timeout: number }> = [
+    { event: 'PostToolUse', matcher: 'Edit|Write', command: cmd('sync-push.cjs'), timeout: 30 },
+    { event: 'UserPromptSubmit', command: cmd('sync-pull.cjs'), timeout: 300 },
+  ];
+
+  let settings: Record<string, any> = {};
+  if (existing !== null) {
+    try {
+      settings = JSON.parse(existing);
+    } catch {
+      return null; // user file we can't parse - leave it alone
+    }
+  }
+  const hooks = settings.hooks ?? (settings.hooks = {});
+  let changed = false;
+  for (const w of wanted) {
+    const groups: any[] = Array.isArray(hooks[w.event]) ? hooks[w.event] : (hooks[w.event] = []);
+    const present = groups.some((g: any) =>
+      Array.isArray(g?.hooks) && g.hooks.some(
+        (h: any) => typeof h?.command === 'string' && h.command.includes('agent-hooks'),
+      ),
+    );
+    if (present) continue;
+    const group: Record<string, any> = { hooks: [{ type: 'command', command: w.command, timeout: w.timeout }] };
+    if (w.matcher) group.matcher = w.matcher;
+    groups.push(group);
+    changed = true;
+  }
+  return changed ? JSON.stringify(settings, null, 2) + '\n' : null;
+}
+
+/** Write the project-level Codex hooks (.codex/hooks.json). POSIX only - the
+ *  commands run through the same sh launcher the plugin uses; Codex on Windows
+ *  would need commandWindows variants (not wired yet). */
+export function setupCodexHooks(): void {
+  if (process.platform === 'win32') return;
+  const cwd = resolve(process.cwd());
+  if (cwd === resolve(homedir())) return; // never treat $HOME as a project
+  const path = join(cwd, '.codex', 'hooks.json');
+  const existing = existsSync(path) ? readFileSync(path, 'utf-8') : null;
+  const next = applyCodexHooks(existing);
+  if (next === null) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, next);
+  if (existing === null) {
+    console.log('Wrote Codex sync hooks (.codex/hooks.json) - approve them once with /hooks inside Codex.');
+  }
+}
+
+/** Full Codex integration: user-scope skills + project sync hooks. Gated on
+ *  the codex binary so machines without Codex get only the AGENTS.md primer. */
+export function setupCodexIntegration(): void {
+  if (!binaryOnPath('codex')) return;
+  ensureAgentSkillsInstalled();
+  setupCodexHooks();
 }
 
 export function setupClaudeHooks(): void {
@@ -535,15 +731,22 @@ export function setupCursorMd(): void {
   );
 }
 
-/** All supported coding-tool primers and the function that writes each.
- *  Order matters for help-text rendering and the `all` expansion.
+/** All supported coding tools: the primer each gets (`setup`) plus, for tools
+ *  with a deeper Gipity integration, an `integrate` step that installs the
+ *  Gipity skills and file-sync hooks into that tool's own ecosystem (Claude
+ *  Code plugin, Grok Build plugin, Codex ~/.agents/skills + .codex hooks).
+ *  Integrations are best-effort and self-gating - each no-ops fast when its
+ *  binary is missing or the install is already current - so running the whole
+ *  default set on every init/launch is cheap and keeps all detected agents in
+ *  lockstep. Order matters for help-text rendering and the `all` expansion.
  *  `optIn` tools are excluded from the default / `all` set and must be named
  *  explicitly (`--for aider`): aider's setup writes `.aider.conf.yml`, which
  *  changes how aider behaves in this directory - a heavier footprint than
  *  dropping an inert markdown primer. */
-export const SUPPORTED_TOOLS: Array<{ key: string; label: string; setup: () => void; optIn?: boolean }> = [
-  { key: 'claude',  label: 'Claude Code (CLAUDE.md)',                              setup: setupClaudeMd },
-  { key: 'codex',   label: 'OpenAI Codex (AGENTS.md)',                             setup: setupAgentsMd },
+export const SUPPORTED_TOOLS: Array<{ key: string; label: string; setup: () => void; integrate?: () => void; optIn?: boolean }> = [
+  { key: 'claude',  label: 'Claude Code (CLAUDE.md + Gipity plugin)',              setup: setupClaudeMd,  integrate: setupClaudeHooks },
+  { key: 'codex',   label: 'OpenAI Codex (AGENTS.md + skills + sync hooks)',       setup: setupAgentsMd,  integrate: setupCodexIntegration },
+  { key: 'grok',    label: 'Grok Build (AGENTS.md + Gipity plugin)',               setup: setupAgentsMd,  integrate: ensureGrokPluginInstalled },
   { key: 'aider',   label: 'Aider (AGENTS.md + .aider.conf.yml)',                  setup: setupAiderMd, optIn: true },
   { key: 'gemini',  label: 'Gemini CLI (GEMINI.md)',                               setup: setupGeminiMd },
   { key: 'copilot', label: 'GitHub Copilot (.github/copilot-instructions.md)',     setup: setupCopilotMd },
@@ -553,6 +756,20 @@ export const SUPPORTED_TOOLS: Array<{ key: string; label: string; setup: () => v
 /** The primer set written when the user makes no explicit `--for` choice:
  *  every tool except opt-in ones. */
 export const DEFAULT_TOOLS = SUPPORTED_TOOLS.filter(t => !t.optIn);
+
+/** Registry-driven project setup - the single entry point every "link this
+ *  directory" path shares (`init`, `project create`, `gipity claude`, the
+ *  relay daemon). Writes each requested tool's primer, runs its integration
+ *  (hooks/skills install) when it has one, and refreshes .gitignore. Replaces
+ *  the setupClaudeHooks/setupClaudeMd/setupAgentsMd/setupGitignore quartet
+ *  that used to be copy-pasted per call site and silently skipped newer tools. */
+export function setupProjectTools(tools: typeof SUPPORTED_TOOLS = DEFAULT_TOOLS): void {
+  for (const t of tools) {
+    t.setup();
+    t.integrate?.();
+  }
+  setupGitignore();
+}
 
 export function setupGitignore(): void {
   const gitignorePath = resolve(process.cwd(), '.gitignore');

@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { getAccountSlug } from '../api.js';
 import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
 import { getAuth } from '../auth.js';
-import { slugify, setupClaudeHooks, setupGitignore, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from '../setup.js';
+import { slugify, setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from '../setup.js';
 import { success, error as clrError, info, muted, bold } from '../colors.js';
 import { confirm } from '../utils.js';
 import {
@@ -34,7 +34,7 @@ function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
 
 export const initCommand = new Command('init')
   .description('Link this directory to a project')
-  .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity.')
+  .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on this machine (Claude Code, Codex, Grok).')
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
   .option('--no-capture', 'Don\'t record Claude Code sessions in this directory to your Gipity project (sets captureHooks: false in .gipity.json)')
@@ -46,7 +46,8 @@ export const initCommand = new Command('init')
 Examples:
   $ gipity init                          Link cwd as a new project (slug = dir name).
   $ gipity init my-app                   Link cwd with an explicit slug.
-  $ gipity init --for codex              Write only AGENTS.md (skip Claude/Cursor/etc).
+  $ gipity init --for codex              AGENTS.md + Codex skills/sync hooks only.
+  $ gipity init --for grok               AGENTS.md + the Gipity plugin in Grok only.
   $ gipity init --for cursor,gemini      Write only the Cursor + Gemini primers.
   $ gipity init --for aider              AGENTS.md + a read: entry in .aider.conf.yml
                                          (aider auto-reads nothing, so it's opt-in).
@@ -70,9 +71,6 @@ Working with an existing Gipity project:
       process.exit(1);
     }
     const wantsClaude = tools.some(t => t.key === 'claude');
-    const writeAllPrimers = (): void => {
-      for (const t of tools) t.setup();
-    };
     const primerSummary = tools.map(t => t.label).join(', ');
 
     try {
@@ -92,11 +90,9 @@ Working with an existing Gipity project:
       if (existsSync(resolve(cwd, '.gipity.json'))) {
         const existing = getConfig();
         console.log(`Already linked to ${info(`"${existing?.projectSlug ?? ''}"`)} ${muted(`(${existing?.projectGuid ?? ''})`)}`);
-        // Re-run setup in case hooks/skills are missing. Claude Code hooks
-        // only matter when the Claude primer is being written.
-        if (wantsClaude) setupClaudeHooks();
-        writeAllPrimers();
-        setupGitignore();
+        // Re-run setup in case primers/hooks/skills are missing - each tool's
+        // integration self-gates on its binary and current-version state.
+        setupProjectTools(tools);
         // The config's ignore list was frozen at link time, so a workstation
         // artifact introduced by a newer CLI (e.g. aider's .aider.conf.yml)
         // would sync up as project content. Union in the current defaults.
