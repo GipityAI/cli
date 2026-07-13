@@ -14,18 +14,25 @@ import { tmpdir } from 'os';
 let home: string;
 let projectDir: string;
 let origHome: string | undefined;
+let origGipityDir: string | undefined;
 let origCwd: string;
 let origFetch: typeof globalThis.fetch;
 let origTTY: boolean | undefined;
 
 before(() => {
   origHome = process.env.HOME;
+  origGipityDir = process.env.GIPITY_DIR;
   origCwd = process.cwd();
   origFetch = globalThis.fetch;
   origTTY = process.stdout.isTTY;
 
   home = mkdtempSync(join(tmpdir(), 'gipity-apply-home-'));
   process.env.HOME = home;
+  // GIPITY_DIR points auth.ts at a real agent context (auth.json) outside the
+  // faked HOME - a near-expiry real token would fire refresh POSTs into the
+  // fetch stub and fail the "no HTTP writes" assertions. Tests must read only
+  // the fake auth written below.
+  delete process.env.GIPITY_DIR;
   mkdirSync(join(home, '.gipity'), { recursive: true });
   writeFileSync(join(home, '.gipity', 'auth.json'), JSON.stringify({
     accessToken: 'fake-jwt',
@@ -56,6 +63,7 @@ after(() => {
   globalThis.fetch = origFetch;
   if (origHome === undefined) delete process.env.HOME;
   else process.env.HOME = origHome;
+  if (origGipityDir !== undefined) process.env.GIPITY_DIR = origGipityDir;
   if (origTTY !== undefined) {
     Object.defineProperty(process.stdout, 'isTTY', { value: origTTY, configurable: true });
   }

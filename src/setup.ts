@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, mkdtempSync, rmSync, cpSync, readdirSync } from 'fs';
 import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
+import { DEFAULT_API_BASE, resolveApiBase } from './config.js';
 
 export { SKILLS_CONTENT };
 
@@ -587,9 +588,25 @@ export const GIPITY_BLOCK_END = '<!-- END GIPITY INTEGRATION -->';
  *  them into a generated doc is the wrong layer. The CLI surfaces them where the
  *  agent actually looks: `gipity deploy` prints the live URL, `gipity status` and
  *  `gipity project info` show the URL + GUID. That keeps them authoritative and
- *  avoids stale values frozen into a file. */
-function renderManagedBlock(): string {
-  const body = [SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE].join('\n\n');
+ *  avoids stale values frozen into a file.
+ *
+ *  The one environment value that DOES live here is the API base. The baked
+ *  knowledge text names `https://a.gipity.ai` as the app-services endpoint;
+ *  when this session runs against a different platform instance (GIPITY_API_BASE
+ *  / --api-base, e.g. a local dev server), the project only exists there - an
+ *  agent that copies the public host into app code gets 404s it can't explain.
+ *  So the block is rendered against the resolved base, with a note naming the
+ *  instance. The block is fully regenerated each session, so it tracks the
+ *  environment rather than going stale. */
+function renderManagedBlock(apiBase: string): string {
+  let body = [SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE].join('\n\n');
+  const base = apiBase.replace(/\/+$/, '');
+  if (base !== DEFAULT_API_BASE) {
+    body = body.replaceAll(DEFAULT_API_BASE, base);
+    const note = `> **Platform instance:** this project runs against the Gipity platform at \`${base}\`, not the public \`${DEFAULT_API_BASE}\`. The project and its data exist only on that instance; every API/service URL in this document already points there - never substitute \`a.gipity.ai\`.`;
+    const headingEnd = body.indexOf('\n');
+    body = body.slice(0, headingEnd + 1) + '\n' + note + '\n' + body.slice(headingEnd + 1);
+  }
   return `${GIPITY_BLOCK_BEGIN}\n${body}\n${GIPITY_BLOCK_END}`;
 }
 
@@ -610,8 +627,8 @@ function renderManagedBlock(): string {
  *
  * Exported for unit testing.
  */
-export function applySkillsBlock(existing: string | null): string {
-  const block = renderManagedBlock();
+export function applySkillsBlock(existing: string | null, apiBase: string = DEFAULT_API_BASE): string {
+  const block = renderManagedBlock(apiBase);
   if (existing === null) return block + '\n';
 
   let next: string;
@@ -639,7 +656,7 @@ function writeSkillsFile(relPath: string, wrap?: (block: string) => string): voi
   const path = resolve(process.cwd(), relPath);
   mkdirSync(dirname(path), { recursive: true });
   const existing = existsSync(path) ? readFileSync(path, 'utf-8') : null;
-  const baseNext = applySkillsBlock(existing);
+  const baseNext = applySkillsBlock(existing, resolveApiBase());
   // Frontmatter wrap only applies on first write (no existing content).
   // Re-runs preserve user content outside the managed block, including
   // any frontmatter they may have added themselves.
