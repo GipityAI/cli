@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -137,6 +137,18 @@ describe('isAllowedApiHost (token-redirect guard)', () => {
 });
 
 describe('resolveApiBase (untrusted .gipity.json apiBase is ignored)', () => {
+  // GIPITY_API_BASE is a trusted env override that outranks the config file -
+  // an ambient value (e.g. a dev shell pointed at a local server) would mask
+  // the config-fallback behavior under test, so clear it for these tests.
+  let origEnvBase: string | undefined;
+  before(() => {
+    origEnvBase = process.env.GIPITY_API_BASE;
+    delete process.env.GIPITY_API_BASE;
+  });
+  after(() => {
+    if (origEnvBase !== undefined) process.env.GIPITY_API_BASE = origEnvBase;
+  });
+
   it('falls back to the default when a poisoned config points off-allowlist', () => {
     const cwd0 = process.cwd();
     const dir = mkdtempSync(join(tmpdir(), 'gip-apibase-'));

@@ -224,14 +224,13 @@ function appendOption(value: string, previous: string[] = []): string[] {
 }
 
 // Pre-capture scripting lives on --action, but agents reach for the JS-intent
-// names first and an "unknown option" alone doesn't name the right flag. Capture
-// the common guesses as hidden decoys (taking a value, so they swallow the
-// script) and redirect precisely — same pattern as `page eval`'s JS_DECOY_FLAGS.
-// `--eval` is NOT a decoy: it's the sibling subcommand's name for this exact
-// capability, an agent fresh off `page eval <url> "<js>"` reaches for it every
-// time, and there is no ambiguity about what they meant — so it just works
-// (hidden alias for --action, registered below).
-const ACTION_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--exec'];
+// names first — --eval above all, the name they already know from `page eval`.
+// The intent is unambiguous (run this JS in the page before the shot), so these
+// are working hidden aliases, not errors — same accept-the-reflex-guess pattern
+// as --full-page and --width/--height. (Supersedes the earlier decoy approach,
+// which swallowed the script and errored with a redirect: when the guess is
+// unambiguous, making it WORK beats making it a better error.)
+const ACTION_ALIAS_FLAGS = ['--eval', '--js', '--javascript', '--script', '--code', '--exec'];
 
 /** A capture is worthless if it fires before the app reaches the state you meant
  *  to photograph, and the only lever used to be a blind millisecond delay — so a
@@ -275,6 +274,12 @@ export const CAMERA_DEFAULT_DELAY_MS = 15_000;
 export const pageScreenshotCommand = new Command('screenshot')
   .description('Screenshot a web page')
   .argument('<url>', 'URL to screenshot')
+  // --device / --viewport lead the options: "how does this look on a phone?" is
+  // the single most common reason to screenshot, and agents routinely read the
+  // help through `--help | head -N` — buried below the timing flags, these two
+  // fell off the bottom and the run proceeded at desktop width.
+  .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
+  .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag), e.g. --viewport 390x844 for a phone-sized window', appendOption, [] as string[])
   // No commander default: a default here would make the value always set, so the
   // merge below could not tell "caller chose a delay" from "nobody did" — which
   // is what --camera's model-load default and the --wait-for gate both hinge on.
@@ -284,8 +289,6 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--action <js>','Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./…\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
-  .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
-  .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag)', appendOption, [] as string[])
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern — to capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
   .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture — so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
@@ -293,24 +296,30 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--post-load-delay <ms>', 'Alias for --wait').hideHelp())
-  // `page eval` spells run-JS-on-the-page as its own name, so an agent that just
-  // used it guesses `--eval` here. Same capability, unambiguous intent — accept
-  // it as a hidden alias instead of burning a turn on a redirect error.
-  .addOption(new Option('--eval <js>', 'Alias for --action').hideHelp())
+  // (--eval and the other JS-intent guesses are registered in one place from
+  // ACTION_ALIAS_FLAGS below — a second standalone registration here makes
+  // commander throw "conflicting flag" at startup.)
   // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
   // so agents reach for it by reflex. Accept it as a hidden alias for `--full`
   // rather than reject it as an unknown option and send them on a --help detour.
   .addOption(new Option('--full-page', 'Alias for --full').hideHelp())
+  // `--width 390 --height 844` is the setViewport vocabulary agents guess first
+  // when asked for a phone-sized shot. Accept the pair as a working alias for
+  // --viewport WxH instead of bouncing the guess into a --help detour.
+  .addOption(new Option('--width <px>', 'Alias: --viewport WxH').hideHelp())
+  .addOption(new Option('--height <px>', 'Alias: --viewport WxH').hideHelp())
   .action((url: string, opts) => run('Page screenshot', async () => {
-    // A JS-intent flag guess (captured as a hidden decoy below): name the real
-    // flag before any other arg-shape check fires.
-    const decoy = ACTION_DECOY_FLAGS.find((f) => opts[f.slice(2)] !== undefined);
-    if (decoy) {
-      pageScreenshotCommand.error(
-        `error: ${decoy} is not a flag on screenshot — use --action "<js>" to run JavaScript in the page ` +
-        `before the capture, e.g. gipity page screenshot "<url>" --action "document.getElementById('play').click()"`,
-      );
+    // A JS-intent alias guess (--eval et al., hidden): fold it into the action
+    // script so the reflex guess just works, and name the canonical flag once
+    // so the next call uses it.
+    const aliasFlag = ACTION_ALIAS_FLAGS.find((f) => opts[f.slice(2)] !== undefined);
+    if (aliasFlag) {
+      console.error(muted(
+        `Note: treating ${aliasFlag} as --action — it runs your JS in the page before the capture. --action is the canonical flag.`,
+      ));
     }
+    const actionScript = [opts.action, ...ACTION_ALIAS_FLAGS.map((f) => opts[f.slice(2)])]
+      .filter(Boolean).join('\n');
     // --wait is the canonical name (it is what `page inspect`/`page eval` call it);
     // --post-load-delay stays as a hidden alias. Whether the caller named EITHER is
     // what decides the defaults below, so keep the raw "was it set" signal.
@@ -358,6 +367,26 @@ export const pageScreenshotCommand = new Command('screenshot')
 
     const deviceNames = splitCsv(opts.device as string[]);
     const viewportStrs = splitCsv(opts.viewport as string[]);
+    // --width/--height: fold the alias pair into a --viewport entry. Half a
+    // pair is a mis-invocation worth one precise line, not a range error.
+    if (opts.width !== undefined || opts.height !== undefined) {
+      if (opts.width === undefined || opts.height === undefined) {
+        pageScreenshotCommand.error(
+          'error: --width and --height go together (both in px, equivalent to --viewport WxH) — ' +
+          'or use a preset like --device mobile for a real handset (touch events, mobile user-agent, DPR)',
+        );
+      }
+      if (!/^\d+$/.test(String(opts.width)) || !/^\d+$/.test(String(opts.height))) {
+        pageScreenshotCommand.error('error: --width and --height must be integers (px)');
+      }
+      viewportStrs.push(`${opts.width}x${opts.height}`);
+      // A raw phone-sized window is NOT a phone: touch-gated mobile UI still
+      // renders its desktop variant. Say so once, on the path where the caller
+      // was clearly after a phone.
+      if (parseInt(String(opts.width), 10) <= 500) {
+        console.error(muted('Tip: --device mobile emulates a real handset (touch events, mobile user-agent, DPR) — a raw viewport only resizes the window.'));
+      }
+    }
     const customViewports: Viewport[] = [
       ...deviceNames.map(resolveDevice),
       ...viewportStrs.map(parseViewportString),
@@ -395,18 +424,14 @@ export const pageScreenshotCommand = new Command('screenshot')
       camera = await uploadCameraFeed(projectGuid, opts.camera);
     }
 
-    if (opts.action !== undefined && opts.eval !== undefined) {
-      throw new Error('Pass either --action or --eval (its alias), not both');
-    }
-    const actionJs: string | undefined = opts.action ?? opts.eval;
-
     // The pre-capture script the server runs after the post-load delay: the
     // --wait-for gate first (so the shot waits for the state, deterministically),
-    // then the caller's --action. Both are the same in-page primitive, so they
+    // then the caller's --action (with any alias-flag scripts folded in by
+    // actionScript above). All the same in-page primitive, so they
     // compose into one script rather than needing a second server round-trip.
     const preCapture = [
       opts.waitFor ? buildWaitForGate(opts.waitFor, waitForTimeoutMs) : '',
-      actionJs ?? '',
+      actionScript,
     ].filter(Boolean).join('\n');
 
     const body = {
@@ -554,9 +579,9 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
   }));
 
-// Register the JS-intent guesses as hidden decoys (value-taking, so they swallow
-// the script) — the action turns any of them into the "--action" redirect above.
-for (const f of ACTION_DECOY_FLAGS) pageScreenshotCommand.addOption(new Option(`${f} <value>`).hideHelp());
+// Register the JS-intent guesses as hidden aliases for --action (value-taking,
+// so they capture the script) — the action folds them into the pre-capture body.
+for (const f of ACTION_ALIAS_FLAGS) pageScreenshotCommand.addOption(new Option(`${f} <js>`, 'Alias for --action').hideHelp());
 
 // `screenshot` captures the page AFTER load + settle (+ optional --wait-for gate
 // and --action). There is no scroll-to-a-position lever (agents reach for

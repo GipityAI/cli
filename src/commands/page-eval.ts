@@ -27,9 +27,11 @@ export interface EvalResult {
 
 // Shown when an eval runs cleanly but returns nothing serializable. Turns a
 // bare/opaque `null` into a deterministic, actionable nudge so the agent shapes
-// a returnable value instead of guessing and retrying.
+// a returnable value instead of guessing and retrying. (A body ending in a bare
+// expression is auto-returned SERVER-side before this can fire — so this is the
+// residue: block/loop endings, explicit undefined returns, DOM nodes, functions.)
 export const EVAL_NO_VALUE_HINT =
-  'The eval ran but returned no JSON-serializable value. A statement body with no `return`, an assignment, a void call, or a DOM node/function all serialize to null. ' +
+  'The eval ran but returned no JSON-serializable value. A body ending in a loop/if-block, a `return` of undefined, or a DOM node/function all serialize to null. ' +
   'End the script with an expression — or an explicit `return` — that yields plain data, e.g. `return { label: input.value, count: items.length }` or `return JSON.stringify(payload)`.';
 
 /** Normalize a raw eval result for display. The eval can come back as a useful
@@ -417,7 +419,7 @@ const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', 
 export const pageEvalCommand = new Command('eval')
   .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script). ONE client per call - to verify realtime/presence across concurrent clients use `page test --observe` instead')
   .argument('<url>', 'URL to load')
-  .argument('[expr]', `JavaScript to evaluate in page context (inline expression or statement body with return/await; result is JSON-serialized). Omit when using --file. Time budget: the body has ${EVAL_SCRIPT_BUDGET_MS / 1000}s to finish after page load (${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s with --camera) - raise it with --timeout, max ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s.`)
+  .argument('[expr]', `JavaScript to evaluate in page context (inline expression or statement body; await works, and the trailing expression is returned automatically — REPL-style — so no explicit return is needed; result is JSON-serialized). Omit when using --file. Time budget: the body has ${EVAL_SCRIPT_BUDGET_MS / 1000}s to finish after page load (${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s with --camera) - raise it with --timeout, max ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s.`)
   .option('--file <path>', `Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work. Same post-load budget as <expr> (--timeout).`)
   .option(
     '--step <expr>',
@@ -559,6 +561,9 @@ export const pageEvalCommand = new Command('eval')
     // cleaned up, without shifting the fixture map the caller indexes into.
     let camera: HostedFixture | undefined;
     let projectGuid: string | undefined;
+    // Completion-value semantics (a body ending in a bare expression returns it,
+    // REPL-style) are applied SERVER-side to every leg — one source of truth for
+    // every caller; the CLI sends the script as written.
     let sentExpr = expr;
     let sentSteps = steps;
     // Validate the camera file locally first: a wrong file type should cost one

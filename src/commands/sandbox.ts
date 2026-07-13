@@ -1,6 +1,6 @@
-import { Command } from 'commander';
-import { readFileSync, existsSync, statSync } from 'fs';
-import { dirname, extname, relative, resolve } from 'path';
+import { Command, Option } from 'commander';
+import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync } from 'fs';
+import { dirname, extname, relative, resolve, sep } from 'path';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath, getProjectRoot, shouldIgnore } from '../config.js';
 import { SCRATCH_IGNORE } from '../setup.js';
@@ -190,19 +190,23 @@ sandboxCommand
   // an interpreter token, or a --file extension - see resolveLanguage().
   .option('--language <language>', 'Language: js, py, or bash (required unless pinned by an interpreter token or --file extension)')
   .option('--file <path>', 'Read the code body from a file instead of the inline <code> arg; --language is inferred from the extension when not given')
+  // `--code "<code>"` is the natural first guess for passing inline code (the
+  // positional arg is the canonical spelling). Accept it as a working alias
+  // rather than bouncing the guess into an unknown-option --help detour.
+  .addOption(new Option('--code <code>', 'Alias for the positional inline <code> arg').hideHelp())
   .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
   .option(
     '--input <path>',
     'Narrow to specific project files instead of auto-mirroring the whole tree (repeatable). Use this only for >1 GB projects or when you want surgical control.',
     (v: string, prev?: string[]) => [...(prev ?? []), v],
   )
-  // Commander maps a `--no-` prefixed flag to the un-prefixed camelCase name
-  // (`opts.syncOutput`); the explicit `[]` default stops commander's negated-
-  // boolean convention from defaulting it to `true`. Collected as an array so
-  // the flag is repeatable.
+  // Named "discard", not "no-sync": in Gipity vocabulary "sync" means the
+  // local<->cloud file sync, so a no-sync spelling reads as "give me the file
+  // locally, just don't sync it" - which is the tmp/ scratch path below, not
+  // this flag. Collected as an array so the flag is repeatable.
   .option(
-    '--no-sync-output <glob>',
-    'Do not persist run outputs matching this glob back to the project (repeatable). For byproducts you want to inspect once but never keep, e.g. --no-sync-output "docs/preview*". Supports *, **, and dir/ prefixes.',
+    '--discard-output <glob>',
+    'Discard run outputs matching this glob entirely - not saved, not returned (repeatable). To LOOK at an output without keeping it, write it under tmp/ instead: scratch outputs land on local disk only and never enter the project. Supports *, **, and dir/ prefixes.',
     (v: string, prev: string[]) => [...prev, v],
     [] as string[],
   )
@@ -211,6 +215,11 @@ sandboxCommand
 By default the whole project is auto-mirrored into /work/ (up to 1 GB) -
 so your code can reference project files by their relative path, and any
 file you write lands back in the project. No manual copy needed.
+
+Exception: tmp/ is scratch. An output written under tmp/ comes back to
+your local tmp/ for inspection but is never saved to the project - use it
+for previews and other look-once artifacts (no cleanup needed). To drop
+an output entirely, --discard-output <glob>.
 
 Use --input only for projects over the auto-mirror cap, or when you want
 to restrict what the sandbox sees.
@@ -227,6 +236,11 @@ Examples:
   # Python reading a project CSV (auto-mirror)
   $ gipity sandbox run --language python \\
       "import pandas as pd; print(pd.read_csv('data/sales.csv').describe())"
+
+  # Preview a generated PDF without saving the preview: write it to tmp/
+  $ gipity sandbox run bash \\
+      "pdftoppm -png -r 90 docs/report.pdf tmp/preview"
+  # -> tmp/preview-1.png lands on local disk only; Read it, done.
 
   # Run a script file directly (language inferred from .py)
   $ gipity sandbox run --file build_report.py
@@ -261,6 +275,14 @@ GCC/Rust).
     let inlineCode: string | undefined;
     let filePath: string | undefined = opts.file;
     let langFromInterp: string | undefined;
+    // --code alias: fold it into the positional slot before the shape checks.
+    if (opts.code !== undefined) {
+      if (args.length) {
+        console.error(clrError('Pass the code once: either positionally or via --code, not both'));
+        process.exit(1);
+      }
+      args = [opts.code];
+    }
     if (args.length >= 2 && INTERPRETERS[args[0].toLowerCase()] !== undefined) {
       langFromInterp = INTERPRETERS[args[0].toLowerCase()];
       const rest = args.slice(1).join(' ');
@@ -300,11 +322,11 @@ GCC/Rust).
     // missing language costs nothing but the message.
     const language = resolveLanguage({ langFromInterp, langOpt: opts.language, filePath, inlineCode });
 
-    // Validate --no-sync-output globs while we're still pre-network: an empty
+    // Validate --discard-output globs while we're still pre-network: an empty
     // pattern (e.g. a quoting mishap) would silently match nothing server-side.
-    const noSyncOutput: string[] = opts.syncOutput ?? [];
-    if (noSyncOutput.some((g) => !g.trim())) {
-      console.error(clrError('--no-sync-output requires a non-empty glob (e.g. --no-sync-output "docs/preview*")'));
+    const discardOutput: string[] = opts.discardOutput ?? [];
+    if (discardOutput.some((g) => !g.trim())) {
+      console.error(clrError('--discard-output requires a non-empty glob (e.g. --discard-output "*.ppm")'));
       process.exit(1);
     }
 
@@ -351,6 +373,7 @@ GCC/Rust).
         stderrTruncated?: boolean;
         outputFiles?: string[];
         skippedOutputFiles?: string[];
+        scratchFiles?: { path: string; contentBase64: string }[];
         mirroredCount?: number;
         autoMirrorSkipped?: { reason: string; totalBytes: number };
         mirrorWarnings?: string[];
@@ -366,8 +389,9 @@ GCC/Rust).
       cwd,
       // The filter must run SERVER-side (in the output extractor): skipping
       // only in the CLI would still write the files into project storage and
-      // make every later sync propose deleting them.
-      noSyncOutput: noSyncOutput.length ? noSyncOutput : undefined,
+      // make every later sync propose deleting them. (`noSyncOutput` is the
+      // wire name for --discard-output.)
+      noSyncOutput: discardOutput.length ? discardOutput : undefined,
     });
     const res = opts.json
       ? await doRun()
@@ -383,8 +407,26 @@ GCC/Rust).
       await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });
     }
 
+    // Scratch outputs (tmp/ and friends) never enter the project: the server
+    // returns their bytes inline instead of persisting them, and we land them
+    // here. The scratch namespace is ignored by sync in both directions, so
+    // the file exists on local disk only - inspect it, no cleanup required.
+    const scratchWritten: string[] = [];
+    if (res.data.scratchFiles?.length) {
+      const base = resolve(getProjectRoot() ?? process.cwd());
+      for (const f of res.data.scratchFiles) {
+        const rel = f.path.replace(/\\/g, '/');
+        const abs = resolve(base, rel);
+        if (abs !== base && !abs.startsWith(base + sep)) continue; // traversal guard
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, Buffer.from(f.contentBase64, 'base64'));
+        scratchWritten.push(rel);
+      }
+    }
+
     if (opts.json) {
-      console.log(JSON.stringify({ ...res.data, filesSynced: pulledLocal }));
+      const { scratchFiles: _omit, ...rest } = res.data;
+      console.log(JSON.stringify({ ...rest, scratchFiles: scratchWritten, filesSynced: pulledLocal }));
     } else {
       if (res.data.autoMirrorSkipped) {
         console.error(dim(`Note: ${res.data.autoMirrorSkipped.reason}`));
@@ -416,8 +458,12 @@ GCC/Rust).
           if (pulledLocal) console.log(dim("Not pulled locally - run 'gipity sync' to fetch them."));
         }
       }
+      if (scratchWritten.length > 0) {
+        console.log('\nScratch outputs (local only - never synced or deployed):');
+        for (const f of scratchWritten) console.log(`${f}`);
+      }
       if (res.data.skippedOutputFiles && res.data.skippedOutputFiles.length > 0) {
-        console.log(dim('\nNot persisted (--no-sync-output):'));
+        console.log(dim('\nDiscarded (--discard-output):'));
         for (const f of res.data.skippedOutputFiles) console.log(dim(`${f}`));
       }
       if (res.data.exitCode !== 0) {

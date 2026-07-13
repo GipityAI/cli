@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { runCliAsync, makeTmpHome } from './helpers/spawn-cli.js';
@@ -350,14 +350,14 @@ test('gipity sandbox run rejects a scratch --input path without touching the API
   assert.deepEqual(mock.requests(), [], 'no API call should precede the scratch-input check');
 });
 
-// ── --no-sync-output: per-run "don't persist this output" globs ──────────────
+// ── --discard-output: per-run "drop this output entirely" globs ──────────────
 //
 // The filtering happens SERVER-side (in the output extractor) - a client-side
 // skip would still write the files into project storage and churn every later
-// sync. So the CLI's whole job is (a) sending the globs in the POST body and
-// (b) reporting what the server says it dropped.
+// sync. So the CLI's whole job is (a) sending the globs in the POST body
+// (wire name: noSyncOutput) and (b) reporting what the server says it dropped.
 
-test('gipity sandbox run sends --no-sync-output globs in the POST body and prints the skipped list', async () => {
+test('gipity sandbox run sends --discard-output globs in the POST body and prints the discarded list', async () => {
   resetMock();
   let posted: { noSyncOutput?: string[] } | undefined;
   mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
@@ -365,16 +365,16 @@ test('gipity sandbox run sends --no-sync-output globs in the POST body and print
     return { body: { data: {
       exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
       outputFiles: ['docs/report.pdf'],
-      skippedOutputFiles: ['docs/preview-1.png', 'docs/preview-2.png'],
+      skippedOutputFiles: ['docs/frames-1.ppm', 'docs/frames-2.ppm'],
     } } };
   });
-  const r = await fresh(['sandbox', 'run', 'bash', 'pdftoppm -png docs/report.pdf docs/preview',
-    '--no-sync-output', 'docs/preview*', '--no-sync-output', '*.ppm']);
+  const r = await fresh(['sandbox', 'run', 'bash', 'pdftoppm docs/report.pdf docs/frames',
+    '--discard-output', 'docs/frames*', '--discard-output', '*.ppm']);
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(posted?.noSyncOutput, ['docs/preview*', '*.ppm'], 'both repeated globs must reach the server');
-  assert.match(r.stdout, /Not persisted \(--no-sync-output\):/);
-  assert.match(r.stdout, /docs\/preview-1\.png/);
-  assert.match(r.stdout, /docs\/preview-2\.png/);
+  assert.deepEqual(posted?.noSyncOutput, ['docs/frames*', '*.ppm'], 'both repeated globs must reach the server');
+  assert.match(r.stdout, /Discarded \(--discard-output\):/);
+  assert.match(r.stdout, /docs\/frames-1\.ppm/);
+  assert.match(r.stdout, /docs\/frames-2\.ppm/);
   // The kept output still prints under the normal heading.
   assert.match(r.stdout, /docs\/report\.pdf/);
 });
@@ -390,15 +390,54 @@ test('gipity sandbox run omits noSyncOutput from the POST body when the flag is 
   assert.equal(r.status, 0, r.stderr);
   assert.ok(posted, 'expected the execute call');
   assert.ok(!('noSyncOutput' in posted!), 'no flag means no noSyncOutput key - server default behavior');
-  assert.doesNotMatch(r.stdout, /Not persisted/);
+  assert.doesNotMatch(r.stdout, /Discarded/);
 });
 
-test('gipity sandbox run rejects an empty --no-sync-output glob without touching the API', async () => {
+test('gipity sandbox run rejects an empty --discard-output glob without touching the API', async () => {
   mock.reset();
-  const r = await outsideProject(['sandbox', 'run', '--language', 'bash', 'echo hi', '--no-sync-output', '']);
+  const r = await outsideProject(['sandbox', 'run', '--language', 'bash', 'echo hi', '--discard-output', '']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /non-empty glob/);
   assert.deepEqual(mock.requests(), [], 'no API call should precede glob validation');
+});
+
+// ── scratch outputs: tmp/ files come back local-only, never into the project ─
+//
+// The server never persists scratch-namespace outputs to project storage;
+// instead it returns their bytes inline (scratchFiles) and the CLI lands them
+// at the same relative path locally, where sync ignores them in both
+// directions. This is the "inspect an artifact without keeping it" path.
+
+test('gipity sandbox run materializes inline scratchFiles locally and reports them as local-only', async () => {
+  resetMock();
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+    scratchFiles: [
+      { path: 'tmp/preview-1.png', contentBase64: Buffer.from('png-bytes').toString('base64') },
+      { path: 'tmp/../../evil.txt', contentBase64: Buffer.from('nope').toString('base64') },
+    ],
+  } } });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'pdftoppm -png docs/report.pdf tmp/preview'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(d, 'tmp/preview-1.png'), 'utf8'), 'png-bytes', 'scratch bytes must land at the local path');
+  assert.ok(!existsSync(join(d, '..', 'evil.txt')), 'a traversal path must not escape the project root');
+  assert.match(r.stdout, /Scratch outputs \(local only/);
+  assert.match(r.stdout, /tmp\/preview-1\.png/);
+});
+
+test('gipity sandbox run --json reports scratchFiles as the list of locally written paths', async () => {
+  resetMock();
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+    scratchFiles: [{ path: 'tmp/x.txt', contentBase64: Buffer.from('x').toString('base64') }],
+  } } });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'echo x > tmp/x.txt', '--json'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out.scratchFiles, ['tmp/x.txt'], '--json must list paths, not base64 payloads');
+  assert.equal(readFileSync(join(d, 'tmp/x.txt'), 'utf8'), 'x');
 });
 
 test('gipity sandbox run allows a non-scratch input that merely starts with "tmp"', async () => {
@@ -410,4 +449,36 @@ test('gipity sandbox run allows a non-scratch input that merely starts with "tmp
 
   assert.equal(r.status, 0);
   assert.match(r.stdout, /ok/);
+});
+
+// ── --code as a working alias for the positional inline code ──────────────────
+// `--code "<code>"` is the natural first guess for inline code; it must run the
+// code, not bounce into an unknown-option --help detour.
+test('gipity sandbox run --code works as an alias for the positional inline code', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    const body = req.body as { code: string; language: string };
+    assert.equal(body.code, 'print(7)');
+    assert.equal(body.language, 'python');
+    return { body: { data: { exitCode: 0, stdout: '7', stderr: '', durationMs: 50, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', '--language', 'py', '--code', 'print(7)']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /7/);
+});
+
+test('gipity sandbox run --code still requires a pinned language, pre-network', async () => {
+  resetMock();
+  const r = await fresh(['sandbox', 'run', '--code', 'import this']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /No language specified/);
+  assert.equal(mock.requests().length, 0, 'must fail before any API call');
+});
+
+test('gipity sandbox run rejects --code plus a positional arg', async () => {
+  resetMock();
+  const r = await fresh(['sandbox', 'run', '--language', 'py', '--code', 'print(1)', 'print(2)']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /either positionally or via --code/);
+  assert.equal(mock.requests().length, 0, 'must fail before any API call');
 });

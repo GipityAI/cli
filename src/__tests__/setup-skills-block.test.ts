@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySkillsBlock, applyAiderConf, GIPITY_BLOCK_BEGIN, GIPITY_BLOCK_END, SKILLS_CONTENT, PRIMER_FILES, AIDER_CONF_FILE, DEFAULT_SYNC_IGNORE, SUPPORTED_TOOLS, DEFAULT_TOOLS } from '../setup.js';
-import { shouldIgnore } from '../config.js';
+import { shouldIgnore, DEFAULT_API_BASE } from '../config.js';
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -57,6 +57,40 @@ test('user file with no Gipity block: block appended, user content kept', () => 
   assert.ok(out.startsWith('# My Project'), 'user content stays at the top');
   assert.ok(out.includes('Just my notes, no Gipity block.'), 'user content kept');
   assert.ok(out.includes(GIPITY_BLOCK_BEGIN), 'managed block appended');
+});
+
+// ── Non-default API base ─────────────────────────────────────────────────
+// The knowledge text names the public a.gipity.ai services endpoint. A session
+// pointed at another platform instance (GIPITY_API_BASE / --api-base, e.g. a
+// local dev server) must render the block against THAT base and say so, or the
+// agent copies the public host into app code and gets 404s for a project that
+// only exists on the other instance.
+
+test('non-default api base: service URLs rewritten and the instance is named', () => {
+  const base = 'http://localhost:7301';
+  const out = applySkillsBlock(null, base);
+  assert.ok(out.includes(`${base}/api/<PROJECT_GUID>/services/*`), 'services endpoint points at the instance');
+  assert.ok(out.includes(`${DEFAULT_API_BASE}/api/`) === false, 'no service URL left on the public host');
+  assert.ok(out.includes('**Platform instance:**'), 'the instance note is present');
+  assert.ok(out.includes(`\`${base}\``), 'the note names the actual base');
+});
+
+test('non-default api base: trailing slash is normalized away', () => {
+  const out = applySkillsBlock(null, 'http://localhost:7301/');
+  assert.ok(out.includes('http://localhost:7301/api/<PROJECT_GUID>/services/*'), 'no double slash in URLs');
+});
+
+test('default api base: block is untouched, no instance note', () => {
+  const out = applySkillsBlock(null, DEFAULT_API_BASE);
+  assert.equal(out, applySkillsBlock(null), 'explicit default matches the no-arg render');
+  assert.ok(!out.includes('**Platform instance:**'), 'no note for the public platform');
+});
+
+test('non-default api base: idempotent, and switching base rewrites the block', () => {
+  const local = applySkillsBlock(null, 'http://localhost:7301');
+  assert.equal(applySkillsBlock(local, 'http://localhost:7301'), local, 'same base re-apply is a no-op');
+  const backToProd = applySkillsBlock(local, DEFAULT_API_BASE);
+  assert.ok(!backToProd.includes('localhost:7301'), 'stale instance URLs are replaced');
 });
 
 test('idempotent: re-applying the result changes nothing', () => {

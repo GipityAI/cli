@@ -1227,20 +1227,20 @@ test('gipity page screenshot omits action from the body when --action is absent'
   assert.equal((req!.body as { action?: string }).action, undefined);
 });
 
-test('gipity page screenshot rejects a guessed JS-intent flag but still shows the state-capture guidance', async () => {
-  // --js and friends are hidden decoys: rather than a bare "unknown option",
-  // the error names the real flag (--action), and still renders this command's
-  // help (with the 'after' block) so the very first guess lands on the answer.
-  // (--eval is no longer a decoy — it's the sibling subcommand's name for this
-  // exact capability, so it works as an alias; see the alias tests.)
+test('gipity page screenshot treats a guessed --eval flag as a working --action alias', async () => {
+  // --eval is the reflex guess (agents know it from `page eval`) and the intent
+  // is unambiguous — run this JS before the shot — so it must WORK as a hidden
+  // alias for --action, not cost a redirect turn. A muted note names the
+  // canonical flag. (--js and the other JS-intent guesses work the same way —
+  // this superseded the earlier reject-and-redirect decoys.)
   mock.reset();
-  const r = await run(['page', 'screenshot', 'https://example.com', '--js', 'foo']);
-  assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /--js is not a flag on screenshot/);
-  assert.match(r.stderr, /--action/);
-  assert.match(r.stderr, /page eval|--full captures the ENTIRE scrollable page/);
-  // It must NOT have actually captured against the server.
-  assert.equal(mock.requests().some((q) => q.url === '/tools/browser/screenshot'), false);
+  await mockScreenshot();
+  const script = "document.getElementById('play').click()";
+  const r = await run(['page', 'screenshot', 'https://example.com', '--eval', script, '-o', join(home, 'alias.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /treating --eval as --action/);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { action?: string }).action, script, 'the aliased script must reach the server as the pre-capture action');
 });
 
 // ── screenshot VFS history (save payload) ──────────────────────────────────
@@ -1578,12 +1578,17 @@ test('gipity page screenshot accepts --eval as an alias for --action', async () 
   assert.equal((req!.body as { action?: string }).action, js, '--eval must reach the server as the action script');
 });
 
-test('gipity page screenshot rejects --action and --eval together', async () => {
+test('gipity page screenshot composes --action and --eval into one pre-capture script', async () => {
+  // Aliases FOLD rather than conflict: both scripts are the same in-page
+  // primitive, so passing --action and --eval together runs both (joined),
+  // instead of erroring — an agent that mixed the spellings still gets its shot.
   mock.reset();
   await mockScreenshot();
-  const r = await run(['page', 'screenshot', 'https://example.com', '--action', 'a()', '--eval', 'b()']);
-  assert.notEqual(r.status, 0);
-  assert.match(r.stderr + r.stdout, /not both/);
+  const r = await run(['page', 'screenshot', 'https://example.com', '--action', 'a()', '--eval', 'b()', '-o', join(home, 'compose.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  const action = (req!.body as { action?: string }).action ?? '';
+  assert.ok(action.includes('a()') && action.includes('b()'), 'both scripts must reach the server in one action');
 });
 
 test('gipity page eval redirects --action (the screenshot spelling) to the positional <expr>', async () => {
@@ -1796,4 +1801,50 @@ test('an eval that outlives the client budget never advises lowering --wait', as
       return true;
     },
   );
+});
+
+// ── --width/--height as a working --viewport alias ─────────────────────────────
+// "How does this look on a phone?" is the most common screenshot ask, and the
+// setViewport vocabulary (--width 390 --height 844) is the flag pair agents
+// guess first. It must WORK — a bounce to --help here means the phone layout
+// the user asked about never gets verified at phone width.
+test('gipity page screenshot --width/--height works as a --viewport alias', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--width', '390', '--height', '844', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const vps = (mock.requests().find((q) => q.url === '/tools/browser/screenshot')!.body as ShotBody).viewports!;
+  assert.equal(vps.length, 1);
+  assert.equal(vps[0].width, 390);
+  assert.equal(vps[0].height, 844);
+  // A raw window is not a handset — the phone-width path points at --device mobile.
+  assert.match(r.stderr, /--device mobile/);
+});
+
+test('gipity page screenshot rejects half a --width/--height pair with the full vocabulary', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--width', '390']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--width and --height go together/);
+  assert.match(r.stderr, /--viewport WxH/);
+  assert.match(r.stderr, /--device mobile/);
+});
+
+// ── eval completion-value semantics ────────────────────────────────────────────
+// Completion-value rewriting (auto-returning a trailing bare expression) lives
+// SERVER-side, for every caller. The CLI must send the script exactly as
+// written — a second, weaker rewrite here would drift from the real semantics.
+test('gipity page eval sends a no-return body verbatim (server owns auto-return)', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-1', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-1', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '{"n":2}', truncated: false,
+  } } });
+  const script = 'const n = 1 + 1; ({ n })';
+  const r = await run(['page', 'eval', 'https://example.com', script]);
+  assert.equal(r.status, 0, r.stderr);
+  const sent = (mock.requests().find((q) => q.url === '/tools/browser/eval')!.body as { expr: string }).expr;
+  assert.equal(sent, script, 'the script must reach the server unrewritten');
+  assert.match(r.stdout, /\{"n":2\}/);
 });
