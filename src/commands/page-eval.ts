@@ -400,7 +400,9 @@ export function evalExecTimeoutMessage(result: string, budgetMs: number): string
 // a trap, since --json is a real flag that changes output but still leaves the
 // script unset, sending the agent in a loop. Capture the common guesses as
 // hidden decoy options so the action can redirect to the positional arg exactly.
-const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', '--eval', '--exec'];
+// `--action` rides along: it's the sibling `page screenshot`'s spelling of
+// "run JS on the page", so an agent that learned it there guesses it here.
+const JS_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--expr', '--eval', '--exec', '--action'];
 
 // The long-tail escape hatch alongside `page inspect`'s fixed bundle: when the
 // curated metrics don't cover what you need (computed styles, element rects,
@@ -446,7 +448,7 @@ export const pageEvalCommand = new Command('eval')
     '--timeout <ms>',
     `How long the script itself may run IN the page - its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
   )
-  .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
+  .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
     // A JS-intent flag guess (captured as a hidden decoy below): redirect to the
@@ -662,13 +664,16 @@ export const pageEvalCommand = new Command('eval')
       if (d.slowRender) {
         console.log(slowRenderMessage(d.slowRender.fps, { camera: !!camera, waitMs }));
       }
-      // Auth state: without this line an agent can't distinguish "signed-in
-      // eval" from "--auth silently no-op'd against the anonymous page".
+      // Identity line on EVERY run: without it an agent can't distinguish
+      // "signed-in eval" from "--auth silently no-op'd against the anonymous
+      // page" — or, worse, assume an unflagged run carried a signed-in session.
       if (d.auth?.requested) {
         const who = getAuth()?.email;
         console.log(d.auth.established
           ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
           : `${warning('Auth: session NOT established')}${d.auth.detail ? ` — ${d.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+      } else {
+        console.log(muted('Auth: anonymous visitor (signed out; pass --auth to run as your Gipity account)'));
       }
       if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);

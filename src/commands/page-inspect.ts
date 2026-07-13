@@ -72,7 +72,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
   .option('--no-fake-media', "Inspect with NO camera or microphone present, so a getUserMedia app takes its no-device error path (use this only when that fallback IS what you're inspecting)")
   .option('--device <name>', `Inspect as a real touch device: ${INSPECT_DEVICES.join(', ')}. Emulates touch events, mobile user-agent and DPR, so a touch-gated mobile layout is what gets inspected.`)
-  .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
+  .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
   // an image here (`page screenshot` is the single path for that) — just point there.
   .addOption(new Option('--screenshot [path]', 'Capture a screenshot').hideHelp())
@@ -217,13 +217,16 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     if (b.navigationIncomplete) {
       console.log(`${warning('⚠ Navigation incomplete:')} ${b.note || 'page did not reach full load'}`);
     }
-    // Auth state: without this line an agent can't distinguish "signed-in render"
-    // from "--auth silently no-op'd and I'm looking at the anonymous page".
+    // Identity line on EVERY run: without it an agent can't distinguish
+    // "signed-in render" from "--auth silently no-op'd and I'm looking at the
+    // anonymous page" — or assume an unflagged run carried a signed-in session.
     if (b.auth?.requested) {
       const who = getAuth()?.email;
       console.log(b.auth.established
         ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
         : `${warning('Auth: session NOT established')}${b.auth.detail ? ` — ${b.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+    } else {
+      console.log(muted('Auth: anonymous visitor (signed out; pass --auth to load as your Gipity account)'));
     }
     console.log(`${muted('Title:')} ${b.title || '(none)'}`);
     console.log(`${muted('Elements:')} ${b.elementCount || 0}`);

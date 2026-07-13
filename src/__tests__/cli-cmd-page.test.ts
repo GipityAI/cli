@@ -1227,14 +1227,16 @@ test('gipity page screenshot omits action from the body when --action is absent'
   assert.equal((req!.body as { action?: string }).action, undefined);
 });
 
-test('gipity page screenshot rejects a guessed --eval flag but still shows the state-capture guidance', async () => {
-  // --eval is a hidden decoy: rather than a bare "unknown option", it names the
-  // real flag (--action), and still renders this command's help (with the
-  // 'after' block) so the very first guess lands on the answer.
+test('gipity page screenshot rejects a guessed JS-intent flag but still shows the state-capture guidance', async () => {
+  // --js and friends are hidden decoys: rather than a bare "unknown option",
+  // the error names the real flag (--action), and still renders this command's
+  // help (with the 'after' block) so the very first guess lands on the answer.
+  // (--eval is no longer a decoy — it's the sibling subcommand's name for this
+  // exact capability, so it works as an alias; see the alias tests.)
   mock.reset();
-  const r = await run(['page', 'screenshot', 'https://example.com', '--eval', 'foo']);
+  const r = await run(['page', 'screenshot', 'https://example.com', '--js', 'foo']);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /--eval is not a flag on screenshot/);
+  assert.match(r.stderr, /--js is not a flag on screenshot/);
   assert.match(r.stderr, /--action/);
   assert.match(r.stderr, /page eval|--full captures the ENTIRE scrollable page/);
   // It must NOT have actually captured against the server.
@@ -1523,6 +1525,74 @@ test('gipity page screenshot warns when --auth did not establish a session', asy
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /session NOT established/);
   assert.match(r.stdout, /Missing token/);
+});
+
+// ── identity on EVERY run, not just --auth ones ─────────────────────────────
+// An unflagged eval used to run on whatever session the sticky jar held — after
+// one --auth run, "anonymous" checks silently ran signed in as the owner (false
+// nudge results, real DB rows). The server now wipes the jar per call, and the
+// CLI must SAY which identity the page ran as even when --auth is off, so an
+// agent never has to infer it from a stray database row.
+
+test('gipity page eval without --auth names the anonymous identity', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-anon', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-anon', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"hi"', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'document.title']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /anonymous visitor/);
+  assert.match(r.stdout, /--auth/);
+});
+
+test('gipity page inspect without --auth names the anonymous identity', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/inspect', { body: { data: baseBundle } });
+  const r = await run(['page', 'inspect', 'https://example.com']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /anonymous visitor/);
+});
+
+test('gipity page screenshot without --auth names the anonymous identity', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'shot-anon.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /anonymous visitor/);
+});
+
+// ── cross-command JS spelling: --eval works on screenshot, --action redirects on eval ──
+// The same capability is spelled `eval` as a subcommand in one place and
+// `--action` as a flag in another, so an agent that learned one spelling
+// guesses wrong on the other. `--eval <js>` on screenshot is unambiguous —
+// accept it as an alias instead of burning a turn on a redirect error.
+
+test('gipity page screenshot accepts --eval as an alias for --action', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const js = "document.getElementById('play').click()";
+  const r = await run(['page', 'screenshot', 'https://example.com', '--eval', js, '-o', join(home, 'shot-eval.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
+  assert.equal((req!.body as { action?: string }).action, js, '--eval must reach the server as the action script');
+});
+
+test('gipity page screenshot rejects --action and --eval together', async () => {
+  mock.reset();
+  await mockScreenshot();
+  const r = await run(['page', 'screenshot', 'https://example.com', '--action', 'a()', '--eval', 'b()']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /not both/);
+});
+
+test('gipity page eval redirects --action (the screenshot spelling) to the positional <expr>', async () => {
+  mock.reset();
+  const r = await run(['page', 'eval', 'https://example.com', '--action', 'document.title']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /--action is not a flag/);
+  assert.match(r.stderr + r.stdout, /positional <expr>/);
+  assert.equal(mock.requests().some((q) => q.url === '/tools/browser/eval'), false);
 });
 
 // A multi-line driver script echoed back in full buries the result underneath

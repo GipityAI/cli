@@ -92,7 +92,7 @@ The full "when to add a template" rule and the definition of done are spelled ou
 
 Build loop: \`gipity add\` → edit files → \`gipity deploy dev --inspect\` → fix any errors → repeat until the definition of done is met. \`deploy --inspect\` deploys and then runs the page-inspect report on the live URL in one command; use a standalone \`gipity page inspect <url>\` only when re-checking without deploying.
 
-\`add\` writes real files to disk - Read a scaffolded file before your first Write/Edit to it, or the call fails \`"File has not been read yet"\`. Don't rewrite from memory of the template.
+\`add\` writes real files to disk - Read a scaffolded file with the Read tool before your first Write/Edit to it, or the call fails \`"File has not been read yet"\` (viewing it with \`cat\`/\`head\` in Bash does not count - the harness only tracks the Read tool). Don't rewrite from memory of the template.
 
 Make your file changes and verify they landed, then run \`gipity deploy dev\` once. \`0 uploaded, N unchanged\` means nothing changed on disk - fix the files, don't re-run deploy or probe the environment.
 

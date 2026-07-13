@@ -66,11 +66,15 @@ function fmtMs(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 
-/** Auth state line (same format as page inspect/eval): without it an agent
- *  can't tell a signed-in capture from "--auth silently no-op'd and this is
- *  the anonymous page". */
+/** Identity line on EVERY capture (same format as page inspect/eval): without
+ *  it an agent can't tell a signed-in capture from "--auth silently no-op'd and
+ *  this is the anonymous page" — or assumes an unflagged capture carried a
+ *  signed-in session. */
 function printAuthLine(auth?: ScreenshotMeta['auth']): void {
-  if (!auth?.requested) return;
+  if (!auth?.requested) {
+    console.log(`${label('Auth')} ${muted('anonymous visitor (signed out; pass --auth to capture as your Gipity account)')}`);
+    return;
+  }
   const who = getAuth()?.email;
   console.log(auth.established
     ? `${label('Auth')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
@@ -223,7 +227,11 @@ function appendOption(value: string, previous: string[] = []): string[] {
 // names first and an "unknown option" alone doesn't name the right flag. Capture
 // the common guesses as hidden decoys (taking a value, so they swallow the
 // script) and redirect precisely — same pattern as `page eval`'s JS_DECOY_FLAGS.
-const ACTION_DECOY_FLAGS = ['--eval', '--js', '--javascript', '--script', '--code', '--exec'];
+// `--eval` is NOT a decoy: it's the sibling subcommand's name for this exact
+// capability, an agent fresh off `page eval <url> "<js>"` reaches for it every
+// time, and there is no ambiguity about what they meant — so it just works
+// (hidden alias for --action, registered below).
+const ACTION_DECOY_FLAGS = ['--js', '--javascript', '--script', '--code', '--exec'];
 
 /** A capture is worthless if it fires before the app reaches the state you meant
  *  to photograph, and the only lever used to be a blind millisecond delay — so a
@@ -281,10 +289,14 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern — to capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
   .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture — so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
-  .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai.')
+  .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
   .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--post-load-delay <ms>', 'Alias for --wait').hideHelp())
+  // `page eval` spells run-JS-on-the-page as its own name, so an agent that just
+  // used it guesses `--eval` here. Same capability, unambiguous intent — accept
+  // it as a hidden alias instead of burning a turn on a redirect error.
+  .addOption(new Option('--eval <js>', 'Alias for --action').hideHelp())
   // `--full-page` is the Puppeteer/Playwright name for this (their `fullPage`),
   // so agents reach for it by reflex. Accept it as a hidden alias for `--full`
   // rather than reject it as an unknown option and send them on a --help detour.
@@ -383,13 +395,18 @@ export const pageScreenshotCommand = new Command('screenshot')
       camera = await uploadCameraFeed(projectGuid, opts.camera);
     }
 
+    if (opts.action !== undefined && opts.eval !== undefined) {
+      throw new Error('Pass either --action or --eval (its alias), not both');
+    }
+    const actionJs: string | undefined = opts.action ?? opts.eval;
+
     // The pre-capture script the server runs after the post-load delay: the
     // --wait-for gate first (so the shot waits for the state, deterministically),
     // then the caller's --action. Both are the same in-page primitive, so they
     // compose into one script rather than needing a second server round-trip.
     const preCapture = [
       opts.waitFor ? buildWaitForGate(opts.waitFor, waitForTimeoutMs) : '',
-      opts.action ?? '',
+      actionJs ?? '',
     ].filter(Boolean).join('\n');
 
     const body = {
