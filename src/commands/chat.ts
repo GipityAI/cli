@@ -41,6 +41,7 @@ export const chatCommand = new Command('chat')
           outputTokens: number;
           costUsd: number;
           filesChanged?: boolean;
+          costWarning?: { message: string; currentModel: string } | null;
           toolsUsed?: {
             toolCallId: string;
             toolName: string;
@@ -84,9 +85,16 @@ export const chatCommand = new Command('chat')
         }));
       }
 
+      // The server's cost-consent gate stops the agentic loop on big-build
+      // requests: content comes back empty with an explicit costWarning.
+      // Surface it - before this the CLI printed a blank line and the request
+      // silently did nothing. Re-running the command consents via chat reply.
+      const displayContent = res.data.content || res.data.costWarning?.message || '';
+
       if (opts.json) {
         console.log(JSON.stringify({
-          content: res.data.content,
+          content: displayContent,
+          costWarning: res.data.costWarning ?? null,
           toolsUsed: res.data.toolsUsed?.map(t => ({
             tool: t.toolName,
             success: t.success,
@@ -100,8 +108,8 @@ export const chatCommand = new Command('chat')
           syncedFiles: syncChanges,
         }));
       } else {
-        // Show agent response
-        console.log(res.data.content);
+        // Show agent response (or the cost warning when the gate stopped the loop)
+        console.log(displayContent);
 
         // Show tools used
         if (res.data.toolsUsed && res.data.toolsUsed.length > 0) {

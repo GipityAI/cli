@@ -35,6 +35,29 @@ test('gipity chat <message> posts and prints agent response', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity chat surfaces the cost-consent warning instead of printing nothing', async () => {
+  mock.reset();
+  // The server's cost gate stops the loop for big-build requests: content is
+  // empty and costWarning explains how to proceed. The CLI must print the
+  // warning - the old behavior was a blank line and a silent no-op.
+  mock.on('POST /conversations', { body: { data: {
+    content: '',
+    conversationGuid: 'c_NewConv002',
+    messageGuid: '',
+    model: null,
+    inputTokens: 0, outputTokens: 0, costUsd: 0,
+    filesChanged: false,
+    toolsUsed: [],
+    costWarning: {
+      message: 'This looks like a big build. Reply "y" to proceed here.',
+      currentModel: 'claude-sonnet-4-6',
+    },
+  } } });
+  const r = await fresh(['chat', 'Build me a whole app']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /This looks like a big build/);
+});
+
 test('gipity chat list shows recent conversations', async () => {
   mock.reset();
   mock.on('GET /conversations', { body: { data: [

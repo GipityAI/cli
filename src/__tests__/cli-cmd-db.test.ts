@@ -123,3 +123,38 @@ test('gipity db drop --yes --project <slug> uses the account-level drop endpoint
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Dropped database 'main'/);
 });
+
+test('gipity db create calls db/manage directly (never agent chat) and prints created', async () => {
+  mock.reset();
+  // If create ever regresses to chat delegation, this throws and the test
+  // fails loudly - chat-based create burned tokens and, after the server's
+  // cost-consent gate landed, silently created nothing.
+  mock.on('POST /conversations', () => { throw new Error('db create must NOT delegate to agent chat'); });
+  mock.on('POST /projects/p_TestProj/db/manage', { status: 201, body: { data: { success: true } } });
+  const r = await inProject(['db', 'create', 'newdb']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Created database 'newdb'/);
+  const create = mock.requests().find(q => q.url.endsWith('/db/manage'));
+  assert.deepEqual(create?.body, { action: 'create', name: 'newdb' });
+});
+
+test('gipity db create --json emits machine-readable success', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/db/manage', { status: 201, body: { data: { success: true } } });
+  const r = await inProject(['db', 'create', 'newdb', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim());
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.name, 'newdb');
+});
+
+test('gipity db create surfaces a limit rejection from the server', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/db/manage', {
+    status: 400,
+    body: { error: { code: 'DB_ERROR', message: 'Maximum of 3 databases reached (you have 3). Drop one first.' } },
+  });
+  const r = await inProject(['db', 'create', 'overflow']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /Maximum of 3 databases/);
+});

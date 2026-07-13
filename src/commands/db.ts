@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { get, post, sendMessage } from '../api.js';
+import { get, post } from '../api.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, success } from '../colors.js';
 import { run, printList, emitField } from '../helpers/index.js';
@@ -131,13 +131,20 @@ dbCommand
   .description('Create a database')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
-    // DDL delegates to agent (needs confirmation flow)
-    const response = await sendMessage(`Create a new database called "${name}" for this project. Confirm when done, no explanation.`);
+    // Direct REST create - same endpoint `db drop` uses. This used to delegate
+    // to agent chat, which burned LLM tokens and, after the cost-consent gate
+    // landed server-side, could return an empty response having created
+    // nothing. Creating a database isn't destructive, so no confirmation.
+    const config = requireConfig();
+    await post<{ data: { success: boolean } }>(`/projects/${config.projectGuid}/db/manage`, {
+      action: 'create',
+      name,
+    });
 
     if (opts.json) {
-      console.log(JSON.stringify({ response }));
+      console.log(JSON.stringify({ success: true, name }));
     } else {
-      console.log(response);
+      console.log(success(`Created database '${name}'.`));
     }
   }));
 
