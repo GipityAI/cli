@@ -9,36 +9,15 @@ import { success, muted, bold, warning, error as clrError } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { createProgressReporter, withSpinner } from '../progress.js';
 
-// Catalog mirrored from platform/packages/shared (TEMPLATES + KITS) -
-// the CLI ships as a standalone npm package and can't depend on the private
-// shared workspace. Keep these lists in sync when catalog entries change.
+// Catalog GENERATED from platform/packages/shared (TEMPLATES + KITS cliHint
+// fields) into src/catalog.ts by platform/scripts/build-knowledge.ts - the CLI
+// ships as a standalone npm package and can't depend on the private shared
+// workspace. The hand-mirrored copy that used to live here silently dropped
+// every new catalog entry; edit constants.ts + `just build-knowledge` instead.
 //
 // Templates install a whole app (blank wiring or a working starter demo).
 // Kits are reusable building blocks added into an existing app's src/packages/.
-interface CatalogEntry { key: string; hint: string; }
-
-const STARTERS: CatalogEntry[] = [
-  { key: 'web-vision-cam', hint: 'fullscreen camera app with on-device vision (MediaPipe)' },
-  { key: 'object-spotter', hint: 'camera app that boxes, labels, and counts objects (YOLOX on-device)' },
-  { key: '2d-game', hint: '2D games with Phaser 3 - platformer, arcade, puzzle' },
-  { key: '3d-world', hint: 'playable 3D multiplayer rocket-launcher demo' },
-  { key: 'karaoke-captions', hint: 'audio + lyrics -> word-synced karaoke captions (GPU job)' },
-];
-const BLANK: CatalogEntry[] = [
-  { key: 'web-simple', hint: 'static frontend-only site - pages, dashboards, simple games' },
-  { key: 'web-fullstack', hint: 'backend API + database wiring - frontend, functions, migrations; deploys green' },
-  { key: 'api', hint: 'pure API backend, no frontend - one example function + test' },
-  { key: '3d-engine', hint: '3D multiplayer wiring - Three.js + Rapier + Gipity Realtime' },
-];
-const HIDDEN: CatalogEntry[] = [{ key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' }];
-const KITS: CatalogEntry[] = [
-  { key: 'realtime', hint: 'multiplayer / presence / shared state' },
-  { key: 'web-vision-mediapipe', hint: 'browser camera vision - gesture, pose, object detection' },
-  { key: 'web-vision-detect', hint: 'browser object detection - YOLOX, WebGPU/WASM, custom models' },
-  { key: 'chatbot', hint: 'drop-in chatbot - persona, guardrails, streaming responses' },
-  { key: 'audio-align', hint: 'audio + lyrics -> word-level timing JSON (GPU job)' },
-  { key: 'i18n', hint: 'multi-language web apps - language picker, RTL, translations' },
-];
+import { STARTERS, BLANK, KITS, type CatalogEntry } from '../catalog.js';
 
 // The catalog block, rendered once and reused by the full help output
 // (`gipity add` / `gipity add --help`) and the bare listing (`gipity add

@@ -21,25 +21,6 @@ interface FnLog {
   created_at: string;
 }
 
-// Human labels for the limits_consumed counters, in display order. Keys are
-// the runtime's governor metric names; only counters an agent reads as "what
-// did this invocation DO" are shown (row/secret counts are noise here).
-const CONSUMED_LABELS: Array<[string, string, string]> = [
-  ['max_queries', 'query', 'queries'],
-  ['max_fetches', 'fetch', 'fetches'],
-  ['max_llm_calls', 'llm call', 'llm calls'],
-  ['max_service_calls', 'service call', 'service calls'],
-  ['max_storage_deletes', 'storage delete', 'storage deletes'],
-];
-
-function formatConsumed(consumed: Record<string, number> | null): string {
-  if (!consumed) return '';
-  const parts = CONSUMED_LABELS
-    .filter(([key]) => (consumed[key] ?? 0) > 0)
-    .map(([key, one, many]) => `${consumed[key]} ${consumed[key] === 1 ? one : many}`);
-  return parts.length ? `  ${muted(parts.join(' · '))}` : '';
-}
-
 interface AppLogEntry {
   kind: 'error' | 'function' | 'service' | 'traffic';
   at: string;
@@ -64,15 +45,21 @@ export const logsCommand = new Command('logs')
 
 logsCommand
   .command('fn <name>')
-  .description('Show function logs — per invocation: status, duration, trigger, activity counters (queries / fetches / llm & service calls), error message, and captured console output')
+  .description('Show function logs')
   .option('--limit <n>', 'Max entries', '20')
-  .option('--json', 'Output as JSON: a top-level array of invocations, newest first; each includes status, duration_ms, trigger_type, limits_consumed, error_message, logs[], request_body, response_body, created_at')
+  .option('--json', 'Output as JSON (top-level ARRAY of invocations, newest first)')
   .addHelpText('after', `
-Examples:
-  $ gipity logs fn submit-refund                     Recent invocations with what each one did
-  $ gipity logs fn submit-refund --json | jq '.[0]'  Newest invocation as JSON
+Each line: time, status (ok / error / limit_exceeded), duration, trigger, and
+svc:N when the invocation made N platform service calls (notify, email, LLM,
+image, ...). Captured console output is indented beneath its invocation.
 
-Service-call failures across the whole app (LLM / TTS / notify / etc.): gipity logs app --type services
+--json emits a top-level ARRAY (not an object) of invocation rows:
+  [{ id, status, duration_ms, trigger_type, error_message,
+     limits_consumed: { max_queries, max_service_calls, ... }, logs: [...], created_at }]
+
+To confirm an individual service call succeeded (and see provider, latency,
+and its own error message), use the per-call log instead:
+  $ gipity logs app --type services
 `)
   .action((name: string, opts) => run('Logs', async () => {
     const config = requireConfig();
@@ -101,8 +88,14 @@ Service-call failures across the whole app (LLM / TTS / notify / etc.): gipity l
       const statusColor = log.status === 'ok' ? success : log.status === 'error' ? clrError : warning;
       const status = statusColor(log.status.padEnd(8));
       const trigger = muted(log.trigger_type.padEnd(8));
+      // Service calls made inside the invocation (notify, email, LLM, ...) are
+      // otherwise invisible here - surface the count so "did my send happen?"
+      // doesn't require spelunking --json limits counters. Per-call outcomes
+      // live in `gipity logs app --type services`.
+      const svcCalls = log.limits_consumed?.max_service_calls;
+      const svc = svcCalls ? ` ${muted(`svc:${svcCalls}`)}` : '';
       const err = log.error_message ? `  ${clrError(`"${log.error_message}"`)}` : '';
-      console.log(`${muted(time)}  ${status} ${dur} ${trigger}${formatConsumed(log.limits_consumed)}${err}`);
+      console.log(`${muted(time)}  ${status} ${dur} ${trigger}${svc}${err}`);
       // Captured console.log/warn/error output for this invocation, indented
       // under its summary line. Empty for calls that printed nothing.
       for (const line of log.logs ?? []) {
