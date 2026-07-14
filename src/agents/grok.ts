@@ -18,11 +18,6 @@ export const grokAdapter: RemoteAgentAdapter = {
   providerName: 'xAI',
   binary: 'grok',
 
-  models: [
-    { id: 'grok-4.5', label: 'Grok 4.5' },
-    { id: 'grok-code', label: 'Grok Code' },
-  ],
-
   buildInteractiveArgs({ resume, model }) {
     const args: string[] = [];
     if (model) args.push('--model', model);

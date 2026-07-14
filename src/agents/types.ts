@@ -15,13 +15,6 @@
  * capture parser + one REMOTE_TYPES value; no scattered `if (source === …)`.
  */
 
-export interface AgentModel {
-  /** What gets passed to the agent's --model flag. */
-  id: string;
-  /** Picker label, e.g. 'Opus 4.8'. */
-  label: string;
-}
-
 export interface HeadlessArgsOpts {
   /** The prompt message (already context-wrapped when applicable). */
   message: string;
@@ -46,12 +39,6 @@ export interface RemoteAgentAdapter {
   providerName: string;
   /** The executable on PATH. */
   binary: string;
-
-  /** Curated model shortlist for the `gipity build` picker. Coarse on
-   *  purpose (family names the agent resolves itself, not dated snapshots)
-   *  so the list doesn't rot. 'Agent default' is a picker-level option, not
-   *  a list entry - picking it passes no model flag at all. */
-  models: AgentModel[];
 
   /** argv for an interactive launch (after the binary). Model/resume ride
    *  the shared `--model` / `--resume` flags where the agent supports them

@@ -31,7 +31,6 @@ describe('agent adapter registry', () => {
     for (const a of AGENT_ADAPTERS) {
       assert.ok(a.installHint.length > 0, a.key);
       assert.ok(a.displayName && a.providerName, a.key);
-      assert.ok(a.models.length > 0, a.key);
     }
   });
 });

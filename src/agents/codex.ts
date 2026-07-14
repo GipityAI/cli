@@ -20,11 +20,6 @@ export const codexAdapter: RemoteAgentAdapter = {
   providerName: 'OpenAI',
   binary: 'codex',
 
-  models: [
-    { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
-    { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
-  ],
-
   buildInteractiveArgs({ resume, model }) {
     const args: string[] = [];
     if (model) args.push('--model', model);
