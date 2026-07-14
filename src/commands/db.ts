@@ -67,10 +67,19 @@ dbCommand
             console.log(columns.map(c => String(row[c] ?? 'NULL')).join('\t'));
           }
         }
+        // DML with RETURNING carries both rows and a count - the rows are the
+        // table above; still name how many rows the statement touched.
+        if (res.data.affectedRows !== undefined) {
+          console.log(`Affected rows: ${res.data.affectedRows}`);
+        }
       } else if (res.data.affectedRows !== undefined) {
         console.log(`Affected rows: ${res.data.affectedRows}`);
       } else if (res.data.results) {
         console.log(JSON.stringify(res.data.results, null, 2));
+      } else {
+        // Unknown payload shape: print it raw rather than nothing - silence
+        // here reads as "the query returned no data", which is a lie.
+        console.log(JSON.stringify(res.data, null, 2));
       }
     }
   }));
