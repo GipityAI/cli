@@ -27,6 +27,8 @@ test('gipity fn list shows functions with name/version/auth/timeout', async () =
   assert.match(r.stdout, /v3/);
   assert.match(r.stdout, /public/);
   assert.match(r.stdout, /timeout=5000ms/);
+  // The callable address is named under the list (cli#138).
+  assert.match(r.stdout, /Endpoint: POST .*\/api\/p_TestProj\/fn\/<name>/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 

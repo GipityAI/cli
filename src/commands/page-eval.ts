@@ -325,7 +325,8 @@ export function slowRenderMessage(fps: number, o: { camera: boolean; waitMs: num
   return `${warning('⚠ Slow render:')} page painted at ${fps} fps. `
     + `Waiting on real time (setTimeout) advances animation/physics time far slower than it looks — `
     + `assertions after a wall-clock wait can report a false negative. `
-    + `Step the app's own loop deterministically instead (3D templates: ${bold('core.advance(seconds)')}).`;
+    + `Step the app's own loop deterministically instead (3D templates: ${bold('core.advance(seconds)')}; `
+    + `2D/Phaser template: ${bold("(await import('./js/config.js')).advance(seconds)")}).`;
 }
 
 /** Poll the async eval job until it finishes. Eval runs server-side as a
@@ -658,7 +659,10 @@ export const pageEvalCommand = new Command('eval')
         return;
       }
 
-      console.log(`${brand('Eval')} ${bold(d.url || url)}`);
+      // Context echo (which URL, which script) goes to stderr: the caller
+      // already knows what it sent, and keeping stdout = qualifiers + result
+      // means `2>/dev/null` (or any stdout capture) yields just the answer.
+      console.error(`${brand('Eval')} ${bold(d.url || url)}`);
       if (d.navigationIncomplete) {
         console.log(`${warning('⚠ Navigation incomplete:')} ${d.note || 'page did not reach full load'}`);
       }
@@ -682,7 +686,7 @@ export const pageEvalCommand = new Command('eval')
       }
       if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
-      console.log(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
+      console.error(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
       if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
       if (emptyState) console.log(muted(`\n${emptyHint}`));

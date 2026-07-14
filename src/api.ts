@@ -56,8 +56,8 @@ async function bearerToken(): Promise<string> {
 /** True when a long-lived agent API token (GIPITY_TOKEN) is in play. Such a token
  *  is static — it can't be refreshed — so the 401 self-heal path must skip it and
  *  the "run: gipity login" hint must not be shown (that's the wrong recovery for
- *  env-token callers). */
-function usingEnvToken(): boolean {
+ *  env-token callers). Exported so `gipity status` can name the auth source. */
+export function usingEnvToken(): boolean {
   return !!process.env.GIPITY_TOKEN?.trim();
 }
 
@@ -85,9 +85,12 @@ async function shouldRetryAfter401(status: number, retried: boolean): Promise<bo
 /** Append a re-login hint to a 401 message for session users. A 401 that
  *  survived the refresh-and-retry is an unrecoverable session (the refresh token
  *  is gone too); env-token callers authenticate differently, so don't misdirect
- *  them. */
+ *  them. Names the headless path too — an unattended agent has no mailbox for
+ *  the emailed login code, and dead-ending there stranded whole runs (cli#137). */
 function with401Hint(status: number, message: string): string {
-  return status === 401 && !usingEnvToken() ? `${message} — run: gipity login` : message;
+  return status === 401 && !usingEnvToken()
+    ? `${message} — run: gipity login (headless/CI: set GIPITY_TOKEN instead — gipity skill read agent-deploy)`
+    : message;
 }
 
 async function getHeaders(): Promise<Record<string, string>> {

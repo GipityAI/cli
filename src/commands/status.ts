@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { getAuth, sessionExpired } from '../auth.js';
+import { get, usingEnvToken, ApiError } from '../api.js';
 import { getConfig, liveUrl } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
 import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopeInstallState } from '../setup.js';
@@ -34,6 +35,30 @@ function checkGipityPlugin(): { missing: string[]; ok: boolean; stale: boolean }
   return { missing, ok: missing.length === 0, stale };
 }
 
+/** What one live authenticated call says about the session/token right now.
+ *  Local expiry alone can lie: a refresh token rotated away by a sibling
+ *  process or revoked server-side still decodes as "fresh", and `status` is
+ *  the command agents run to diagnose exactly that 401 (cli#137).
+ *  - 'ok'          the call succeeded (the 401 self-heal counts as success)
+ *  - 'rejected'    the server 401'd even after the refresh-and-retry
+ *  - 'unreachable' network/timeout - nothing proven either way
+ *  - 'expired'     locally known-dead refresh token (no call made)
+ *  - 'none'        not logged in and no GIPITY_TOKEN (no call made) */
+type AuthProbe = 'ok' | 'rejected' | 'unreachable' | 'expired' | 'none';
+
+async function probeAuth(loggedIn: boolean): Promise<AuthProbe> {
+  if (!loggedIn && !usingEnvToken()) return 'none';
+  if (!usingEnvToken() && sessionExpired()) return 'expired';
+  // Cap the probe well below the API layer's 60s request timeout - status is
+  // a diagnostic command and must answer fast even when the network is dark.
+  const timeout = new Promise<'unreachable'>(res => setTimeout(() => res('unreachable'), 5000).unref?.());
+  const call = get('/users/me').then(
+    () => 'ok' as const,
+    (err) => (err instanceof ApiError && err.statusCode === 401 ? 'rejected' as const : 'unreachable' as const),
+  );
+  return Promise.race([call, timeout]);
+}
+
 // `whoami` is the name agents reach for first when they want the signed-in
 // identity (it's the unix spelling), and this is the command that prints it.
 // Aliasing costs one line and turns a guess into a hit.
@@ -55,6 +80,7 @@ export const statusCommand = new Command('status')
     // now go out. Skipped entirely (existsSync short-circuit) when the queue
     // is empty, which is the common case, so this stays a no-op most runs.
     const queueDelivered = (auth && !sessionExpired()) ? await flushBugQueue().catch(() => 0) : 0;
+    const probe = await probeAuth(!!auth);
 
     if (opts.json) {
       console.log(JSON.stringify({
@@ -67,9 +93,13 @@ export const statusCommand = new Command('status')
         } : null,
         // `valid` reflects the refresh token (the real session) - access
         // tokens auto-renew, so their expiry must not read as "invalid".
-        auth: auth ? {
-          email: auth.email,
-          valid: !sessionExpired(),
+        // `probe` is what one live call just proved: 'rejected' means every
+        // authenticated command will fail even though `valid` reads true.
+        auth: (auth || usingEnvToken()) ? {
+          email: auth?.email,
+          source: usingEnvToken() ? 'agent-token' : 'session',
+          valid: usingEnvToken() ? probe !== 'rejected' : !sessionExpired(),
+          probe,
         } : null,
         plugin: hookCheck,
       }, null, 2));
@@ -86,12 +116,21 @@ export const statusCommand = new Command('status')
       if (config.agentGuid) console.log(`${muted('Agent:')} ${config.agentGuid}`);
     }
 
-    if (!auth) {
+    if (usingEnvToken()) {
+      console.log(`${muted('Auth:')} ${probe === 'rejected'
+        ? warning('agent API token (GIPITY_TOKEN) rejected by the server — mint a new one: gipity skill read agent-deploy')
+        : success('agent API token (GIPITY_TOKEN)')}${probe === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
+    } else if (!auth) {
       console.log(`${muted('Auth:')} ${warning('not logged in. Run: gipity login')}`);
-    } else if (sessionExpired()) {
-      console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login`)}`);
+    } else if (probe === 'expired') {
+      console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login (headless/CI: set GIPITY_TOKEN — gipity skill read agent-deploy)`)}`);
+    } else if (probe === 'rejected') {
+      // Locally fresh but the server says no (refresh token rotated away or
+      // revoked). Without the live probe this printed a green identity while
+      // every authenticated command failed.
+      console.log(`${muted('Auth:')} ${warning(`session for ${auth.email} was rejected by the server. Run: gipity login (headless/CI: set GIPITY_TOKEN — gipity skill read agent-deploy)`)}`);
     } else {
-      console.log(`${muted('Auth:')} ${success(auth.email)}`);
+      console.log(`${muted('Auth:')} ${success(auth.email)}${probe === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
     }
 
     if (queueDelivered > 0) {

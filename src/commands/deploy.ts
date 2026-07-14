@@ -169,6 +169,13 @@ export const deployCommand = new Command('deploy')
         // - to open it, inspect it, or report it. Always surface it so nobody
         // has to reconstruct the URL convention or guess a subdomain.
         if (d.url) console.log(`${muted('Live:')} ${brand(d.url)}`);
+        // Functions are served from the API host, NOT the static Live URL -
+        // for an API-only app the endpoint address IS the deliverable, so name
+        // it instead of leaving it to be inferred from a template comment.
+        if (d.phases?.some(p => p.name === 'functions')) {
+          console.log(`${muted('Functions:')} POST ${brand(`${config.apiBase}/api/${config.projectGuid}/fn/<name>`)}`);
+          console.log(muted('  (same address on dev and prod; names: gipity fn list; verify the public path: gipity fn call <name> --anon)'));
+        }
         await inspectAfter();
       }
   }));

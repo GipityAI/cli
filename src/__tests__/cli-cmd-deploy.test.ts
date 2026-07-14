@@ -35,7 +35,22 @@ test('gipity deploy dev prints phase results from server', async () => {
   assert.match(r.stdout, /files/);
   assert.match(r.stdout, /5 files uploaded/);
   assert.match(r.stdout, /Deployed to dev/);
+  // An app with a functions phase gets its callable address named - functions
+  // are served from the API host, not the static Live URL (cli#138).
+  assert.match(r.stdout, /Functions: POST .*\/api\/p_TestProj\/fn\/<name>/);
+  assert.match(r.stdout, /--anon/);
   assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity deploy without a functions phase prints no Functions line', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 3, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200,
+    phases: [{ name: 'files', status: 'ok', summary: '3 files uploaded' }],
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /Functions: POST/);
 });
 
 test('gipity deploy --json emits raw data', async () => {

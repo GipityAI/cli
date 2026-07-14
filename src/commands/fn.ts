@@ -21,6 +21,11 @@ fnCommand
       const line = `${bold(f.name)}  ${muted(`v${f.version}`)}  ${muted(f.auth_level)}  ${muted(`timeout=${f.timeout_ms}ms`)}`;
       return f.description ? `${line}\n${muted(f.description)}` : line;
     });
+    // The callable address is the deliverable for API-only apps - name it here
+    // rather than leaving it to be inferred from a template comment.
+    if (!opts.json && res.data.length > 0) {
+      console.log(muted(`Endpoint: POST ${config.apiBase}/api/${config.projectGuid}/fn/<name>  (same on dev and prod; public path: gipity fn call <name> --anon)`));
+    }
   }));
 
 fnCommand
