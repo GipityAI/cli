@@ -41,6 +41,24 @@ test('gipity test --no-sync runs and prints pass/fail summary', async () => {
   assert.match(r.stdout, new RegExp(`gipity test status ${RUN_GUID} --json`));
 });
 
+test('gipity test surfaces the test-db reset summary (what was truncated/preserved/seeded)', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/test/run', { body: { data: { runGuid: RUN_GUID, status: 'running' } } });
+  mock.on(`GET /projects/p_TestProj/test/status/${RUN_GUID}`, { body: { data: {
+    runGuid: RUN_GUID, status: 'failed', total: 2, passed: 1, failed: 1, skipped: 0,
+    durationMs: 500, totalFiles: 1, completedFiles: 1,
+    startedAt: '2026-05-01T10:00:00Z', updatedAt: '2026-05-01T10:00:01Z', finishedAt: '2026-05-01T10:00:01Z',
+    dbSummary: 'reset: 4 table(s) truncated, preserved: kit_objects, kit_fields, 1 seed file(s) re-applied',
+    results: [
+      { path: 'api/shelf.test.js', name: 'lists games', status: 'passed', durationMs: 50, retryCount: 0, isFlaky: false },
+      { path: 'api/shelf.test.js', name: 'registry present', status: 'failed', durationMs: 30, error: 'expected rows, got 0', retryCount: 0, isFlaky: false },
+    ],
+  } } });
+  const r = await fresh(['test', '--no-sync']);
+  assert.equal(r.status, 1); // failed run exits 1
+  assert.match(r.stdout, /Test db: reset: 4 table\(s\) truncated, preserved: kit_objects, kit_fields/);
+});
+
 test('gipity test --filter <path> runs tests for that path', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/test/run', { body: { data: { runGuid: RUN_GUID, status: 'running' } } });

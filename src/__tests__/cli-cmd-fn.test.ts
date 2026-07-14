@@ -70,6 +70,26 @@ test('gipity fn call <name> posts and prints JSON', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity fn call names the identity it calls as on stderr (stdout stays parseable)', async () => {
+  mock.reset();
+  mock.on('POST /api/p_TestProj/fn/hello', { body: { data: { greeting: 'Hello!' } } });
+  const r = await fresh(['fn', 'call', 'hello', '{}']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /Auth: calling as ec-test@914-6\.com/);
+  assert.match(r.stderr, /--anon/); // points at the visitor path
+  assert.doesNotMatch(r.stdout, /Auth:/); // identity note never pollutes stdout
+});
+
+test('gipity fn call --anon names the anonymous identity on stderr', async () => {
+  mock.reset();
+  mock.on('POST /api/token', { body: { data: { token: 'app-tok-123', expiresIn: 900 } } });
+  mock.on('POST /api/p_TestProj/fn/hello', { body: { data: { greeting: 'Hello!' } } });
+  const r = await fresh(['fn', 'call', 'hello', '{}', '--anon']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /Auth: anonymous visitor/);
+  assert.doesNotMatch(r.stdout, /Auth:/);
+});
+
 test('gipity fn call --field plucks one nested value (no node -e needed)', async () => {
   mock.reset();
   mock.on('POST /api/p_TestProj/fn/review', { body: { data: { items: [{ short_guid: 'msg_123' }, { short_guid: 'msg_456' }] } } });

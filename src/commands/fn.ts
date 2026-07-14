@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { get, post, del, publicPost } from '../api.js';
+import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, bold, muted, success, warning } from '../colors.js';
 import { run, printList, emitField } from '../helpers/index.js';
@@ -80,6 +81,15 @@ fnCommand
     const raw = bodyArg || opts.data || '{}';
     const body = JSON.parse(raw);
     const path = `/api/${config.projectGuid}/fn/${encodeURIComponent(name)}`;
+    // Name the calling identity (stderr, so stdout stays parseable). Without
+    // this, a "test the anonymous path" call silently runs authenticated as
+    // the signed-in owner and the public path never gets exercised.
+    if (opts.anon) {
+      console.error(muted('Auth: anonymous visitor (the public path a signed-out user hits)'));
+    } else {
+      const who = getAuth()?.email;
+      console.error(muted(`Auth: calling as ${who ?? 'your signed-in account'} (the owner persona; use --anon for the public visitor path)`));
+    }
     const res = opts.anon
       ? await callAnon(config.projectGuid, name, body)
       : await post<{ data: any }>(path, body);

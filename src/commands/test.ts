@@ -44,6 +44,7 @@ interface TestStatusResponse {
     startedAt: string;
     updatedAt: string;
     errorMessage?: string | null;
+    dbSummary?: string | null;
     finishedAt: string | null;
     results: Array<{
       path: string;
@@ -249,6 +250,14 @@ export const testCommand = new Command('test')
 
       if (data.status === 'failed' && data.errorMessage) {
         console.log(clrError(`Run failed: ${data.errorMessage}`));
+        console.log('');
+      }
+
+      // What the isolated test DB reset did (tables truncated, test.preserve
+      // list, seeds re-applied) - so "expected N rows, got 0" reads as "the
+      // reset truncated that table", not as a mystery.
+      if (data.dbSummary) {
+        console.log(muted(`Test db: ${data.dbSummary}`));
         console.log('');
       }
 
