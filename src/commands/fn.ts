@@ -42,8 +42,14 @@ fnCommand
     printList(res.data, opts, 'No execution logs.', log => {
       const dur = log.duration_ms != null ? `${log.duration_ms}ms` : '?';
       const ts = new Date(log.created_at).toLocaleString();
-      const statusColor = log.status === 'success' ? success : log.status === 'error' ? clrError : muted;
+      // The runtime writes 'ok' | 'error' | 'limit_exceeded' - never 'success'
+      // (same dead value already fixed in `logs fn`).
+      const statusColor = log.status === 'ok' ? success : log.status === 'error' ? clrError : muted;
       let line = `${statusColor(log.status)}  ${dur}  ${muted(log.trigger_type || 'http')}  ${muted(ts)}`;
+      // Platform service calls made inside the invocation (notify, email,
+      // LLM, ...) - per-call outcomes live in `gipity logs app --type services`.
+      const svcCalls = log.limits_consumed?.max_service_calls;
+      if (svcCalls) line += `  ${muted(`svc:${svcCalls}`)}`;
       if (log.error_message) line += `\n${clrError(`error: ${log.error_message}`)}`;
       // Captured console.log/warn/error output for this invocation.
       for (const entry of (log.logs ?? []) as Array<{ level: string; message: string }>) {

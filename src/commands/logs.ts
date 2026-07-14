@@ -47,7 +47,20 @@ logsCommand
   .command('fn <name>')
   .description('Show function logs')
   .option('--limit <n>', 'Max entries', '20')
-  .option('--json', 'Output as JSON')
+  .option('--json', 'Output as JSON (top-level ARRAY of invocations, newest first)')
+  .addHelpText('after', `
+Each line: time, status (ok / error / limit_exceeded), duration, trigger, and
+svc:N when the invocation made N platform service calls (notify, email, LLM,
+image, ...). Captured console output is indented beneath its invocation.
+
+--json emits a top-level ARRAY (not an object) of invocation rows:
+  [{ id, status, duration_ms, trigger_type, error_message,
+     limits_consumed: { max_queries, max_service_calls, ... }, logs: [...], created_at }]
+
+To confirm an individual service call succeeded (and see provider, latency,
+and its own error message), use the per-call log instead:
+  $ gipity logs app --type services
+`)
   .action((name: string, opts) => run('Logs', async () => {
     const config = requireConfig();
     const limit = parseInt(opts.limit, 10) || 20;
@@ -75,8 +88,14 @@ logsCommand
       const statusColor = log.status === 'ok' ? success : log.status === 'error' ? clrError : warning;
       const status = statusColor(log.status.padEnd(8));
       const trigger = muted(log.trigger_type.padEnd(8));
+      // Service calls made inside the invocation (notify, email, LLM, ...) are
+      // otherwise invisible here - surface the count so "did my send happen?"
+      // doesn't require spelunking --json limits counters. Per-call outcomes
+      // live in `gipity logs app --type services`.
+      const svcCalls = log.limits_consumed?.max_service_calls;
+      const svc = svcCalls ? ` ${muted(`svc:${svcCalls}`)}` : '';
       const err = log.error_message ? `  ${clrError(`"${log.error_message}"`)}` : '';
-      console.log(`${muted(time)}  ${status} ${dur} ${trigger}${err}`);
+      console.log(`${muted(time)}  ${status} ${dur} ${trigger}${svc}${err}`);
       // Captured console.log/warn/error output for this invocation, indented
       // under its summary line. Empty for calls that printed nothing.
       for (const line of log.logs ?? []) {
