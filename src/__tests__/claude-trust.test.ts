@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { markFolderTrusted } from '../commands/claude.js';
+import { markFolderTrusted } from '../commands/build.js';
 
 const PROJECT = '/home/test/GipityProjects/project-001';
 let home: string;

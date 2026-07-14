@@ -160,7 +160,7 @@ projectCommand
     if (process.env.GIPITY_NON_INTERACTIVE === '1') {
       console.log(`${muted('Next:')} switch to "${project.name}" in the sidebar.`);
     } else {
-      console.log(`${muted('Next:')} exit Claude (Ctrl+D), then run:  ${brand('gipity claude')}`);
+      console.log(`${muted('Next:')} exit Claude (Ctrl+D), then run:  ${brand('gipity build')}`);
       console.log(`${muted('Pick')} "${project.name}" ${muted(`- it'll be at the top of the list.`)}`);
     }
   }));

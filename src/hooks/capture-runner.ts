@@ -1,31 +1,36 @@
 #!/usr/bin/env node
 /**
- * Internal hook runner - invoked by Claude Code's lifecycle hooks
+ * Internal hook runner - invoked by the coding agent's lifecycle hooks
  * (SessionStart, Stop, SubagentStop, SessionEnd, and a throttled
- * PostToolUse for mid-run flushing) to mirror a terminal Claude Code
- * session into the Gipity server so the web CLI can display it read-only.
+ * PostToolUse for mid-run flushing) to mirror a terminal agent session
+ * into the Gipity server so the web CLI can display it read-only.
+ *
+ * Works for every supported agent: Claude Code and Grok Build fire it
+ * through the Gipity plugin's hooks (Grok runs Claude-format plugin hooks
+ * natively; capture.cjs rewrites the source to 'grok' when it sees
+ * GROK_HOOK_EVENT), Codex through the project's .codex/hooks.json. Each
+ * source has its own transcript parser under cli/src/capture/sources/.
  *
  * Not a user-facing `gipity` subcommand by design: users never invoke
- * this directly. The Gipity Claude Code plugin's capture hook script
- * (skills repo hooks/scripts/capture.cjs) resolves this file inside the
- * installed CLI at fire time and runs it - so the capture logic versions
- * with the CLI, not the plugin.
+ * this directly. The hook scripts (skills repo hooks/scripts/capture.cjs)
+ * resolve this file inside the installed CLI at fire time and run it - so
+ * the capture logic versions with the CLI, not the plugin.
  *
  * Usage:
  *   node capture-runner.js <source> <event>
- *   source: 'claude-code' (today) | future: 'codex', …
+ *   source: 'claude-code' | 'codex' | 'grok'
  *   event:  'session-start' | 'stop' | 'subagent-stop' | 'session-end' | 'post-tool-use' | 'pre-compact'
  *
  * Conversation binding, in order:
- *   1. GIPITY_CONVERSATION_GUID env var - set by `gipity claude`, which
- *      created/reused the conversation before spawning Claude Code.
+ *   1. GIPITY_CONVERSATION_GUID env var - set by `gipity build`, which
+ *      created/reused the conversation before spawning the agent.
  *   2. A session_id → conv mapping persisted in the capture-state dir by
  *      an earlier event of this session.
- *   3. Self-arm: the session was launched WITHOUT `gipity claude` (bare
- *      `claude` in a linked project dir). Resolve the project from
- *      .gipity.json and ask the server to bind this session_id to a
- *      conversation (POST /remote-sessions/resolve), then persist the
- *      mapping. This is what makes bare `claude` sessions record.
+ *   3. Self-arm: the session was launched WITHOUT `gipity build` (bare
+ *      `claude` / `codex` / `grok` in a linked project dir). Resolve the
+ *      project from .gipity.json and ask the server to bind this
+ *      session_id to a conversation (POST /remote-sessions/resolve), then
+ *      persist the mapping. This is what makes bare agent sessions record.
  *
  * Graceful no-ops (exit 0 silently):
  *   - GIPITY_CAPTURE=off - the relay daemon owns capture for this run
@@ -40,6 +45,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
   unlinkSync,
@@ -56,9 +62,11 @@ import { deviceFetch } from '../relay/device-http.js';
 import { ImageBlockRewriter } from '../relay/media-upload.js';
 import { getConfig } from '../config.js';
 import {
-  parseTranscript,
+  parseTranscript as parseClaudeTranscript,
   type IngestEntry,
 } from '../capture/sources/claude-code.js';
+import { parseTranscript as parseCodexTranscript } from '../capture/sources/codex.js';
+import { parseTranscript as parseGrokTranscript } from '../capture/sources/grok.js';
 
 const CAPTURE_DIR = join(homedir(), '.gipity', 'capture-state');
 const INGEST_BATCH_MAX = 100; // server caps at 200; stay comfortably under
@@ -69,6 +77,47 @@ interface HookInput {
   cwd?: string;
   hook_event_name?: string;
 }
+
+type ParseResult = { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean };
+
+/** Per-agent capture behavior. Keyed by the hook argv source (what the hook
+ *  scripts pass), NOT the server's source value - those differ for Claude
+ *  ('claude-code' vs 'claude_code'). Adding an agent = one entry here plus a
+ *  parser file under cli/src/capture/sources/. */
+interface CaptureSource {
+  /** The conversation `source` value the server stores. */
+  serverSource: string;
+  displayName: string;
+  parse(content: string, afterUuid: string | null, hook: HookInput): ParseResult;
+  /** Where the transcript lives when the hook payload doesn't say. */
+  resolveTranscriptPath?(hook: HookInput): string | null;
+}
+
+export const CAPTURE_SOURCES: Record<string, CaptureSource> = {
+  'claude-code': {
+    serverSource: 'claude_code',
+    displayName: 'Claude Code',
+    parse: (content, afterUuid) => parseClaudeTranscript(content, afterUuid),
+  },
+  codex: {
+    serverSource: 'codex',
+    displayName: 'Codex',
+    // Codex hook payloads always carry transcript_path (the rollout file).
+    parse: (content, afterUuid) => parseCodexTranscript(content, afterUuid),
+  },
+  grok: {
+    serverSource: 'grok',
+    displayName: 'Grok',
+    parse: (content, afterUuid, hook) =>
+      parseGrokTranscript(content, afterUuid, { sessionId: hook.session_id }),
+    // Grok's session dir is derivable: ~/.grok/sessions/<urlencoded-cwd>/<sid>/
+    resolveTranscriptPath: (hook) => {
+      if (!hook.session_id) return null;
+      const cwd = hook.cwd ?? process.cwd();
+      return join(homedir(), '.grok', 'sessions', encodeURIComponent(cwd), hook.session_id, 'chat_history.jsonl');
+    },
+  },
+};
 
 interface StateFile {
   last_uuid: string | null;
@@ -225,13 +274,14 @@ function deleteSessionMap(sessionId: string): void {
  *  already bound to this session_id (resume), the project's still-empty
  *  placeholder, or a fresh one. Returns null on any failure - capture is
  *  best-effort and must never break the session. */
-async function resolveFromServer(projectGuid: string, hook: HookInput): Promise<string | null> {
+async function resolveFromServer(projectGuid: string, hook: HookInput, serverSource: string): Promise<string | null> {
   let res: Response;
   try {
     res = await deviceFetch('POST', '/remote-sessions/resolve', {
       project_guid: projectGuid,
       session_id: hook.session_id,
       cwd: hook.cwd,
+      source: serverSource,
     }, 15_000);
   } catch {
     return null;
@@ -253,6 +303,7 @@ async function resolveFromServer(projectGuid: string, hook: HookInput): Promise<
  *  winner's mapping instead of racing the server. */
 export async function resolveConvGuid(
   hook: HookInput,
+  serverSource = 'claude_code',
   sleep: (ms: number) => Promise<void> = (ms) => new Promise(r => setTimeout(r, ms)),
 ): Promise<string | null> {
   const fromEnv = process.env.GIPITY_CONVERSATION_GUID;
@@ -287,7 +338,7 @@ export async function resolveConvGuid(
     // Re-check under the lock - the previous holder may have just finished.
     const raced = readSessionMap(sessionId);
     if (raced) return raced;
-    const conv = await resolveFromServer(config.projectGuid, hook);
+    const conv = await resolveFromServer(config.projectGuid, hook, serverSource);
     if (conv) writeSessionMap(sessionId, conv);
     return conv;
   } finally {
@@ -353,7 +404,7 @@ async function handleSessionStart(convGuid: string, hook: HookInput): Promise<vo
 }
 
 async function handleStopFamily(
-  convGuid: string, hook: HookInput, isSubagent: boolean, minIntervalMs = 0,
+  convGuid: string, src: CaptureSource, hook: HookInput, isSubagent: boolean, minIntervalMs = 0,
 ): Promise<void> {
   void isSubagent;
   if (!hook.transcript_path || !existsSync(hook.transcript_path)) return;
@@ -372,11 +423,11 @@ async function handleStopFamily(
     const state = readState(convGuid) ?? { last_uuid: null };
     const content = await readWholeFile(hook.transcript_path);
 
-    let result = parseTranscript(content, state.last_uuid);
+    let result = src.parse(content, state.last_uuid, hook);
     if (!result.foundWatermark && state.last_uuid !== null) {
       // Transcript rotated (/clear or compact) - watermark isn't present.
       // Replay from top; server dedupes via the source_uuid unique index.
-      result = parseTranscript(content, null);
+      result = src.parse(content, null, hook);
     }
 
     // Base64 image blocks (Read-of-image tool results) upload to VFS and
@@ -397,19 +448,18 @@ async function handleStopFamily(
   }
 }
 
-async function handleSessionEnd(convGuid: string, hook: HookInput, source: string): Promise<void> {
+async function handleSessionEnd(convGuid: string, src: CaptureSource, hook: HookInput): Promise<void> {
   // Flush any tail lines one last time - SessionEnd fires after the final
   // Stop, so there's usually nothing new, but a race between Stop and
   // SessionEnd could leave lines behind.
   if (hook.transcript_path && existsSync(hook.transcript_path)) {
-    await handleStopFamily(convGuid, hook, false);
+    await handleStopFamily(convGuid, src, hook, false);
   }
 
   const sessionId = hook.session_id ?? 'unknown';
-  const finishedLabel = displayName(source);
   const entries: IngestEntry[] = [{
     kind: 'system',
-    content: `${finishedLabel} finished`,
+    content: `${src.displayName} finished`,
     source_uuid: `${sessionId}-end`,
   }];
   await postEntries(convGuid, entries);
@@ -418,9 +468,46 @@ async function handleSessionEnd(convGuid: string, hook: HookInput, source: strin
   if (hook.session_id) deleteSessionMap(hook.session_id);
 }
 
-function displayName(source: string): string {
-  if (source === 'claude-code') return 'Claude Code';
-  return source;
+// Codex has no SessionEnd hook, so its capture-state/session-map files are
+// never cleaned by handleSessionEnd. Sweep anything stale on the way through
+// - the files are tiny, so a generous TTL is fine; a live session's state is
+// rewritten on every flush and never gets this old.
+const STATE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function sweepStaleState(): void {
+  let names: string[];
+  try { names = readdirSync(CAPTURE_DIR); } catch { return; }
+  const cutoff = Date.now() - STATE_TTL_MS;
+  for (const name of names) {
+    const p = join(CAPTURE_DIR, name);
+    try {
+      if (statSync(p).mtimeMs < cutoff) unlinkSync(p);
+    } catch { /* raced or unreadable - leave it */ }
+  }
+}
+
+/** Normalize a raw hook payload to snake_case HookInput. Claude Code and
+ *  Codex deliver snake_case (`session_id`, `transcript_path`, `cwd`); Grok
+ *  Build delivers camelCase (`sessionId`, `hookEventName`, …). Accept both
+ *  so one runner serves every harness. */
+export function normalizeHookInput(raw: any): HookInput {
+  if (!raw || typeof raw !== 'object') return {};
+  const pick = (...keys: string[]): string | undefined => {
+    for (const k of keys) {
+      const v = raw[k];
+      if (typeof v === 'string' && v) return v;
+    }
+    return undefined;
+  };
+  const hook: HookInput = {
+    session_id: pick('session_id', 'sessionId'),
+    transcript_path: pick('transcript_path', 'transcriptPath'),
+    cwd: pick('cwd', 'workingDirectory'),
+    hook_event_name: pick('hook_event_name', 'hookEventName'),
+  };
+  // Preserve extras the handlers peek at (e.g. pre-compact's `trigger`).
+  if (typeof raw.trigger === 'string') (hook as any).trigger = raw.trigger;
+  return hook;
 }
 
 async function main(): Promise<void> {
@@ -433,14 +520,27 @@ async function main(): Promise<void> {
 
   const [source, event] = process.argv.slice(2);
   if (!source || !event) return;
+  const src = CAPTURE_SOURCES[source];
+  if (!src) return; // unknown agent - silent no-op
 
   const stdin = await readStdin();
   let hook: HookInput = {};
   if (stdin.trim()) {
-    try { hook = JSON.parse(stdin); } catch { /* ignore - event may not require transcript */ }
+    try { hook = normalizeHookInput(JSON.parse(stdin)); } catch { /* ignore - event may not require transcript */ }
   }
 
-  const convGuid = await resolveConvGuid(hook);
+  // Agents whose hook payloads omit the transcript path (Grok) get it
+  // derived from the session id + cwd.
+  if (!hook.transcript_path && src.resolveTranscriptPath) {
+    const derived = src.resolveTranscriptPath(hook);
+    if (derived) hook.transcript_path = derived;
+  }
+
+  // Opportunistic hygiene: Codex never fires session-end, so its state
+  // files are TTL-swept instead of deleted at end-of-session.
+  sweepStaleState();
+
+  const convGuid = await resolveConvGuid(hook, src.serverSource);
   if (!convGuid) return; // not a Gipity-bound session - nothing to capture
 
   try {
@@ -449,24 +549,24 @@ async function main(): Promise<void> {
         await handleSessionStart(convGuid, hook);
         break;
       case 'stop':
-        await handleStopFamily(convGuid, hook, false);
+        await handleStopFamily(convGuid, src, hook, false);
         break;
       case 'subagent-stop':
-        await handleStopFamily(convGuid, hook, true);
+        await handleStopFamily(convGuid, src, hook, true);
         break;
       case 'post-tool-use':
         // Incremental mid-run flush so an interrupted session keeps its
         // transcript (Stop/SessionEnd only fire on clean exit). Throttled.
-        await handleStopFamily(convGuid, hook, false, POST_TOOL_FLUSH_MS);
+        await handleStopFamily(convGuid, src, hook, false, POST_TOOL_FLUSH_MS);
         break;
       case 'session-end':
-        await handleSessionEnd(convGuid, hook, source);
+        await handleSessionEnd(convGuid, src, hook);
         break;
       case 'pre-compact': {
         // Flush the transcript tail BEFORE compaction rewrites it (the
         // watermark replay after a rewrite relies on server dedup, but
         // flushing first keeps ordering clean), then record the boundary.
-        await handleStopFamily(convGuid, hook, false);
+        await handleStopFamily(convGuid, src, hook, false);
         const trigger = typeof (hook as any).trigger === 'string' ? (hook as any).trigger : 'auto';
         await postEntries(convGuid, [{
           kind: 'compact',

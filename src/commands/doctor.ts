@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { LOCAL_PKG_DIR, LOCAL_ENTRY, STATE_FILE, SETTINGS_FILE, UPDATE_LOG, readState, readSettings, updatesDisabled } from '../updater/state.js';
 import { bold, dim, success, warning, error as clrError, muted } from '../colors.js';
@@ -195,7 +195,13 @@ export const doctorCommand = new Command('doctor')
     console.log(`${muted('claude code     ')} installed ${yn(env.claude.installed)} · authenticated ${yn(env.claude.authenticated)}`);
     const autostartLabel = env.relay.autostart === null ? muted('n/a') : yn(env.relay.autostart);
     console.log(`${muted('relay           ')} paired ${yn(env.relay.paired)} · running ${yn(env.relay.running)} · autostart ${autostartLabel}${env.relay.paused ? warning(' · paused') : ''}${env.relay.device ? muted(`  (${env.relay.device.name})`) : ''}`);
-    console.log(`${muted('ready           ')} ${env.ready ? success('yes') : warning('no - run `gipity claude` (or the desktop app) to finish setup')}`);
+    // Codex approves project hooks interactively and stores the decision in
+    // its own opaque state - we can't verify it from here, so surface the
+    // one manual step whenever this project ships Codex hooks.
+    if (existsSync(resolve(process.cwd(), '.codex', 'hooks.json'))) {
+      console.log(`${muted('codex hooks     ')} ${warning('written')} - session capture needs a one-time approval: run /hooks inside Codex in this project`);
+    }
+    console.log(`${muted('ready           ')} ${env.ready ? success('yes') : warning('no - run `gipity build` (or the desktop app) to finish setup')}`);
 
     // ── CLI install / update health ────────────────────────────────────
     const state = readState();

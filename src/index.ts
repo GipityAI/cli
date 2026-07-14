@@ -27,7 +27,7 @@ import { workflowCommand } from './commands/workflow.js';
 import { creditsCommand } from './commands/credits.js';
 import { fileCommand } from './commands/file.js';
 import { storageCommand } from './commands/storage.js';
-import { claudeCommand } from './commands/claude.js';
+import { buildCommand, claudeCommand } from './commands/build.js';
 import { addCommand } from './commands/add.js';
 import { removeCommand } from './commands/remove.js';
 import { saveCommand } from './commands/save.js';
@@ -55,7 +55,7 @@ import { locationCommand } from './commands/location.js';
 import { doctorCommand } from './commands/doctor.js';
 import { updateCommand } from './commands/update.js';
 import { relayCommand } from './commands/relay.js';
-import { setupCommand } from './commands/setup.js';
+import { connectCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { approvalCommand } from './commands/approval.js';
 import { gmailCommand } from './commands/gmail.js';
@@ -149,7 +149,7 @@ const servicesGroup  = [serviceCommand, generateCommand, notifyCommand, payments
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
 const gipGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, gmailCommand];
 const utilitiesGroup = [sandboxCommand, emailCommand, locationCommand, textCommand, bugCommand];
-const connectGroup   = [loginCommand, logoutCommand, claudeCommand, setupCommand, relayCommand, githubCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
+const connectGroup   = [loginCommand, logoutCommand, buildCommand, connectCommand, relayCommand, githubCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Start here',        cmds: startGroup },
@@ -231,9 +231,9 @@ program.configureHelp({
 
     lines.push(bold('Quick start:'));
     lines.push(`  ${brand('gipity login')}    ${dim('- authenticate first if you haven\'t already')}`);
-    lines.push(`  ${brand('gipity init')}     ${dim('- link this dir + write CLAUDE.md/AGENTS.md primers for your AI tool')}`);
-    lines.push(`  ${brand('gipity setup')}    ${dim('- set up this computer as a relay to drive from gipity.ai (no launch)')}`);
-    lines.push(`  ${brand('gipity claude')}   ${dim('- or launch Claude Code with Gipity tools wired in')}`);
+    lines.push(`  ${brand('gipity init')}     ${dim('- link this dir + wire up every coding agent on this machine')}`);
+    lines.push(`  ${brand('gipity connect')}  ${dim('- connect this computer to gipity.ai so the web CLI can drive it')}`);
+    lines.push(`  ${brand('gipity build')}    ${dim('- or start from anywhere: pick a project, pick your agent, go')}`);
     lines.push('');
 
     lines.push(bold('Usage:'));
@@ -272,6 +272,12 @@ for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
   if (skill) cmd.addHelpText('after', `Docs: gipity skill read ${skill}\n`);
   program.addCommand(cmd);
 }
+
+// Hidden legacy launcher: `gipity claude` predates `gipity build` and stays
+// working forever (deployed relay daemons and the GUI installer invoke it)
+// but is no longer advertised - not in help, not in the manifest, not in docs.
+configureHelp(claudeCommand);
+program.addCommand(claudeCommand, { hidden: true });
 
 // ── `gipity help [command]` + `help --json` machine-readable manifest ───
 // The JSON manifest is generated from the SAME commander registry that

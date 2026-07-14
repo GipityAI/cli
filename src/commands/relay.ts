@@ -125,7 +125,7 @@ relayCommand
     }
 
     if (!s.device) {
-      console.log(`${muted('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
+      console.log(`${muted('No paired device.')} Run ${brand('gipity connect')} to pair this machine.`);
       return;
     }
     console.log(`${bold('Device:')}      ${brand(s.device.name)} ${muted(`(${s.device.guid})`)}`);
@@ -382,7 +382,7 @@ registerInstallCommands(relayCommand);
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
   if (!device) {
-    console.error(`${clrError('No paired device.')} Run ${brand('gipity claude')} to pair this machine.`);
+    console.error(`${clrError('No paired device.')} Run ${brand('gipity connect')} to pair this machine.`);
     process.exit(1);
   }
   return device;

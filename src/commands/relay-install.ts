@@ -17,7 +17,7 @@ import { installAutostart, removeAutostart, resolveCliPath } from '../relay/setu
 function requirePaired(): state.RelayDevice {
   const device = state.getDevice();
   if (!device) {
-    console.error(`${clrError('No paired device.')} Run ${bold('gipity claude')} to pair this machine.`);
+    console.error(`${clrError('No paired device.')} Run ${bold('gipity connect')} to pair this machine.`);
     process.exit(1);
   }
   return device;

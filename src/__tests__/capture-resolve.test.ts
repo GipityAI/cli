@@ -128,6 +128,7 @@ describe('resolveConvGuid: binding order', () => {
       project_guid: 'p_capres01',
       session_id: HOOK.session_id,
       cwd: HOOK.cwd,
+      source: 'claude_code',
     });
 
     // Mapping persisted → a second event resolves without the server.
@@ -203,7 +204,7 @@ describe('resolveConvGuid: per-session serialization', () => {
       writeFileSync(join(captureDir, `sid-${HOOK.session_id}.json`), JSON.stringify({ conv_guid: 'c_winner01' }));
     };
 
-    assert.equal(await resolveConvGuid(HOOK, sleep), 'c_winner01');
+    assert.equal(await resolveConvGuid(HOOK, 'claude_code', sleep), 'c_winner01');
     assert.equal(ticks, 1);
     assert.equal(calls.length, 0); // the loser never called the server
     release!();
@@ -252,7 +253,7 @@ describe('capture-runner self-arm (spawned end-to-end)', () => {
       const reqs = mock.requests();
       const resolveReq = reqs.find(r => r.url === '/remote-sessions/resolve');
       assert.ok(resolveReq, 'runner called /remote-sessions/resolve');
-      assert.deepEqual(resolveReq!.body, { project_guid: 'p_capres01', session_id: sid, cwd: projectDir });
+      assert.deepEqual(resolveReq!.body, { project_guid: 'p_capres01', session_id: sid, cwd: projectDir, source: 'claude_code' });
 
       const ingestReq = reqs.find(r => r.url === '/remote-sessions/c_e2earm01/ingest');
       assert.ok(ingestReq, 'runner ingested into the resolved conversation');

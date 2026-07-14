@@ -53,7 +53,8 @@ import { SessionPool, PoolFullError, type QueryFactory, type SessionStateKind } 
 import { getConfig } from '../config.js';
 import { getAccountSlug } from '../api.js';
 import { buildFreshWrap, buildResumeWrap, buildProjectContextBlock } from '../prompts.js';
-import { fetchProjectStats } from '../commands/claude.js';
+import { fetchProjectStats } from '../commands/build.js';
+import { getAdapterBySource, type RemoteAgentAdapter } from '../agents/index.js';
 
 // Re-exported so the existing `relay-bridge-abort.test.ts` keeps working.
 // New callers should import from device-http.js directly.
@@ -504,6 +505,10 @@ interface ClaimedDispatch {
    *  use the local agent's own default. Forwarded to the spawned agent as
    *  `--model`. Resolved server-side at claim time, so the latest choice wins. */
   model: string | null;
+  /** Which coding agent runs this dispatch - the conversation's `source`
+   *  ('claude_code' | 'codex' | 'grok'). Absent from older servers, which
+   *  only ever dispatched Claude. Picks the agent adapter. */
+  remote_type?: string;
   /** Files the user attached in the web CLI, already uploaded into the
    *  project VFS at these project-relative paths. The message text already
    *  carries a server-appended note listing them; the daemon's job is to
@@ -1059,6 +1064,17 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
     if (!syncFailed) pushSystem(bootstrapped ? 'Project files synced.' : 'Attached files synced.');
   }
 
+  // Which agent runs this dispatch. Older servers omit remote_type - they
+  // only ever dispatched Claude Code.
+  const adapter = getAdapterBySource(d.remote_type ?? 'claude_code');
+
+  // Non-Claude agents take the simpler hook-capture dispatch path: no
+  // stream-json ingest, no session pool.
+  if (adapter.key !== 'claude') {
+    await handleNonClaudeDispatch(adapter, d, cwd, queue, pushSystem, flushQueue);
+    return;
+  }
+
   // Phase 2: if the session pool is enabled, try to run this turn in a
   // long-lived Claude Code session (fast follow-up + clean interrupt). Any
   // failure - pool saturated, SDK error, wrap failure - falls through to the
@@ -1068,8 +1084,11 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
     if (handled) return;
   }
 
-  // Build argv for `gipity claude -p …` (or with --resume). No shell - argv
-  // as array so the message string can't be interpreted as shell syntax.
+  // Build argv for `gipity build --agent claude -p …` (or with --resume).
+  // No shell - argv as array so the message string can't be interpreted as
+  // shell syntax. (`build` is the renamed launcher; the flags below pass
+  // through it to the `claude` binary unchanged, exactly as the legacy
+  // `gipity claude -p` spawn did.)
   //
   // `--permission-mode bypassPermissions`: a relay dispatch has no
   // human on the other end to click "Approve" - Claude prompting would
@@ -1077,7 +1096,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   // the device and dispatching the message; skipping the interactive
   // prompt is correct (same authority as running `claude -p` in a local
   // terminal yourself).
-  const args = ['claude', '-p', d.message, '--permission-mode', 'bypassPermissions'];
+  const args = ['build', '--agent', 'claude', '-p', d.message, '--permission-mode', 'bypassPermissions'];
   // Relay sessions run in -p mode, where Claude Code's AskUserQuestion tool
   // is unavailable - so without help the model would ask clarifying
   // questions as prose the user just types back. This system-prompt
@@ -1095,7 +1114,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
     args.push('--resume', d.remote_session_id);
   }
 
-  log('debug', 'spawning gipity claude', {
+  log('debug', 'spawning gipity build --agent claude', {
     id: d.short_guid,
     cwd,
     args,
@@ -1234,7 +1253,98 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
     await ack(d.short_guid, 'done', undefined, metrics);
   } else {
     log('warn', 'dispatch child exited nonzero', { id: d.short_guid, exitCode, ms });
-    await ack(d.short_guid, 'error', `gipity claude exited with code ${exitCode}${stderrNote}`);
+    await ack(d.short_guid, 'error', `Claude Code exited with code ${exitCode}${stderrNote}`);
+  }
+}
+
+/**
+ * Dispatch for non-Claude agents (Codex, Grok). Deliberately simpler than
+ * the Claude path: there is no stream-json ingest mapper for these agents -
+ * hook-based session capture (Phase C) owns the transcript. The spawned
+ * `gipity build --agent <key> -p …` child gets GIPITY_CONVERSATION_GUID (so
+ * capture posts into the right conversation) and capture is NOT turned off.
+ * The daemon contributes: the "Running <agent>" marker, byte-level progress
+ * heartbeats (spawnGipityClaude's generic plumbing with streamJson:false),
+ * post-run file sync, the tail marker, and the ack. The prompt entry itself
+ * arrives via capture from the agent's own transcript - the daemon doesn't
+ * push one, or it would render twice.
+ */
+async function handleNonClaudeDispatch(
+  adapter: RemoteAgentAdapter,
+  d: ClaimedDispatch,
+  cwd: string,
+  queue: IngestQueue,
+  pushSystem: (content: string) => void,
+  flushQueue: () => Promise<void>,
+): Promise<void> {
+  // `gipity build` translates these into the agent's own argv via the same
+  // adapter (Codex: `exec …`; Grok: `-p … --always-approve`). Raw message -
+  // AGENTS.md carries the Gipity context for these agents; no wrapping.
+  const args = ['build', '--agent', adapter.key, '-p', d.message, '--bypass-approvals'];
+  if (d.model) args.push('--model', d.model);
+  if (d.kind === 'resume' && d.remote_session_id) args.push('--resume', d.remote_session_id);
+
+  log('debug', `spawning gipity build --agent ${adapter.key}`, {
+    id: d.short_guid, cwd, args, conv: d.conversation_guid,
+    chain: d.kind === 'resume' ? `resume ${d.remote_session_id}` : 'start (fresh session)',
+  });
+
+  const words = d.message.trim().split(/\s+/).filter(Boolean).length;
+  pushSystem(`Running ${adapter.displayName} - ${words.toLocaleString('en-US')} words`);
+
+  const t0 = Date.now();
+  let exitCode = 1;
+  let spawnErr: string | null = null;
+  let killed = false;
+  let runtimeLimit = false;
+  let stderrTail = '';
+  try {
+    const result = await spawnGipityClaude(args, cwd, d, queue, { streamJson: false });
+    exitCode = result.exitCode;
+    killed = result.killed;
+    runtimeLimit = result.runtimeLimit ?? false;
+    stderrTail = result.stderrTail ?? '';
+  } catch (err: any) {
+    spawnErr = err?.message || String(err);
+    log('error', 'dispatch spawn failed', { id: d.short_guid, err: spawnErr });
+  }
+  const dur = formatDuration(Date.now() - t0);
+
+  // Same post-run reconcile as the Claude path: push files the agent wrote
+  // via Bash/scripts back to VFS before the ack (hooks only cover its
+  // native edit tools). Skipped on kill - the replacement dispatch owns the tree.
+  if (!spawnErr && !killed) {
+    try {
+      await spawnSync(cwd, PROJECT_SYNC_TIMEOUT_MS);
+    } catch (err: any) {
+      log('warn', 'sync after dispatch failed', { id: d.short_guid, err: err?.message });
+    }
+  }
+
+  const stderrNote = stderrTail ? `: ${stderrTail.slice(0, 300)}` : '';
+  const tail = runtimeLimit
+    ? `stopped after ${dur} (runtime limit)`
+    : killed
+      ? `cancelled (${dur})`
+      : spawnErr
+        ? `failed (${dur}: ${spawnErr})`
+        : exitCode === 0
+          ? `finished (${dur})`
+          : `failed (${dur}, exit ${exitCode}${stderrNote})`;
+  pushSystem(`${adapter.displayName} ${tail}`);
+  await flushQueue();
+
+  if (runtimeLimit) {
+    await ack(d.short_guid, 'error', `${adapter.displayName} stopped after ${dur} (runtime limit)`);
+  } else if (killed) {
+    await ack(d.short_guid, 'cancelled');
+  } else if (spawnErr) {
+    await ack(d.short_guid, 'error', spawnErr);
+  } else if (exitCode === 0) {
+    log('info', 'dispatch done', { id: d.short_guid, agent: adapter.key });
+    await ack(d.short_guid, 'done');
+  } else {
+    await ack(d.short_guid, 'error', `${adapter.displayName} exited with code ${exitCode}${stderrNote}`);
   }
 }
 
@@ -1682,8 +1792,13 @@ export async function spawnGipityClaude(
   cwd: string,
   d: ClaimedDispatch,
   queue?: IngestQueue,
-  meta?: { resumeWords?: number },
+  meta?: { resumeWords?: number; streamJson?: boolean },
 ): Promise<{ exitCode: number; killed: boolean; runtimeLimit?: boolean; stderrTail?: string; startupMs?: number }> {
+  // streamJson (default true) = the Claude path: parse the child's
+  // stream-json stdout into ingest entries and stand hook capture down.
+  // false = non-Claude agents (Codex/Grok): hook capture owns the
+  // transcript; stdout only feeds the byte-level progress heartbeat.
+  const streamJson = meta?.streamJson !== false;
   // resolveCommand: on Windows the bare `gipity` is a .cmd shim that spawn
   // can't launch without an explicit path. An explicit env override is used
   // verbatim (it may be a full path); only the default name is resolved.
@@ -1694,13 +1809,19 @@ export async function spawnGipityClaude(
   // `--include-partial-messages` adds stream_event token deltas, which
   // feed the ephemeral live-typing channel (see stream-delta.ts); whole
   // assistant/tool events still arrive unchanged for the persistent path.
-  const fullArgs = [...args, '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
+  const fullArgs = streamJson
+    ? [...args, '--output-format', 'stream-json', '--verbose', '--include-partial-messages']
+    : [...args];
   // GIPITY_CAPTURE=off: the daemon owns capture for this dispatch (it
   // parses the stream-json on stdout), so the plugin's lifecycle-hook
   // capture must stand down. `gipity claude` sets the same sentinel on the
   // Claude child when it detects a daemon spawn; setting it here too keeps
-  // dispatches double-post-free even across CLI version skew.
-  const env = childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid, GIPITY_CAPTURE: 'off' });
+  // dispatches double-post-free even across CLI version skew. Non-Claude
+  // agents are the opposite: hook capture IS the transcript path, so the
+  // sentinel must NOT be set.
+  const env = streamJson
+    ? childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid, GIPITY_CAPTURE: 'off' })
+    : childEnv({ GIPITY_CONVERSATION_GUID: d.conversation_guid });
 
   return new Promise((resolve, reject) => {
     const child: ChildProcess = spawnCommand(cmd, fullArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1903,9 +2024,9 @@ export async function spawnGipityClaude(
     child.stdout?.on('data', (chunk) => {
       stdoutBytesTotal += chunk.length;
       lastStdoutByteAt = Date.now();
-      splitter.push(chunk);
+      if (streamJson) splitter.push(chunk);
     });
-    child.stdout?.on('end', () => splitter.flush());
+    child.stdout?.on('end', () => { if (streamJson) splitter.flush(); });
 
     // Stderr: human-readable only (Claude's progress bars, errors).
     // Kept on the daemon's own stderr for `gipity relay log`, plus a

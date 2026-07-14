@@ -123,13 +123,13 @@ describe('gipity claude --new-project / --project', () => {
 // qwen-flight zero-message bug, 2026-07-07).
 describe('hasStreamJsonFlag', () => {
   it('detects both the two-arg and equals forms', async () => {
-    const { hasStreamJsonFlag } = await import('../commands/claude.js');
+    const { hasStreamJsonFlag } = await import('../commands/build.js');
     assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format', 'stream-json']), true);
     assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format=stream-json']), true);
   });
 
   it('is false for other formats and for no format flag at all', async () => {
-    const { hasStreamJsonFlag } = await import('../commands/claude.js');
+    const { hasStreamJsonFlag } = await import('../commands/build.js');
     assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format', 'json']), false);
     assert.equal(hasStreamJsonFlag(['-p', 'x', '--output-format=json']), false);
     assert.equal(hasStreamJsonFlag(['-p', 'x']), false);

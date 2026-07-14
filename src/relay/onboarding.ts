@@ -142,7 +142,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   }
 
   // Start the daemon for this session.
-  const startNow = await confirm('  Start the relay now (and on future `gipity claude` runs)?', { default: 'yes' });
+  const startNow = await confirm('  Start the relay now (and on future `gipity build` runs)?', { default: 'yes' });
   if (startNow) {
     startDaemon();
   }
@@ -159,7 +159,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
           // generic non-zero. The relay itself is unaffected (it's already
           // running this session, and `gipity claude` restarts it).
           console.log(`  ${muted('Auto-start needs systemd, which this WSL distro has off. The relay still runs -')}`);
-          console.log(`  ${muted('it started just now and `gipity claude` restarts it. For boot-time auto-start:')}`);
+          console.log(`  ${muted('it started just now and `gipity build` restarts it. For boot-time auto-start:')}`);
           console.log(`  ${muted('add [boot] systemd=true to /etc/wsl.conf, restart WSL, then run')} ${brand('gipity relay install')}${muted('.')}`);
         } else {
           console.log(`  ${muted('Autostart install returned non-zero - you can run')} ${brand('gipity relay install')} ${muted('later.')}`);

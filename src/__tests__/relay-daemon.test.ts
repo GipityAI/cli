@@ -354,7 +354,7 @@ describe('daemon: kill-on-new-message start→resume upgrade', () => {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       try {
-        if (readFileSync(argsLog, 'utf-8').includes('ARGS::claude -p one')) break;
+        if (readFileSync(argsLog, 'utf-8').includes('ARGS::build --agent claude -p one')) break;
       } catch { /* not written yet */ }
       await new Promise(r => setTimeout(r, 50));
     }
@@ -364,7 +364,7 @@ describe('daemon: kill-on-new-message start→resume upgrade', () => {
     await daemonDone;
 
     const spawnLines = readFileSync(argsLog, 'utf-8').trim().split('\n')
-      .filter(l => l.startsWith('ARGS::claude -p'));
+      .filter(l => l.startsWith('ARGS::build --agent claude -p'));
     assert.equal(spawnLines.length, 2, `expected 2 claude spawns, got: ${spawnLines.join(' | ')}`);
     // First spawn: fresh session, no --resume.
     assert.doesNotMatch(spawnLines[0], /--resume/);
@@ -410,7 +410,7 @@ describe('daemon: web-attached files trigger a pre-run sync', () => {
     assert.equal(acks.length, 1);
     assert.equal(acks[0].status, 'done', `got ${acks[0].status}: ${acks[0].error}`);
     const lines = readFileSync(argsLog, 'utf-8').trim().split('\n');
-    const firstClaude = lines.findIndex(l => l.startsWith('ARGS::claude -p'));
+    const firstClaude = lines.findIndex(l => l.startsWith('ARGS::build --agent claude -p'));
     const firstSync = lines.findIndex(l => l.startsWith('ARGS::sync --json'));
     assert.notEqual(firstClaude, -1, `no claude spawn in: ${lines.join(' | ')}`);
     assert.notEqual(firstSync, -1, `no sync spawn in: ${lines.join(' | ')}`);
@@ -430,7 +430,7 @@ describe('daemon: web-attached files trigger a pre-run sync', () => {
     const lines = readFileSync(argsLog, 'utf-8').trim().split('\n');
     // The agent spawn must be FIRST - any sync (the post-dispatch push-back)
     // comes after it.
-    assert.ok(lines[0].startsWith('ARGS::claude -p'), `expected claude first: ${lines.join(' | ')}`);
+    assert.ok(lines[0].startsWith('ARGS::build --agent claude -p'), `expected claude first: ${lines.join(' | ')}`);
   });
 });
 

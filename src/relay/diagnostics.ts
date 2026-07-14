@@ -35,7 +35,7 @@ export interface RelayDiagnostics {
   uptime_s?: number;
   disk?: { total?: number; free?: number };
   gpu?: string | null;
-  agents?: { claude_code?: string; codex?: string; cursor?: string };
+  agents?: { claude_code?: string; codex?: string; grok?: string; cursor?: string };
   projects_local?: number;
 }
 
@@ -144,12 +144,13 @@ export async function collectDiagnostics(): Promise<RelayDiagnostics> {
   const cores = (() => { try { return cpus(); } catch { return []; } })();
   // Run the subprocess probes concurrently (each already bounded + best-effort)
   // so the whole snapshot costs one timeout, not the sum of four.
-  const [claude, codex, cursor, gpu] = await Promise.all([
-    probeVersion('claude'), probeVersion('codex'), probeVersion('cursor'), detectGpu(),
+  const [claude, codex, grok, cursor, gpu] = await Promise.all([
+    probeVersion('claude'), probeVersion('codex'), probeVersion('grok'), probeVersion('cursor'), detectGpu(),
   ]);
   const agents: RelayDiagnostics['agents'] = {};
   if (claude) agents.claude_code = claude;
   if (codex) agents.codex = codex;
+  if (grok) agents.grok = grok;
   if (cursor) agents.cursor = cursor;
 
   return {

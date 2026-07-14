@@ -157,7 +157,7 @@ Working with an existing Gipity project:
         const sizeStr = scan.truncated ? `>${formatBytes(ADOPT_THRESHOLDS.REFUSE_BYTES)}` : formatBytes(scan.bytes);
         const fileStr = scan.truncated ? `>${ADOPT_THRESHOLDS.REFUSE_FILES}` : `${scan.files}`;
         console.error(clrError(`Directory has ${fileStr} files (${sizeStr}) - too large to adopt as a Gipity project.`));
-        console.error(muted('Move into a subdirectory, or use `gipity claude` and pick "Create new project".'));
+        console.error(muted('Move into a subdirectory, or use `gipity build` and pick "Create new project".'));
         process.exit(1);
       }
       if (scan.tier === 'moderate') {
@@ -198,7 +198,7 @@ Working with an existing Gipity project:
 
       console.log(success(`Wrote primer files: ${primerSummary}.`));
       if (wantsClaude) {
-        console.log(success('Ready! Run `gipity claude` for Claude Code, or open this directory in your other AI coding tool.'));
+        console.log(success('Ready! Run your coding agent here (claude, codex, grok), or `gipity build` to launch one with a picker.'));
         // Recording happens by default (however Claude Code is launched), so
         // say so up front - consent should be explicit, not discovered later.
         if (opts.capture === false) {

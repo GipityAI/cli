@@ -158,7 +158,7 @@ export const LEGACY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
 // an installed plugin when the marketplace advances - only an explicit
 // `plugin install`/`update` does - so this constant is how a CLI upgrade tells
 // ensureGipityPluginInstalled() to refresh a stale user-scope install.
-export const GIPITY_PLUGIN_VERSION = '0.6.0';
+export const GIPITY_PLUGIN_VERSION = '0.7.0';
 
 /** True for hook commands the CLI itself wrote into settings.json in past
  *  versions. Matched by signature so migration strips exactly our own
@@ -294,7 +294,7 @@ export function userScopePluginCurrent(): boolean {
   return userScopeInstallState().current;
 }
 
-function binaryOnPath(bin: string): boolean {
+export function binaryOnPath(bin: string): boolean {
   const probe = spawnSyncCommand(process.platform === 'win32' ? 'where' : 'which', [bin], {
     encoding: 'utf-8',
   });
@@ -476,15 +476,23 @@ export function ensureAgentSkillsInstalled(): void {
 /** Pure core of the .codex/hooks.json merge: given the file's current content
  *  (`null` when absent), return the new content, or `null` when no change is
  *  needed. Adds the Gipity sync hook groups (push on file edits, pull before
- *  each prompt) while preserving any user-authored hooks; our groups are
- *  recognized by their agent-hooks script paths. Exported for unit testing. */
+ *  each prompt) AND the session-capture groups (SessionStart / throttled
+ *  PostToolUse / Stop → capture.cjs, which mirrors the session into the web
+ *  CLI; Codex has no SessionEnd or SubagentStop, so those are absent), while
+ *  preserving any user-authored hooks. Our groups are recognized by their
+ *  exact command string, so a re-run upgrades older sync-only files by adding
+ *  just the missing capture entries. Exported for unit testing. */
 export function applyCodexHooks(existing: string | null): string | null {
   const launcher = join(AGENT_HOOKS_DIR, 'launch.sh');
-  const cmd = (script: string): string =>
-    `sh "${launcher}" "${join(AGENT_HOOKS_DIR, script)}"`;
+  const cmd = (script: string, ...args: string[]): string =>
+    [`sh "${launcher}" "${join(AGENT_HOOKS_DIR, script)}"`, ...args].join(' ');
   const wanted: Array<{ event: string; matcher?: string; command: string; timeout: number }> = [
     { event: 'PostToolUse', matcher: 'Edit|Write', command: cmd('sync-push.cjs'), timeout: 30 },
     { event: 'UserPromptSubmit', command: cmd('sync-pull.cjs'), timeout: 300 },
+    // Session capture: mirror the Codex session into the Gipity web CLI.
+    { event: 'SessionStart', command: cmd('capture.cjs', 'codex', 'session-start'), timeout: 30 },
+    { event: 'PostToolUse', command: cmd('capture.cjs', 'codex', 'post-tool-use'), timeout: 30 },
+    { event: 'Stop', command: cmd('capture.cjs', 'codex', 'stop'), timeout: 60 },
   ];
 
   let settings: Record<string, any> = {};
@@ -501,7 +509,7 @@ export function applyCodexHooks(existing: string | null): string | null {
     const groups: any[] = Array.isArray(hooks[w.event]) ? hooks[w.event] : (hooks[w.event] = []);
     const present = groups.some((g: any) =>
       Array.isArray(g?.hooks) && g.hooks.some(
-        (h: any) => typeof h?.command === 'string' && h.command.includes('agent-hooks'),
+        (h: any) => typeof h?.command === 'string' && h.command === w.command,
       ),
     );
     if (present) continue;
@@ -527,7 +535,9 @@ export function setupCodexHooks(): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next);
   if (existing === null) {
-    console.log('Wrote Codex sync hooks (.codex/hooks.json) - approve them once with /hooks inside Codex.');
+    console.log('Wrote Codex sync + session-capture hooks (.codex/hooks.json) - approve them once with /hooks inside Codex.');
+  } else {
+    console.log('Updated Codex hooks (.codex/hooks.json) - if Codex asks, re-approve them via /hooks.');
   }
 }
 

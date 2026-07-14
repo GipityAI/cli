@@ -3,7 +3,8 @@ import { join, dirname, resolve, basename, sep } from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { resolveCommand, spawnCommand } from '../platform.js';
+import { randomUUID } from 'crypto';
+import { resolveCommand, spawnCommand, spawnSyncCommand } from '../platform.js';
 import { getAuth, sessionExpired, accessTokenExpired, refreshTokenIfNeeded } from '../auth.js';
 import { get, post, ApiError, getAccountSlug } from '../api.js';
 import { interactiveLogin } from '../login-flow.js';
@@ -32,6 +33,9 @@ import {
   ADOPT_THRESHOLDS,
 } from '../adopt-cwd.js';
 import { isClaudeInstalled, ensureClaudeInstalled, CLAUDE_PACKAGE } from '../claude-setup.js';
+import { AGENT_ADAPTERS, AGENT_KEYS, getAdapter, type RemoteAgentAdapter } from '../agents/index.js';
+import { readPrefs, writePrefs } from '../prefs.js';
+import { binaryOnPath } from '../setup.js';
 
 const __clDir = dirname(fileURLToPath(import.meta.url));
 // Walk up to the nearest gipity package.json instead of a hardcoded '../..':
@@ -269,36 +273,58 @@ function suggestProjectName(existingSlugs: string[]): string {
   return `project-${Date.now().toString(36).slice(-6)}`;
 }
 
-export const claudeCommand = new Command('claude')
-  .description('Set up and run Claude Code')
-  .option('--setup-only', 'Do the Gipity setup but skip launching the agent')
-  .option('--new-project', 'Create a fresh Gipity project instead of using cwd or the picker')
-  .option('--name <name>', 'Name for --new-project (default: project-NNN)')
-  .option('--project <slug>', 'Open an existing project by slug or id')
-  .option('--here', 'Use the current directory instead of ~/GipityProjects/<slug>/')
-  .option('--quiet', "Suppress Claude's live progress output (headless --new-project/--project runs)")
-  // Forwarded to `claude` via the unknown-arg passthrough below (NOT in the
-  // gipity strip lists). Declared here only so it shows up in --help — without
-  // this, callers can't discover that the session model is selectable.
-  .option('--model <model>', 'Model for the Claude session, forwarded to claude (e.g. sonnet, opus, or a full id like claude-sonnet-5)')
-  .allowUnknownOption(true)
-  .allowExcessArguments(true)
-  .action(async (opts) => {
+/** Both launch commands share one implementation: `gipity build` (the
+ *  documented start-from-anywhere funnel: project picker + agent picker +
+ *  model picker) and the hidden legacy `gipity claude` (identical behavior
+ *  with the agent pinned to Claude and no agent/model questions - kept
+ *  working forever because deployed relay daemons and the GUI installer
+ *  invoke it, but no longer advertised anywhere). */
+function createLaunchCommand(name: string, cfg: { presetAgent?: string } = {}): Command {
+  const cmd = new Command(name)
+    .description(cfg.presetAgent ? 'Set up and run Claude Code (legacy alias of `gipity build`)' : 'Start building from anywhere - pick a project, pick your coding agent, go')
+    .option('--setup-only', 'Do the Gipity setup but skip launching the agent')
+    .option('--new-project', 'Create a fresh Gipity project instead of using cwd or the picker')
+    .option('--name <name>', 'Name for --new-project (default: project-NNN)')
+    .option('--project <slug>', 'Open an existing project by slug or id')
+    .option('--here', 'Use the current directory instead of ~/GipityProjects/<slug>/')
+    .option('--quiet', "Suppress the agent's live progress output (headless --new-project/--project runs)")
+    // Forwarded to the agent via the unknown-arg passthrough below (NOT in the
+    // gipity strip lists). Declared here only so it shows up in --help — without
+    // this, callers can't discover that the session model is selectable.
+    .option('--model <model>', 'Model for the session (e.g. opus, sonnet - or skip it to use your agent\'s own default)')
+    .option('--bypass-approvals', 'Skip the agent\'s interactive tool approvals (headless runs; the relay daemon sets this)')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true);
+  if (!cfg.presetAgent) {
+    cmd.option('--agent <agent>', `Which coding agent to launch: ${AGENT_KEYS.join(', ')} (default: your last-used)`);
+  }
+  cmd.action(async (opts) => { await runLaunch(name, cfg, opts); });
+  return cmd;
+}
+
+export const buildCommand = createLaunchCommand('build');
+export const claudeCommand = createLaunchCommand('claude', { presetAgent: 'claude' });
+
+async function runLaunch(
+  cmdName: string,
+  cmdCfg: { presetAgent?: string },
+  opts: any,
+): Promise<void> {
     try {
       const runStart = Date.now();
-      // Non-interactive passthrough: `gipity claude -p "msg"` (and --print)
-      // route directly to `claude -p` after the normal setup (auth, hooks,
-      // sync). Used by the upcoming `gipity relay` daemon to dispatch
-      // messages from the web CLI into a local Claude Code session without
-      // a human at the terminal. Requires an existing .gipity.json - we
-      // can't interactively pick or create a project in this mode.
-      const rawArgs = process.argv.slice(process.argv.indexOf('claude') + 1);
+      // Non-interactive passthrough: `gipity build -p "msg"` (and --print)
+      // routes directly to the agent's headless mode after the normal setup
+      // (auth, hooks, sync). Used by the relay daemon to dispatch messages
+      // from the web CLI into a local agent session without a human at the
+      // terminal. Requires an existing .gipity.json - we can't interactively
+      // pick or create a project in this mode.
+      const rawArgs = process.argv.slice(process.argv.indexOf(cmdName) + 1);
 
-      // `gipity claude install` - explicit, GUI-callable Claude Code install.
+      // `gipity build install` - explicit, GUI-callable Claude Code install.
       // Handled here (leading positional) rather than as a Commander subcommand
       // because this command uses allowUnknownOption/allowExcessArguments to
-      // pass everything through to `claude`; a real subcommand would risk that
-      // passthrough (which the relay daemon's `gipity claude -p` depends on).
+      // pass everything through to the agent; a real subcommand would risk that
+      // passthrough (which the relay daemon's headless dispatches depend on).
       if (rawArgs[0] === 'install') {
         const r = ensureClaudeInstalled({ force: rawArgs.includes('--force') });
         if (r.alreadyPresent) console.log(`  ${success('Claude Code already installed.')}`);
@@ -347,7 +373,7 @@ export const claudeCommand = new Command('claude')
         process.exit(1);
       }
       if (nonInteractive && !getConfig() && !opts.newProject && !opts.project) {
-        console.error(`  ${clrError('No Gipity project in cwd. Run `gipity claude` (interactive) first, or pass --new-project / --project <slug>.')}`);
+        console.error(`  ${clrError('No Gipity project in cwd. Run `gipity build` (interactive) first, or pass --new-project / --project <slug>.')}`);
         process.exit(1);
       }
 
@@ -719,9 +745,46 @@ export const claudeCommand = new Command('claude')
         console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
       }
 
-      // ── Step 3: Launch Claude Code ────────────────────────────────────
+      // ── Step 3: Pick the coding agent + model ─────────────────────────
       if (opts.setupOnly) {
-        console.log(`  Done. cd ${process.cwd()} && gipity claude`);
+        console.log(`  Done. cd ${process.cwd()} && gipity ${cmdName}`);
+        return;
+      }
+
+      const prefs = readPrefs();
+      let agentKey = cmdCfg.presetAgent ?? (typeof opts.agent === 'string' ? opts.agent.toLowerCase() : undefined);
+      if (agentKey && !AGENT_KEYS.includes(agentKey)) {
+        console.error(`  ${clrError(`Unknown agent "${agentKey}".`)} ${muted(`Valid: ${AGENT_KEYS.join(', ')}`)}`);
+        process.exit(1);
+      }
+      if (!agentKey) {
+        if (nonInteractive) {
+          // Headless never prompts: --agent, else last-used, else Claude.
+          agentKey = prefs.lastAgent && AGENT_KEYS.includes(prefs.lastAgent) ? prefs.lastAgent : 'claude';
+        } else {
+          agentKey = await pickAgent(prefs.lastAgent);
+        }
+      }
+      const adapter = getAdapter(agentKey);
+
+      // Model: an explicit --model (in the passthrough args) wins and skips
+      // the question. Interactive launches get the picker - option 1 is
+      // "Agent default", which passes NO model flag so the agent's own model
+      // memory stays authoritative. Headless runs never prompt. Only an
+      // interactive answer is remembered (a daemon dispatch or the legacy
+      // `gipity claude` shim must not clobber the user's picker memory).
+      const modelFlagGiven = rawArgs.some(a => a === '--model' || a.startsWith('--model='));
+      let pickedModel: string | null = null;
+      if (!nonInteractive && !modelFlagGiven && !cmdCfg.presetAgent) {
+        pickedModel = await pickModel(adapter, prefs.lastModel?.[adapter.key] ?? null);
+        writePrefs({ lastAgent: adapter.key, lastModel: { [adapter.key]: pickedModel } });
+      }
+
+      // ── Step 4: Launch the agent ───────────────────────────────────────
+      if (adapter.key !== 'claude') {
+        await launchNonClaudeAgent(adapter, {
+          cmdName, opts, rawArgs, nonInteractive, headlessOut, runStart, pickedModel,
+        });
         return;
       }
 
@@ -782,7 +845,7 @@ export const claudeCommand = new Command('claude')
             if (resumeSid) {
               try {
                 const found = await get<{ data: { conversation_guid: string } }>(
-                  `/conversations/claude-code/by-session/${encodeURIComponent(resumeSid)}`,
+                  `/conversations/remote/by-session/${encodeURIComponent(resumeSid)}?source=claude_code`,
                 );
                 convGuidForHooks = found.data.conversation_guid;
               } catch {
@@ -791,13 +854,13 @@ export const claudeCommand = new Command('claude')
               }
             }
             if (!convGuidForHooks && cfg?.projectGuid) {
-              // Terminal `gipity claude` is always origin='local' - marks the
+              // A terminal launch is always origin='local' - marks the
               // conversation as a local-terminal chat so the web CLI renders
               // it read-only. Dispatch convs (created by the relay daemon
-              // spawning `gipity claude -p`) use the default 'dispatch'.
+              // spawning headless runs) use the default 'dispatch'.
               const created = await post<{ data: { conversation_guid: string } }>(
-                '/conversations/claude-code',
-                { project_guid: cfg.projectGuid, device_guid: device.guid, origin: 'local' },
+                '/conversations/remote',
+                { project_guid: cfg.projectGuid, device_guid: device.guid, source: 'claude_code', origin: 'local' },
               );
               convGuidForHooks = created.data.conversation_guid;
             }
@@ -809,14 +872,14 @@ export const claudeCommand = new Command('claude')
         }
       }
 
-      // Pass through all unknown args to claude (everything after 'claude').
-      // Gipity-level flags are stripped: boolean flags dropped outright,
-      // value-bearing flags drop the flag and its value (both `--f v` and
-      // `--f=v` forms).
-      const claudeIdx = process.argv.indexOf('claude');
-      const rawClaudeArgs = process.argv.slice(claudeIdx + 1);
-      const gipityBooleanFlags = new Set(['--setup-only', '--new-project', '--here', '--quiet']);
-      const gipityValueFlags = ['--api-base', '--name', '--project'];
+      // Pass through all unknown args to the agent (everything after the
+      // command name). Gipity-level flags are stripped: boolean flags dropped
+      // outright, value-bearing flags drop the flag and its value (both
+      // `--f v` and `--f=v` forms).
+      const cmdIdx = process.argv.indexOf(cmdName);
+      const rawClaudeArgs = process.argv.slice(cmdIdx + 1);
+      const gipityBooleanFlags = new Set(['--setup-only', '--new-project', '--here', '--quiet', '--bypass-approvals']);
+      const gipityValueFlags = ['--api-base', '--name', '--project', '--agent'];
       const claudeArgs: string[] = [];
       for (let i = 0; i < rawClaudeArgs.length; i++) {
         const arg = rawClaudeArgs[i];
@@ -830,6 +893,9 @@ export const claudeCommand = new Command('claude')
         console.log(`  ${bold('Launching Claude Code, powered by Gipity.')}`);
         console.log(`  ${muted("Just tell Claude what you'd like to build or do - everything Claude can do,")}`);
         console.log(`  ${muted('plus hosting, databases, and live deploys on Gipity.')}`);
+        if (convGuidForHooks) {
+          console.log(`  ${muted(`This session is saved to Gipity - watch it live at ${brand('prompt.gipity.ai')}. (--no-capture on init to disable.)`)}`);
+        }
         console.log('');
       }
 
@@ -877,6 +943,10 @@ export const claudeCommand = new Command('claude')
         }
       } else {
         allArgs = initialPrompt ? [initialPrompt, ...claudeArgs] : claudeArgs;
+        // Model from the interactive picker (an explicit --model flag skipped
+        // the picker and is already in claudeArgs; "Agent default" is null and
+        // deliberately passes nothing).
+        if (pickedModel) allArgs.push('--model', pickedModel);
       }
 
       // Single-command headless flows (`--new-project` / `--project` with -p)
@@ -943,7 +1013,11 @@ export const claudeCommand = new Command('claude')
       child.on('exit', (code) => {
         const doneLine = `Done (${formatElapsed(Date.now() - runStart)})`;
         if (nonInteractive) process.stderr.write(`\n${doneLine}\n\n`);
-        else console.log(`\n  ${doneLine}`);
+        else {
+          console.log(`\n  ${doneLine}`);
+          // Both continue paths are first-class - user preference, not a hierarchy.
+          console.log(`  ${muted(`Next time: gipity build from anywhere, or cd ${process.cwd()} && claude.`)}`);
+        }
         process.exit(code ?? 0);
       });
 
@@ -951,7 +1025,227 @@ export const claudeCommand = new Command('claude')
       console.error(`\n  ${clrError(`Error: ${err.message}`)}`);
       process.exit(1);
     }
+}
+
+// ─── Agent + model pickers ────────────────────────────────────────────────
+// Same pick-a-number-or-hit-enter format as the project picker. The
+// enter-enter path must stay the visibly obvious one: default agent =
+// last-used (else Claude), default model = "Agent default".
+
+async function pickAgent(lastUsed: string | undefined): Promise<string> {
+  const defaultKey = lastUsed && AGENT_KEYS.includes(lastUsed) ? lastUsed : 'claude';
+  const defaultIdx = AGENT_ADAPTERS.findIndex(a => a.key === defaultKey) + 1;
+  console.log(`  ${bold('Which coding agent?')}\n`);
+  AGENT_ADAPTERS.forEach((a, i) => {
+    const installed = binaryOnPath(a.binary) || (a.key === 'claude' && isClaudeInstalled());
+    const notes: string[] = [];
+    if (a.key === lastUsed) notes.push('last used');
+    if (!installed) notes.push(a.ensureInstalled ? "not installed - we'll install it" : 'not installed');
+    if (a.key === 'codex' && !a.hooksSupportedOnPlatform(process.platform)) {
+      notes.push('session recording unavailable on Windows');
+    }
+    const note = notes.length ? `  ${muted(`(${notes.join(', ')})`)}` : '';
+    console.log(`    ${bold(`${i + 1}.`)} ${a.displayName} ${muted(`(${a.providerName})`)}${note}`);
   });
+  console.log('');
+  const choice = await pickOne('Choose', AGENT_ADAPTERS.length, defaultIdx);
+  console.log('');
+  return AGENT_ADAPTERS[choice - 1].key;
+}
+
+/** Returns the model id to pass via --model, or null for "Agent default"
+ *  (no flag at all - the agent's own model memory stays authoritative). */
+async function pickModel(adapter: RemoteAgentAdapter, lastUsed: string | null): Promise<string | null> {
+  console.log(`  ${bold('Which model?')}\n`);
+  const lastIsModel = lastUsed && adapter.models.some(m => m.id === lastUsed);
+  const defaultIdx = lastIsModel ? adapter.models.findIndex(m => m.id === lastUsed) + 2 : 1;
+  console.log(`    ${bold('1.')} Agent default ${muted(defaultIdx === 1 ? '(recommended)' : '')}`);
+  adapter.models.forEach((m, i) => {
+    const note = m.id === lastUsed ? `  ${muted('(last used)')}` : '';
+    console.log(`    ${bold(`${i + 2}.`)} ${m.label}${note}`);
+  });
+  console.log('');
+  const choice = await pickOne('Choose', adapter.models.length + 1, defaultIdx);
+  console.log('');
+  return choice === 1 ? null : adapter.models[choice - 2].id;
+}
+
+// ─── Non-Claude agent launch (Codex, Grok) ────────────────────────────────
+// The Claude path above carries years of Claude-specific plumbing (plugin
+// install, folder trust, stream-json capture gating, -p context wrapping).
+// Other agents launch simpler: their project integration (skills, hooks,
+// AGENTS.md) was installed by setupProjectTools() during the project step,
+// and session capture rides those hooks - INCLUDING for relay dispatches
+// (there is no stream-json ingest path for them, so GIPITY_CAPTURE is never
+// turned off here).
+async function launchNonClaudeAgent(adapter: RemoteAgentAdapter, ctx: {
+  cmdName: string;
+  opts: any;
+  rawArgs: string[];
+  nonInteractive: boolean;
+  headlessOut: (text: string) => void;
+  runStart: number;
+  pickedModel: string | null;
+}): Promise<void> {
+  const { opts, rawArgs, nonInteractive, headlessOut, runStart, pickedModel } = ctx;
+
+  // ── Binary ──────────────────────────────────────────────────────────────
+  if (!binaryOnPath(adapter.binary)) {
+    let installed = false;
+    if (adapter.ensureInstalled) {
+      console.log(`  ${adapter.displayName} not found - installing it now...`);
+      installed = adapter.ensureInstalled();
+    }
+    if (!installed && !binaryOnPath(adapter.binary)) {
+      console.error(`  ${clrError(`${adapter.displayName} is not installed.`)} Install it with: ${adapter.installHint}`);
+      console.error(`  ${muted(`Then run: gipity ${ctx.cmdName} --agent ${adapter.key}`)}`);
+      process.exit(1);
+    }
+  }
+
+  // ── Gipity-level flag strip + agent-flag extraction ────────────────────
+  // Same strip contract as the Claude path, plus extraction of the flags the
+  // adapter translates (-p message, --model, --resume): Codex's headless form
+  // is `codex exec …`, not `-p`, so these can't pass through verbatim.
+  const booleanFlags = new Set(['--setup-only', '--new-project', '--here', '--quiet', '--bypass-approvals']);
+  const valueFlags = ['--api-base', '--name', '--project', '--agent'];
+  let message: string | null = null;
+  let resume: string | undefined;
+  let model: string | undefined = pickedModel ?? undefined;
+  const extras: string[] = [];
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i];
+    if (booleanFlags.has(arg)) continue;
+    if (valueFlags.includes(arg)) { i++; continue; }
+    if (valueFlags.some(f => arg.startsWith(`${f}=`))) continue;
+    if (arg === '-p' || arg === '--print') { message = rawArgs[++i] ?? ''; continue; }
+    if (arg.startsWith('-p=') || arg.startsWith('--print=')) { message = arg.slice(arg.indexOf('=') + 1); continue; }
+    if (arg === '--model') { model = rawArgs[++i]; continue; }
+    if (arg.startsWith('--model=')) { model = arg.slice('--model='.length); continue; }
+    if (arg === '--resume') { resume = rawArgs[++i]; continue; }
+    if (arg.startsWith('--resume=')) { resume = arg.slice('--resume='.length); continue; }
+    extras.push(arg);
+  }
+
+  // ── Conversation binding (session recording) ────────────────────────────
+  // Same three paths as Claude: inherited guid (daemon dispatch), resume
+  // lookup by session id, else create fresh. Hook capture posts the actual
+  // transcript - the env var just pins which conversation it lands in.
+  let convGuid: string | null = process.env.GIPITY_CONVERSATION_GUID ?? null;
+  if (!convGuid) {
+    const device = relayState.getDevice();
+    const config = getConfig();
+    if (device && config?.projectGuid) {
+      try {
+        if (resume) {
+          try {
+            const found = await get<{ data: { conversation_guid: string } }>(
+              `/conversations/remote/by-session/${encodeURIComponent(resume)}?source=${encodeURIComponent(adapter.source)}`,
+            );
+            convGuid = found.data.conversation_guid;
+          } catch { /* no existing conv - create below */ }
+        }
+        if (!convGuid) {
+          const created = await post<{ data: { conversation_guid: string } }>(
+            '/conversations/remote',
+            { project_guid: config.projectGuid, device_guid: device.guid, source: adapter.source, origin: 'local' },
+          );
+          convGuid = created.data.conversation_guid;
+        }
+      } catch (err: any) {
+        if (!nonInteractive) {
+          console.error(`  ${clrError(`Could not create Gipity conversation: ${err?.message || err}`)}`);
+        }
+      }
+    }
+  }
+
+  // ── argv ────────────────────────────────────────────────────────────────
+  let agentArgs: string[];
+  let syntheticSid: string | null = null;
+  if (nonInteractive) {
+    // Headless one-shots auto-bypass approvals when there's no human at the
+    // terminal to click "approve" (single-command runs and relay dispatches)
+    // unless the caller opted out by... passing nothing. Mirrors the Claude
+    // path's --permission-mode auto-append.
+    const bypass = Boolean(opts.bypassApprovals || opts.newProject || opts.project);
+    agentArgs = [
+      ...adapter.buildHeadlessArgs({ message: message ?? '', resume, model, bypassApprovals: bypass, jsonStream: false }),
+      ...extras,
+    ];
+    // Agents that fire no hooks headless (Grok) get launcher-driven capture:
+    // pin the session id now, replay the transcript after the run.
+    if (adapter.headlessCapture) {
+      syntheticSid = resume ?? randomUUID();
+      if (!resume) agentArgs.push(...adapter.headlessCapture.sessionIdArgs(syntheticSid));
+    }
+    if (message) headlessOut(`\nSending to ${adapter.displayName}: ${message}\n`);
+  } else {
+    agentArgs = [...adapter.buildInteractiveArgs({ resume, model }), ...extras];
+    console.log(`  ${bold(`Launching ${adapter.displayName}, powered by Gipity.`)}`);
+    console.log(`  ${muted(`Just tell ${adapter.displayName} what you'd like to build or do - plus hosting,`)}`);
+    console.log(`  ${muted('databases, and live deploys on Gipity.')}`);
+    if (convGuid) {
+      console.log(`  ${muted(`This session is saved to Gipity - watch it live at ${brand('prompt.gipity.ai')}. (--no-capture on init to disable.)`)}`);
+    }
+    if (adapter.oneTimeSetupNote) {
+      console.log(`  ${warning(adapter.oneTimeSetupNote)}`);
+    }
+    console.log('');
+  }
+
+  // ── Spawn ───────────────────────────────────────────────────────────────
+  const childEnv = { ...process.env };
+  if (convGuid) childEnv.GIPITY_CONVERSATION_GUID = convGuid;
+
+  const agentCmd = resolveCommand(adapter.binary);
+  const child = spawnCommand(agentCmd, agentArgs, {
+    stdio: 'inherit',
+    cwd: process.cwd(),
+    env: childEnv,
+  });
+  child.on('error', (err: NodeJS.ErrnoException) => {
+    console.error(`\n  ${clrError(err.code === 'ENOENT'
+      ? `${adapter.displayName} not found. Install it: ${adapter.installHint}`
+      : `Failed to launch ${adapter.displayName}: ${err.message}`)}`);
+    process.exit(1);
+  });
+  child.on('exit', (code) => {
+    // Launcher-driven capture for hookless headless runs: replay the agent's
+    // on-disk transcript through the capture runner as a synthetic
+    // session-start + stop. Best-effort and flushed even on a nonzero exit -
+    // whatever the agent got done should still show in the web CLI.
+    if (syntheticSid && convGuid) {
+      flushHeadlessCapture(adapter, syntheticSid, convGuid);
+    }
+    const doneLine = `Done (${formatElapsed(Date.now() - runStart)})`;
+    if (nonInteractive) process.stderr.write(`\n${doneLine}\n\n`);
+    else {
+      console.log(`\n  ${doneLine}`);
+      console.log(`  ${muted(`Next time: gipity build from anywhere, or cd ${process.cwd()} && ${adapter.binary}.`)}`);
+    }
+    process.exit(code ?? 0);
+  });
+}
+
+/** Synchronously replay a finished headless session's transcript into the
+ *  conversation via the capture runner (which owns parsing, image rewrite,
+ *  ingest batching, watermark state, and session attach). Synchronous on
+ *  purpose: it runs inside the child-exit handler, and the process exits
+ *  right after - a fire-and-forget async spawn would be killed mid-flush. */
+function flushHeadlessCapture(adapter: RemoteAgentAdapter, sessionId: string, convGuid: string): void {
+  const runner = join(__clDir, '..', 'hooks', 'capture-runner.js');
+  if (!existsSync(runner)) return;
+  const payload = JSON.stringify({ session_id: sessionId, cwd: process.cwd() });
+  const env = { ...process.env, GIPITY_CONVERSATION_GUID: convGuid };
+  for (const event of ['session-start', 'stop']) {
+    try {
+      spawnSyncCommand(process.execPath, [runner, adapter.key, event], {
+        input: payload, env, timeout: 60_000, stdio: ['pipe', 'ignore', 'ignore'],
+      });
+    } catch { /* capture is best-effort - never break the run */ }
+  }
+}
 
 type PickResult =
   | { kind: 'pick'; project: ProjectData }
