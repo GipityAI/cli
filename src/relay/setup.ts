@@ -72,8 +72,10 @@ export interface PairedDevice {
 /**
  * Create + persist a relay device, marking the relay opted-in. Idempotent
  * unless `force`: if this machine is already paired and `!force`, the
- * existing device is returned untouched (no server call). With `force`, the
- * old device is revoked server-side (best-effort) before re-pairing.
+ * existing device is returned untouched (no server call). With `force`, we
+ * simply re-register: the server's machine_id dedup reattaches the same
+ * device row and rotates its token (no pre-revoke - revoking first forced a
+ * NEW row and orphaned the conversations bound to the old one, issue #291).
  *
  * Throws on a bad name or if the `/remote-devices` call fails (e.g. 401 when
  * the user isn't logged in) — callers translate that into their own UX.
@@ -90,11 +92,10 @@ export async function pairDevice(opts: { name?: string; force?: boolean } = {}):
     };
   }
   if (existing && opts.force) {
-    try {
-      await post(`/remote-devices/${encodeURIComponent(existing.guid)}/revoke`, {});
-    } catch {
-      // Best-effort: a stale server-side device is harmless; proceed to re-pair.
-    }
+    // Re-register in place: POST /remote-devices with this machine_id
+    // reattaches the existing row and rotates the token, which invalidates
+    // the old bearer anyway - a separate revoke round-trip only detached
+    // the row and orphaned its conversations.
     state.clearDevice();
   }
 

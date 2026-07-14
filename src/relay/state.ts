@@ -8,7 +8,7 @@
  *     paused: boolean,
  *   }
  *
- * The `token` field is the raw device bearer returned by /pair/claim - it
+ * The `token` field is the raw device bearer returned by POST /remote-devices - it
  * never leaves this file or the Authorization header. A future chunk will
  * move it to OS keychain (macOS Keychain, libsecret, wincred); the state
  * module's public surface is designed to absorb that change.

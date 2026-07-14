@@ -34,7 +34,7 @@ relayCommand
   .option('--name <name>', 'Device name shown in the web CLI (default: this machine\'s hostname)')
   .option('--no-start', 'Pair only; do not start the relay daemon now')
   .option('--no-autostart', 'Skip the OS login service (use when a supervising app owns the daemon)')
-  .option('--force', 'Re-pair even if already paired (revokes the old device first)')
+  .option('--force', 'Re-pair even if already paired (re-registers this machine, rotating its token)')
   .option('--json', 'Machine-readable output')
   .action(async (opts: { name?: string; start: boolean; autostart: boolean; force?: boolean; json?: boolean }) => {
     const fail = (code: string, message: string): never => {

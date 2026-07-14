@@ -129,23 +129,29 @@ test('gipity relay setup (already paired) is idempotent and makes no server call
   assert.equal(mock.requests().some(q => q.method === 'POST' && q.url === '/remote-devices'), false);
 });
 
-test('gipity relay setup --force revokes the old device then re-pairs', async () => {
+test('gipity relay setup --force re-registers in place without revoking (keeps conversations)', async () => {
   mock.reset();
-  mock.on('POST /remote-devices/rd_TestDev01/revoke', { body: { data: { revoked: true } } });
   mock.on('POST /remote-devices', { body: { data: {
-    short_guid: 'rd_Fresh02', name: 'My Mac', platform: 'linux', token: 'tok-fresh',
+    short_guid: 'rd_TestDev01', name: 'My Mac', platform: 'linux', token: 'tok-fresh',
   } } });
   const home = pairedHome();
   const r = await run(['relay', 'setup', '--force', '--no-start', '--no-autostart', '--json'], home);
   assert.equal(r.status, 0, r.stderr);
   const parsed = JSON.parse(r.stdout.trim());
-  assert.equal(parsed.device.guid, 'rd_Fresh02');
   assert.equal(parsed.device.reused, false);
-  // The old device must have been revoked server-side before re-pairing.
+
+  // No pre-revoke: revoking first forced the server to mint a NEW device row,
+  // which orphaned every conversation bound to the old one (issue #291). The
+  // machine_id dedup reattaches the same row and rotates its token, which
+  // invalidates the old bearer anyway - so the revoke round-trip was both
+  // unnecessary and destructive.
   const reqs = mock.requests();
-  assert.ok(reqs.some(q => q.method === 'POST' && q.url === '/remote-devices/rd_TestDev01/revoke'));
+  assert.ok(!reqs.some(q => q.url.includes('/revoke')), 'must not revoke before re-registering');
+  assert.ok(reqs.some(q => q.method === 'POST' && q.url === '/remote-devices'));
+
   const state = JSON.parse(readFileSync(join(home, '.gipity', 'relay.json'), 'utf-8'));
-  assert.equal(state.device.guid, 'rd_Fresh02');
+  assert.equal(state.device.guid, 'rd_TestDev01');
+  assert.equal(state.device.token, 'tok-fresh'); // token rotated
 });
 
 test('gipity relay setup --json surfaces a 401 as a not_authenticated error', async () => {
