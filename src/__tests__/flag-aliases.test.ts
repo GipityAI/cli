@@ -31,6 +31,13 @@ describe('normalizeAliases', () => {
     );
   });
 
+  it('rewrites the retired --no-sync-output to --discard-output (cli#134)', () => {
+    assert.deepEqual(
+      normalizeAliases(['node', 'gipity', 'sandbox', 'run', 'bash', 'cmd', '--no-sync-output', 'docs/preview*']),
+      ['node', 'gipity', 'sandbox', 'run', 'bash', 'cmd', '--discard-output', 'docs/preview*'],
+    );
+  });
+
   it('rewrites --out=value equals form', () => {
     assert.deepEqual(
       normalizeAliases(['--out=rice.jpg']),

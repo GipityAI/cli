@@ -30,6 +30,7 @@ export const FLAG_ALIASES: Record<string, string> = {
   '--src': '--source-dir',
   '--srcdir': '--source-dir',
   '--parallel': '--concurrency',
+  '--no-sync-output': '--discard-output',
   '--max': '--limit',
   '--from': '--since',
   '--after': '--since',
