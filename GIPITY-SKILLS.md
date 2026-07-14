@@ -144,7 +144,7 @@ If `gipity add` fails because the project already has files:
   1. `gipity file rm src` - removes the old template directory (recursive, no extra flag needed)
   2. `gipity add <template>` - re-runs cleanly
 - **User wants a *different* project** - keep the current one, create a fresh one:
-  `gipity project create "<name>"` materializes it under `~/GipityProjects/<slug>` and links this machine. Then tell the user to exit Claude (Ctrl+D) and run `gipity claude` - the new project will be at the top of the picker. Once in that session, run `gipity add <template>`.
+  `gipity project create "<name>"` materializes it under `~/GipityProjects/<slug>` and links this machine. Then tell the user to exit Claude (Ctrl+D) and run `gipity build` - the new project will be at the top of the picker. Once in that session, run `gipity add <template>`.
 - **User told you to keep their existing files** - skip `add` and build manually using the workflow above
 
 `gipity file rm <path>` recursively deletes files or directories. Non-template content (media, data, notes) lives outside `src/` and is not touched by the delete-and-re-add flow.

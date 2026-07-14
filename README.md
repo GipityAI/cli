@@ -2,13 +2,13 @@
 
 The full-stack platform tuned for AI agents.
 
-[Gipity](https://gipity.ai) is the platform: hosting, databases, file storage, deployment, workflows, code execution, and monitoring. Agent-tuned from idea to deploy. Use standalone, or pair with Claude Code to give your local agent cloud superpowers. Any model, any infra, always your code.
+[Gipity](https://gipity.ai) is the platform: hosting, databases, file storage, deployment, workflows, code execution, and monitoring. Agent-tuned from idea to deploy. Use standalone, or pair with your coding agent - Claude Code, Codex, or Grok - to give it cloud superpowers. Any model, any infra, always your code.
 
-This CLI connects [Claude Code](https://claude.ai/claude-code) to Gipity's cloud platform - databases, deployment, browser testing, image gen, and 50+ other capabilities your local agent doesn't have. It also syncs files so Claude Code and the Gipity web agent share the same project.
+This CLI connects your coding agent - [Claude Code](https://claude.ai/claude-code), Codex, or Grok - to Gipity's cloud platform: databases, deployment, browser testing, image gen, and 50+ other capabilities your local agent doesn't have. It also syncs files so your local agent and the Gipity web agent share the same project.
 
 ## Getting Started
 
-One line installs everything. It sets up Node 18+ (if you don't already have it) and the Gipity CLI, with no sudo required:
+**Step 1 - install.** One line installs everything. It sets up Node 18+ (if you don't already have it) and the Gipity CLI, with no sudo required:
 
 ```bash
 # macOS / Linux / WSL
@@ -18,13 +18,42 @@ curl -fsSL https://gipity.ai/install.sh | bash
 irm https://gipity.ai/install.ps1 | iex
 ```
 
-Then launch your coding agent wired into Gipity:
+**Step 2 - pick your path.** There are three, and they mix freely:
+
+| You want to... | Run |
+|----------------|-----|
+| Start building right now, from anywhere | `gipity build` |
+| Use your own workflow in your own directory | `gipity init`, then `claude` / `codex` / `grok` |
+| Drive this computer from gipity.ai (phone, browser) | `gipity connect` |
+
+### `gipity build` - start from anywhere
+
+One command does everything: logs you in (6-digit email code), lets you pick or create a project, lets you pick your coding agent (Claude Code, Codex, or Grok - it installs the agent if needed), and launches it with the whole Gipity stack wired up.
 
 ```bash
-gipity claude
+gipity build
 ```
 
-`gipity claude` walks you through login, project setup, and launches Claude Code. Using Codex, Gemini, or Cursor instead? Run `gipity init`.
+### `gipity init` - bring your own workflow
+
+Prefer launching your agent yourself? From any project directory:
+
+```bash
+gipity init
+claude        # or codex, or grok - whatever you use
+```
+
+`init` links the directory to a Gipity project, writes CLAUDE.md/AGENTS.md primers so your agent understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on your machine (Claude Code, Codex, Grok; Cursor and Gemini get primer files too).
+
+### `gipity connect` - drive it from the web
+
+Want to start chats from gipity.ai (including your phone) and have them run the coding agent on this computer? Connect it once:
+
+```bash
+gipity connect
+```
+
+It logs you in, pairs the machine, starts the Gipity relay in the background, and installs the login service so it survives reboots - then stops, without launching anything. From then on, open gipity.ai and start a chat to drive your agent here. Manage it with `gipity relay status` / `pause` / `resume` / `revoke`.
 
 ### Prefer npm
 
@@ -47,15 +76,7 @@ gipity update   # force an immediate update now
 
 To opt out: `export DISABLE_AUTOUPDATER=1` (matches Claude Code), or set `{ "autoUpdates": false }` in `~/.gipity/settings.json`. CI environments are auto-detected and skipped.
 
-## Quick Start
-
-One command. It walks you through login, project setup, and drops you into Claude Code.
-
-```bash
-gipity claude --dangerously-skip-permissions
-```
-
-That's it. You'll see:
+## What `gipity build` looks like
 
 ```
   Welcome to Gipity
@@ -72,16 +93,29 @@ That's it. You'll see:
     2. Create new project
 
   Choose (1-2): 2
-  Project name [project01]: cool-app
+  Project name [project-001]: cool-app
   Creating "cool-app"...
   Created.
 
-  Launching Claude Code...
+  Which coding agent?
+    1. Claude Code (Anthropic)
+    2. Codex (OpenAI)
+    3. Grok (xAI)
+
+  Launching Claude Code, powered by Gipity.
 ```
 
-If you're already logged in, it skips straight to project setup. If you already have a project in the current directory, it skips straight to launching Claude Code.
+If you're already logged in, it skips straight to the project picker. If you're already inside a Gipity project directory, it uses that project. Your last-used agent is the default next time.
 
-Projects live in `~/GipityProjects/{project-slug}/` - created automatically on first use. Any extra flags (like `--dangerously-skip-permissions`, `--model opus`, etc.) get passed through to Claude.
+Projects live in `~/GipityProjects/{project-slug}/` - created automatically on first use. Any extra flags (like `--model opus`) pass straight through to the agent. Useful flags:
+
+```bash
+gipity build --agent codex             # Skip the agent picker
+gipity build --new-project --name app  # Create a fresh project without the picker
+gipity build --project my-app          # Open a specific project
+gipity build --here                    # Use the current directory, not ~/GipityProjects/
+gipity build -p "add a contact form"   # Headless one-shot (no interactive session)
+```
 
 ### The manual way
 
@@ -92,26 +126,28 @@ gipity login --email you@example.com
 gipity login --code 123456
 cd my-project
 gipity init
-claude
+claude        # or codex, or grok
 ```
 
-## Claude Code Integration
+## Coding Agent Integration
 
-This is the good part. When you run `gipity init` in a project, it sets up two hooks in `.claude/settings.json`:
+This is the good part. When you run `gipity init` (or `gipity build`) in a project, it wires two hooks into your agent (Claude Code, Codex, and Grok all get them):
 
-**Auto-push** - Every time Claude Code writes or edits a file, it gets pushed to Gipity in the background. No extra steps.
+**Auto-push** - Every time your agent writes or edits a file, it gets pushed to Gipity in the background. No extra steps.
 
-**Auto-pull** - Before each turn, Claude Code pulls any changes that happened remotely (like if your Gipity agent built something via chat). Claude sees what changed and can pick up where things left off.
+**Auto-pull** - Before each turn, your agent pulls any changes that happened remotely (like if your Gipity agent built something via chat). It sees what changed and can pick up where things left off.
 
-That means Claude Code and your Gipity agent share the same files, same project, same context. You get the best of both - Claude Code for hands-on coding, Gipity for autonomous agent work.
+That means your local agent and your Gipity agent share the same files, same project, same context. You get the best of both - hands-on coding locally, autonomous agent work on Gipity.
+
+Sessions are also recorded to your Gipity project so you can watch them live at prompt.gipity.ai. Opt out per project with `gipity init --no-capture`.
 
 ### What gets set up
 
 ```
 .gipity.json          # Project config (which project, which agent)
 .gipity/              # Local sync state (gitignored)
-.claude/settings.json # Hooks for auto-push and auto-pull
-CLAUDE.md             # Gipity commands reference for Claude Code
+.claude/settings.json # Hooks for auto-push and auto-pull (per-agent equivalents for Codex/Grok)
+CLAUDE.md / AGENTS.md # Gipity commands reference for your agent
 ```
 
 ### Manual sync
@@ -128,9 +164,11 @@ gipity sync down     # Pull remote changes
 
 | Command | What it does |
 |---------|-------------|
-| `gipity claude` | Log in, pick a project, and launch Claude Code - all in one |
+| `gipity build` | Log in, pick a project, pick your coding agent, and launch it - all in one |
+| `gipity init` | Link this directory to a project and set up your coding agent |
+| `gipity connect` | Connect this computer to gipity.ai so the web CLI can drive it |
+| `gipity relay` | Manage the relay (status, pause, resume, revoke) |
 | `gipity login` | Authenticate with email + verification code |
-| `gipity init` | Set up a Gipity project and configure Claude Code |
 | `gipity status` | Show project, agent, and auth info |
 | `gipity sync` | Sync files between local and Gipity |
 | `gipity push <file>` | Push a single file |

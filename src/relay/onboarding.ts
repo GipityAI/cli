@@ -85,7 +85,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
       console.log(`  ${dim('To register this computer again — for example under a different name —')}`);
       console.log(`  ${dim('unregister it first, then re-run setup:')}`);
       console.log(`      ${brand('gipity relay revoke')}   ${dim('# unpairs this computer and removes the login service')}`);
-      console.log(`      ${brand('gipity setup')}          ${dim('# register it again (asks for a new name)')}`);
+      console.log(`      ${brand('gipity connect')}        ${dim('# register it again (asks for a new name)')}`);
       console.log('');
     }
     return true;
@@ -95,13 +95,13 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   // `gipity claude` first-run frames it as an optional add-on it's offering.
   if (opts.mode === 'run-now') {
     console.log(`  ${bold('Set up this computer as a relay')}`);
-    console.log(`  ${dim('A relay runs Claude Code (or Codex) here so you can drive it from the web (')}${brand('gipity.ai')}${dim(') on any browser.')}`);
-    console.log(`  ${dim('It uses your Claude or Codex subscription — the cheapest way to pay for tokens.')}`);
+    console.log(`  ${dim('A relay runs your coding agent (Claude Code, Codex, or Grok) here so you can drive it from the web (')}${brand('gipity.ai')}${dim(') on any browser.')}`);
+    console.log(`  ${dim('It uses your Claude, Codex, or Grok subscription — the cheapest way to pay for tokens.')}`);
   } else {
-    console.log(`  ${bold('Remote control of Claude Code')}`);
-    console.log(`  ${dim('Drive this Claude Code from the web (')}${brand('gipity.ai')}${dim(') on any browser (desktop or phone).')}`);
+    console.log(`  ${bold('Remote control of your coding agent')}`);
+    console.log(`  ${dim('Drive your coding agent on this computer from the web (')}${brand('gipity.ai')}${dim(') on any browser (desktop or phone).')}`);
     console.log('');
-    console.log(`  ${dim('Enable now (takes 2 seconds) or turn on later with')} ${brand('gipity setup')}`);
+    console.log(`  ${dim('Enable now (takes 2 seconds) or turn on later with')} ${brand('gipity connect')}`);
   }
   console.log('');
 
@@ -133,7 +133,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
     device = await pairDevice({ name });
   } catch (err: any) {
     console.error(`\n  ${clrError(`Could not create device: ${err?.message || err}`)}`);
-    console.error(`  ${dim('Skipping for now - we\'ll offer again next time. Or turn it on with `gipity setup`.')}`);
+    console.error(`  ${dim('Skipping for now - we\'ll offer again next time. Or turn it on with `gipity connect`.')}`);
     // Deliberately DON'T persist relay_enabled here: the user SAID YES, and
     // this is a transient failure (network blip, server down). Leaving the
     // tri-state unset means onboarding re-offers on the next `gipity claude`
