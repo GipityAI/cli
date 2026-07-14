@@ -8,7 +8,7 @@ import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
 import { grokAdapter } from './grok.js';
 
-export type { RemoteAgentAdapter, AgentModel, HeadlessArgsOpts } from './types.js';
+export type { RemoteAgentAdapter, HeadlessArgsOpts } from './types.js';
 
 /** Picker/help order: Claude first (the default), then the others. */
 export const AGENT_ADAPTERS: RemoteAgentAdapter[] = [

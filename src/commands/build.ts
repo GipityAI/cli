@@ -274,9 +274,9 @@ function suggestProjectName(existingSlugs: string[]): string {
 }
 
 /** Both launch commands share one implementation: `gipity build` (the
- *  documented start-from-anywhere funnel: project picker + agent picker +
- *  model picker) and the hidden legacy `gipity claude` (identical behavior
- *  with the agent pinned to Claude and no agent/model questions - kept
+ *  documented start-from-anywhere funnel: project picker + agent picker) and
+ *  the hidden legacy `gipity claude` (identical behavior with the agent
+ *  pinned to Claude and no agent question - kept
  *  working forever because deployed relay daemons and the GUI installer
  *  invoke it, but no longer advertised anywhere). */
 function createLaunchCommand(name: string, cfg: { presetAgent?: string } = {}): Command {
@@ -291,7 +291,7 @@ function createLaunchCommand(name: string, cfg: { presetAgent?: string } = {}): 
     // Forwarded to the agent via the unknown-arg passthrough below (NOT in the
     // gipity strip lists). Declared here only so it shows up in --help — without
     // this, callers can't discover that the session model is selectable.
-    .option('--model <model>', 'Model for the session (e.g. opus, sonnet - or skip it to use your agent\'s own default)')
+    .option('--model <model>', 'Model for the session, passed straight to the agent (e.g. opus) - omit it and the agent uses its own default')
     .option('--bypass-approvals', 'Skip the agent\'s interactive tool approvals (headless runs; the relay daemon sets this)')
     .allowUnknownOption(true)
     .allowExcessArguments(true);
@@ -767,23 +767,19 @@ async function runLaunch(
       }
       const adapter = getAdapter(agentKey);
 
-      // Model: an explicit --model (in the passthrough args) wins and skips
-      // the question. Interactive launches get the picker - option 1 is
-      // "Agent default", which passes NO model flag so the agent's own model
-      // memory stays authoritative. Headless runs never prompt. Only an
-      // interactive answer is remembered (a daemon dispatch or the legacy
-      // `gipity claude` shim must not clobber the user's picker memory).
-      const modelFlagGiven = rawArgs.some(a => a === '--model' || a.startsWith('--model='));
-      let pickedModel: string | null = null;
-      if (!nonInteractive && !modelFlagGiven && !cmdCfg.presetAgent) {
-        pickedModel = await pickModel(adapter, prefs.lastModel?.[adapter.key] ?? null);
-        writePrefs({ lastAgent: adapter.key, lastModel: { [adapter.key]: pickedModel } });
+      // We never ask about the model: an explicit `--model` passes straight
+      // through to the agent, and with no flag the agent's own default (and
+      // its own model memory) stays authoritative. Only an interactive pick
+      // is remembered (a daemon dispatch or the legacy `gipity claude` shim
+      // must not clobber the user's agent memory).
+      if (!nonInteractive && !cmdCfg.presetAgent) {
+        writePrefs({ lastAgent: adapter.key });
       }
 
       // ── Step 4: Launch the agent ───────────────────────────────────────
       if (adapter.key !== 'claude') {
         await launchNonClaudeAgent(adapter, {
-          cmdName, opts, rawArgs, nonInteractive, headlessOut, runStart, pickedModel,
+          cmdName, opts, rawArgs, nonInteractive, headlessOut, runStart,
         });
         return;
       }
@@ -942,11 +938,9 @@ async function runLaunch(
           allArgs = claudeArgs;
         }
       } else {
+        // Any `--model` the user passed is already in claudeArgs (passthrough);
+        // with no flag Claude picks its own default.
         allArgs = initialPrompt ? [initialPrompt, ...claudeArgs] : claudeArgs;
-        // Model from the interactive picker (an explicit --model flag skipped
-        // the picker and is already in claudeArgs; "Agent default" is null and
-        // deliberately passes nothing).
-        if (pickedModel) allArgs.push('--model', pickedModel);
       }
 
       // Single-command headless flows (`--new-project` / `--project` with -p)
@@ -1027,10 +1021,11 @@ async function runLaunch(
     }
 }
 
-// ─── Agent + model pickers ────────────────────────────────────────────────
+// ─── Agent picker ─────────────────────────────────────────────────────────
 // Same pick-a-number-or-hit-enter format as the project picker. The
-// enter-enter path must stay the visibly obvious one: default agent =
-// last-used (else Claude), default model = "Agent default".
+// enter-enter path must stay the visibly obvious one: the default agent is
+// the last-used one (else Claude). We deliberately don't ask about the model
+// - the agent's own default is always right and a curated list only rots.
 
 async function pickAgent(lastUsed: string | undefined): Promise<string> {
   const defaultKey = lastUsed && AGENT_KEYS.includes(lastUsed) ? lastUsed : 'claude';
@@ -1053,23 +1048,6 @@ async function pickAgent(lastUsed: string | undefined): Promise<string> {
   return AGENT_ADAPTERS[choice - 1].key;
 }
 
-/** Returns the model id to pass via --model, or null for "Agent default"
- *  (no flag at all - the agent's own model memory stays authoritative). */
-async function pickModel(adapter: RemoteAgentAdapter, lastUsed: string | null): Promise<string | null> {
-  console.log(`  ${bold('Which model?')}\n`);
-  const lastIsModel = lastUsed && adapter.models.some(m => m.id === lastUsed);
-  const defaultIdx = lastIsModel ? adapter.models.findIndex(m => m.id === lastUsed) + 2 : 1;
-  console.log(`    ${bold('1.')} Agent default ${muted(defaultIdx === 1 ? '(recommended)' : '')}`);
-  adapter.models.forEach((m, i) => {
-    const note = m.id === lastUsed ? `  ${muted('(last used)')}` : '';
-    console.log(`    ${bold(`${i + 2}.`)} ${m.label}${note}`);
-  });
-  console.log('');
-  const choice = await pickOne('Choose', adapter.models.length + 1, defaultIdx);
-  console.log('');
-  return choice === 1 ? null : adapter.models[choice - 2].id;
-}
-
 // ─── Non-Claude agent launch (Codex, Grok) ────────────────────────────────
 // The Claude path above carries years of Claude-specific plumbing (plugin
 // install, folder trust, stream-json capture gating, -p context wrapping).
@@ -1085,9 +1063,8 @@ async function launchNonClaudeAgent(adapter: RemoteAgentAdapter, ctx: {
   nonInteractive: boolean;
   headlessOut: (text: string) => void;
   runStart: number;
-  pickedModel: string | null;
 }): Promise<void> {
-  const { opts, rawArgs, nonInteractive, headlessOut, runStart, pickedModel } = ctx;
+  const { opts, rawArgs, nonInteractive, headlessOut, runStart } = ctx;
 
   // ── Binary ──────────────────────────────────────────────────────────────
   if (!binaryOnPath(adapter.binary)) {
@@ -1111,7 +1088,7 @@ async function launchNonClaudeAgent(adapter: RemoteAgentAdapter, ctx: {
   const valueFlags = ['--api-base', '--name', '--project', '--agent'];
   let message: string | null = null;
   let resume: string | undefined;
-  let model: string | undefined = pickedModel ?? undefined;
+  let model: string | undefined;
   const extras: string[] = [];
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i];

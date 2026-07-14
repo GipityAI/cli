@@ -15,12 +15,6 @@ export const claudeCodeAdapter: RemoteAgentAdapter = {
   providerName: 'Anthropic',
   binary: 'claude',
 
-  models: [
-    { id: 'opus', label: 'Opus' },
-    { id: 'sonnet', label: 'Sonnet' },
-    { id: 'haiku', label: 'Haiku' },
-  ],
-
   buildInteractiveArgs({ resume, model }) {
     const args: string[] = [];
     if (model) args.push('--model', model);
