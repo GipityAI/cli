@@ -385,6 +385,31 @@ function resolveTargetCommand(argv: string[]): Command {
   }
   return cmd;
 }
+// ── Excess positional → name it, and map `key=value` back to `--key` ──
+// Commander's stock excess-arguments error is just a count ("Expected 1 argument
+// but got 2"), which leaves an agent to guess WHICH token was wrong. A very
+// common miss is carrying an option over as a positional in `key=value` shape -
+// `gipity add 3d-engine title="Blocks"` - where the fix is `--title`. Override
+// the message once (the method lives on the shared prototype, so this covers
+// every command) to name the offending token(s) and, when one is key=value
+// shaped, point straight at the flag they meant. Bracketing/help still work:
+// this only changes the string handed to outputError below.
+(Command.prototype as unknown as { _excessArguments(a: string[]): void })._excessArguments =
+  function (this: Command, receivedArgs: string[]): void {
+    if ((this as unknown as { _allowExcessArguments: boolean })._allowExcessArguments) return;
+    const expected = (this as unknown as { registeredArguments: unknown[] }).registeredArguments.length;
+    const excess = receivedArgs.slice(expected);
+    const forSubcommand = this.parent ? ` for '${this.name()}'` : '';
+    const list = excess.map(a => `'${a}'`).join(', ');
+    let message = `error: unexpected extra argument${excess.length === 1 ? '' : 's'} ${list}${forSubcommand}.`;
+    const kv = excess.map(a => /^([A-Za-z][\w-]*)=/.exec(a)).find(Boolean);
+    if (kv) {
+      message += ` Options are passed as \`--${kv[1]} <value>\`, not \`${kv[1]}=…\` - did you mean \`--${kv[1]}\`?`;
+    }
+    (this as unknown as { error(m: string, o: { code: string }): void })
+      .error(message, { code: 'commander.excessArguments' });
+  };
+
 function enableHelpAfterError(cmd: Command): void {
   cmd.configureOutput({
     // Render the offending command's full help (via outputHelp, so addHelpText

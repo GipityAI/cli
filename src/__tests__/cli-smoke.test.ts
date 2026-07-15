@@ -100,7 +100,9 @@ describe('cli-smoke: error behavior', () => {
     // Mirrors an agent guessing `gipity add <tmpl> title=...` (positional k=v).
     const r = runCli(['add', '2d-game', 'title=x']);
     const out = r.stdout + r.stderr;
-    assert.match(out, /too many arguments for 'add'/);
+    // The error names the offending token and maps the k=v form to the flag.
+    assert.match(out, /unexpected extra argument 'title=x' for 'add'/);
+    assert.match(out, /did you mean `--title`/);
     assert.match(out, /Showing `gipity add --help`:/);
     // The help reveals the real flag the agent should have used.
     assert.match(out, /--title/);
@@ -109,7 +111,7 @@ describe('cli-smoke: error behavior', () => {
   it('excess args on a nested subcommand label the full command path', () => {
     const r = runCli(['page', 'screenshot', 'http://a', 'extra']);
     const out = r.stdout + r.stderr;
-    assert.match(out, /too many arguments for 'screenshot'/);
+    assert.match(out, /unexpected extra argument 'extra' for 'screenshot'/);
     assert.match(out, /Showing `gipity page screenshot --help`:/);
   });
 

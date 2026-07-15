@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get, post, del, publicPost } from '../api.js';
 import { getAuth } from '../auth.js';
-import { requireConfig } from '../config.js';
+import { requireConfig, resolveApiBase } from '../config.js';
 import { error as clrError, bold, muted, success, warning } from '../colors.js';
 import { run, printList, emitField } from '../helpers/index.js';
 import { confirm } from '../utils.js';
@@ -24,7 +24,7 @@ fnCommand
     // The callable address is the deliverable for API-only apps - name it here
     // rather than leaving it to be inferred from a template comment.
     if (!opts.json && res.data.length > 0) {
-      console.log(muted(`Endpoint: POST ${config.apiBase}/api/${config.projectGuid}/fn/<name>  (same on dev and prod; public path: gipity fn call <name> --anon)`));
+      console.log(muted(`Endpoint: POST ${resolveApiBase()}/api/${config.projectGuid}/fn/<name>  (same on dev and prod; public path: gipity fn call <name> --anon)`));
     }
   }));
 
