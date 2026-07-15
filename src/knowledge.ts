@@ -157,7 +157,7 @@ To keep local-only material (research clones, scratch data, vendored references)
 Deploy is opt-in, not opt-out: the \`files\` phase uploads **only** what's under \`src/\` (plus \`functions/\` and \`migrations/\` as backend, not CDN files). Anything else at the project root is kept but never deployed. Put each kind of file in the right bucket so scratch and reference material can't bloat a deploy:
 
 - **\`src/\`** - the app itself. Synced **and** deployed to the CDN. Only app code, assets, and pages belong here.
-- **\`tmp/\`** - ephemeral scratch: file conversions, intermediate outputs, design staging. **Already ignored** (never synced, never deployed) - the one place to do throwaway work. Use this single root. (\`*_tmp/\` dirs and \`.gipityscratch/\` are auto-ignored too, as a safety net, so legacy scattered scratch like \`_vsd_tmp/\` can't leak - but write new scratch to \`tmp/\`, not scattered dirs.) Because it never syncs, \`tmp/\` is also never mirrored into the sandbox: **don't stage \`gipity sandbox run\` inputs here** - the sandbox won't see them. Stage inputs under \`src/\`/\`docs/\` and delete them after.
+- **\`tmp/\`** - ephemeral scratch: file conversions, intermediate outputs, design staging. **Already ignored** (never synced, never deployed) - the one place to do throwaway work. Use this single root. Leave scratch files where they are when you're done; there's nothing to clean up (no \`rm\` turn) - they're invisible to sync and deploy. (\`*_tmp/\` dirs and \`.gipityscratch/\` are auto-ignored too, as a safety net, so legacy scattered scratch like \`_vsd_tmp/\` can't leak - but write new scratch to \`tmp/\`, not scattered dirs.) Because it never syncs, \`tmp/\` is also never mirrored into the sandbox: **don't stage \`gipity sandbox run\` inputs here** - the sandbox won't see them. Stage inputs under \`src/\`/\`docs/\` and delete them after.
 - **\`docs/\`** - reference material you want to keep: UI/architecture diagrams, design decks, notes, ADRs. Synced and versioned on the server (backed up, rollback-able) but **never deployed**, because it's outside \`src/\`. This is the home for "keep forever, don't ship" artifacts.
 - **\`tests/\`** - \`*.test.js\` suites. Synced, run by \`gipity test\`, never deployed. \`gipity test list [path]\` lists the test files (and what a filter selects) without running them.
 
@@ -173,7 +173,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-audio\` - sound effects, music, transcription
 - \`app-auth\` - sign in with Gipity, popup vs redirect
 - \`app-files\` - uploads, variants, file listing
-- \`app-image\` - text-to-image only (no input image / editing); providers, sizes, aspect ratios
+- \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
 - \`app-notify\` - web push notifications for deployed apps (incl. iOS home-screen web apps) - notify kit + injected notify() service, platform owns the keys

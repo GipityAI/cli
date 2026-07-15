@@ -128,7 +128,25 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
 
     const res = await post<{ data: DebugBundle }>(`/tools/browser/inspect`, inspectBody);
 
-    const b = res.data;
+    const b = res?.data;
+
+    // The inspector can hand back nothing to report — an auth-gated or
+    // JS-rendered SPA whose client render hadn't run, a navigation that
+    // redirected away, or a server-side hiccup that returned an empty bundle.
+    // Left unguarded the report below either crashes on `b.failedResources` or
+    // prints a bare header that reads as blank output — no signal at the exact
+    // moment the agent reached for verification. Say plainly that nothing was
+    // captured and point at the levers that fix it.
+    if (!b || typeof b !== 'object') {
+      if (opts.json) {
+        console.log(JSON.stringify({ url, captured: false, note: 'inspector returned no page data' }));
+        return;
+      }
+      console.log(`${brand('Inspecting')} ${bold(url)}`);
+      console.log(warning('Captured no page data — the page returned an empty response.'));
+      console.log(muted('The page may have failed to load, redirected away, or rendered nothing server-side. Retry once; if it persists pass --wait-for <selector> to wait for a specific element to appear, or --auth if it is behind Sign in with Gipity.'));
+      return;
+    }
 
     // ── Move resource-load failures out of the console, where they're noise ──
     // A sub-resource that returns an HTTP 4xx/5xx is reported twice: once in
@@ -231,6 +249,15 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     console.log(`${muted('Title:')} ${b.title || '(none)'}`);
     console.log(`${muted('Elements:')} ${b.elementCount || 0}`);
     console.log(`${muted('Page weight:')} ${info(formatSize(b.totalBytes || 0))}`);
+
+    // A page that came back with no DOM and no title rendered essentially
+    // nothing the inspector could see. That's the auth-gated / JS-rendered SPA
+    // trap: the header above alone reads as "loaded fine, just empty" when the
+    // real story is "client render or auth gate produced nothing yet." Flag it
+    // so the agent knows to wait for the render or sign in, not to trust silence.
+    if ((b.elementCount || 0) === 0 && !b.title) {
+      console.log(`${warning('⚠ Rendered no DOM (0 elements, no title)')} ${muted('— the client-side render likely had not run yet (try --wait-for <selector>), the page failed to load, or it is behind a sign-in gate (try --auth).')}`);
+    }
 
     // ── Timing ──
     console.log(`\n${bold('Timing:')}`);

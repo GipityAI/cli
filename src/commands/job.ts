@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, post, del, getBaseUrl, getAuthHeader } from '../api.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, bold, muted, success, warning as warn } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, resolveBody } from '../helpers/index.js';
 
 export const jobCommand = new Command('job')
   .description('Run long jobs (CPU/GPU)')
@@ -27,13 +27,13 @@ jobCommand
 jobCommand
   .command('submit <name> [body]')
   .description('Submit a job (returns a run guid; poll with `job status <guid>`)')
-  .option('--data <json>', 'JSON input body')
+  .option('-d, --data <json>', 'JSON input body: inline JSON, @file to read a file, or @- / - for stdin')
+  .option('--file <field=@path>', 'Attach a file as base64 under <field> (repeatable), e.g. --file image=@scan.png', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--idempotency-key <key>', 'Idempotency key (replays return the existing run)')
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Submit', async () => {
     const config = requireConfig();
-    const raw = bodyArg || opts.data || '{}';
-    const input = JSON.parse(raw);
+    const input = resolveBody(bodyArg || opts.data, opts.file);
     const body: Record<string, unknown> = { input };
     if (opts.idempotencyKey) body.idempotency_key = opts.idempotencyKey;
     const res = await post<{ data: any }>(

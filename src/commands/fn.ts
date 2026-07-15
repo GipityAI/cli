@@ -3,7 +3,7 @@ import { get, post, del, publicPost } from '../api.js';
 import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { error as clrError, bold, muted, success, warning } from '../colors.js';
-import { run, printList, emitField } from '../helpers/index.js';
+import { run, printList, emitField, resolveBody } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
 export const fnCommand = new Command('fn')
@@ -83,14 +83,14 @@ async function callAnon(projectGuid: string, name: string, body: unknown): Promi
 fnCommand
   .command('call <name> [body]')
   .description('Call a function')
-  .option('--data <json>', 'JSON request body')
+  .option('-d, --data <json>', 'JSON request body: inline JSON, @file to read a file, or @- / - for stdin')
+  .option('--file <field=@path>', 'Attach a file as base64 under <field> (repeatable), e.g. --file image=@receipt.png', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--anon', 'Call as an anonymous visitor (the public path a signed-out user hits) instead of as your signed-in account')
   .option('--field <path>', 'Print only this field of the result (dot path, e.g. items.0.short_guid)')
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Call', async () => {
     const config = requireConfig();
-    const raw = bodyArg || opts.data || '{}';
-    const body = JSON.parse(raw);
+    const body = resolveBody(bodyArg || opts.data, opts.file);
     const path = `/api/${config.projectGuid}/fn/${encodeURIComponent(name)}`;
     // Name the calling identity (stderr, so stdout stays parseable). Without
     // this, a "test the anonymous path" call silently runs authenticated as
