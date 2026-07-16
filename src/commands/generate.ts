@@ -2,11 +2,12 @@ import { Command } from 'commander';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { pushFile } from '../sync.js';
-import { mkdirSync, writeFileSync } from 'fs';
-import { resolve as resolvePath, dirname, relative, isAbsolute } from 'path';
+import { mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { resolve as resolvePath, dirname, relative, isAbsolute, basename } from 'path';
 import { error as clrError, success, muted } from '../colors.js';
 import { printCommandError } from '../helpers/command.js';
 import { withSpinner } from '../progress.js';
+import { guessMime } from '../upload.js';
 import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
 
 interface GenerateResult {
@@ -30,11 +31,23 @@ interface GenerateResult {
  *  that gap so the "sandbox auto-mirrors the project" contract holds right after
  *  generation. Best-effort: the local save already succeeded, so a push failure
  *  only warns and points at `gipity sync`. */
-async function downloadFile(url: string, filename: string): Promise<string> {
+async function downloadFile(url: string, filename: string, explicit: boolean): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  const outPath = correctExtension(filename, buffer);
+  // An explicit `-o` path is a name the caller has committed to and will chain
+  // the NEXT command against (`--input src.png`, `page eval --camera src.png`),
+  // so the saved path MUST equal what was asked - a predictable path is worth
+  // more than a tidy extension. The model's output format is non-deterministic
+  // (BFL's "png" request comes back as JPEG), so renaming to match the bytes
+  // moves the file out from under the caller's already-written second command:
+  // that is the "saved as .jpg, retry with the right path" wasted turn. Honour
+  // the request; every downstream consumer (browsers, image/video tools, the
+  // edit + camera services) sniffs the bytes, not the extension, so a jpg-in-a-
+  // .png plays and edits fine. For the auto-generated default there is no
+  // committed path, so there we DO name the file after its real bytes.
+  const outPath = explicit ? filename : correctExtension(filename, buffer);
+  if (explicit) noteFormatMismatch(filename, buffer);
   ensureOutputDir(outPath);
   writeFileSync(outPath, buffer);
   const savedPath = resolvePath(outPath);
@@ -91,6 +104,24 @@ function correctExtension(filename: string, buf: Buffer): string {
   return corrected;
 }
 
+/** When the caller committed to an explicit `-o` path we save to it verbatim
+ *  (see downloadFile), but the model's format may not match the extension. Say
+ *  so, and say plainly that the file is at the requested path — so an agent that
+ *  reads this note does NOT go change the path its already-queued next command
+ *  points at (that "retry with .jpg" turn is the whole bug we're closing). */
+function noteFormatMismatch(filename: string, buf: Buffer): void {
+  const actual = sniffExt(buf);
+  if (!actual) return;
+  const dot = filename.lastIndexOf('.');
+  const asked = dot > 0 ? filename.slice(dot + 1).toLowerCase() : '';
+  if (!asked || canonicalExt(asked) === actual) return;
+  console.error(muted(
+    `Note: ${basename(filename)} holds ${formatName(actual)} bytes though its name ends .${asked} — `
+    + `that's fine (browsers and image/video/edit tools sniff the bytes, not the name). `
+    + `Saved at the exact path you requested; reference it as-is.`,
+  ));
+}
+
 /** Create the parent directory of an -o path, so `-o src/audio/ding.mp3` works
  *  in a tree that has no `src/audio/` yet instead of dying on a raw ENOENT.
  *
@@ -120,12 +151,39 @@ async function pushGenerated(savedPath: string): Promise<void> {
   }
 }
 
+/** Read the `--input` image files an edit request is applied to, as base64 +
+ *  mime type. The CLI reads the bytes itself so a photo never has to travel
+ *  through the shell argv (base64 images blow past ARG_MAX — "Argument list too
+ *  long" — the moment you try to inline them), which is exactly the trap an
+ *  agent falls into hand-rolling an edit call with a python one-liner. */
+function readInputImages(paths: string[]): { data: string; mime_type: string }[] {
+  return paths.map((p) => {
+    let buf: Buffer;
+    try {
+      buf = readFileSync(p);
+    } catch (e: any) {
+      throw new Error(`can't read --input image ${p} (${e.code || e.message}).`);
+    }
+    const mime = guessMime(p);
+    if (!mime.startsWith('image/')) {
+      throw new Error(`--input ${p} is not an image (${mime}). Edit inputs must be image files.`);
+    }
+    return { data: buf.toString('base64'), mime_type: mime };
+  });
+}
+
 // ── IMAGE ──────────────────────────────────────────────────────────────
 
 const imageCommand = new Command('image')
-  .description(`Generate an image from a text prompt using AI.
+  .description(`Generate an image from a text prompt, or EDIT existing images with --input.
 
 Models: ${IMAGE_MODELS_DOC}
+
+Editing (--input): pass one or more source images and the prompt becomes an edit
+instruction applied to them - "make it night time", "add a hat", "remove the car
+in the background", or compose several inputs together. Editing routes to Gemini
+automatically. This is the first-party way to exercise the image-edit flow from
+the CLI; the CLI reads the file bytes itself, so there is no base64/argv fiddling.
 
 Gemini-specific options:
   --aspect-ratio   Control output shape: ${IMAGE_GEMINI_ASPECT_RATIOS}
@@ -133,10 +191,13 @@ Gemini-specific options:
 
 Examples:
   gipity generate image "a cat wearing a top hat"
+  gipity generate image "make it night time" --input photo.jpg -o edited.png
+  gipity generate image "put the person in the first photo into the second scene" --input person.png --input scene.png
   gipity generate image "landscape sunset" --provider gemini --aspect-ratio 16:9 --image-size 2K
   gipity generate image "product photo" --provider openai --model gpt-image-2 --size 1536x1024 --quality high
   gipity generate image "abstract art" --provider bfl --model flux-2-pro -o art.png`)
-  .argument('<prompt>', 'Text description of the image to generate')
+  .argument('<prompt>', 'Text description of the image, or (with --input) the edit instruction to apply')
+  .option('--input <file>', 'Source image to edit/compose (repeatable). With --input the prompt is an edit instruction; routes to Gemini.', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--provider <provider>', 'Image provider: openai, bfl, or gemini (default: bfl)')
   .option('--model <model>', 'Model ID (see provider list above)')
   .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (OpenAI/BFL)')
@@ -150,6 +211,7 @@ Examples:
     try {
       const { config } = await resolveProjectContext();
       if (opts.output) ensureOutputDir(opts.output);
+      const inputImages = opts.input ? readInputImages(opts.input) : undefined;
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
         prompt,
         provider: opts.provider,
@@ -159,15 +221,17 @@ Examples:
         aspect_ratio: opts.aspectRatio,
         image_size: opts.imageSize,
         seed: Number.isFinite(opts.seed) ? opts.seed : undefined,
+        input_images: inputImages,
       });
+      const verb = inputImages ? 'Editing image…' : 'Generating image…';
       const result = opts.json
         ? await doGenerate()
-        : await withSpinner('Generating image…', doGenerate, { done: null });
+        : await withSpinner(verb, doGenerate, { done: null });
 
       const ext = result.content_type.includes('png') ? 'png' : 'jpg';
       const filename = opts.output || `generated.${ext}`;
 
-      const savedPath = await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
         console.log(JSON.stringify({ ...result, saved: savedPath }));
@@ -230,7 +294,7 @@ Examples:
         : await withSpinner('Generating video…', doGenerate, { done: null });
 
       const filename = opts.output || 'generated.mp4';
-      const savedPath = await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
         console.log(JSON.stringify({ ...result, saved: savedPath }));
@@ -292,7 +356,7 @@ Examples:
         : await withSpinner('Generating speech…', doGenerate, { done: null });
 
       const filename = opts.output || 'speech.mp3';
-      const savedPath = await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
         console.log(JSON.stringify({ ...result, saved: savedPath }));
@@ -346,7 +410,7 @@ Examples:
         : await withSpinner('Generating music…', doGenerate, { done: null });
 
       const filename = opts.output || 'music.mp3';
-      const savedPath = await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
         console.log(JSON.stringify({ ...result, saved: savedPath }));
@@ -398,7 +462,7 @@ Examples:
         : await withSpinner('Generating sound effect…', doGenerate, { done: null });
 
       const filename = opts.output || 'sound.mp3';
-      const savedPath = await downloadFile(result.url, filename);
+      const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
         console.log(JSON.stringify({ ...result, saved: savedPath }));

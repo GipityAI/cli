@@ -241,6 +241,12 @@ const CAMERA_SETUP_BUDGET_MS = 30_000;
 export const EVAL_SCRIPT_BUDGET_MS = 30_000;
 export const EVAL_SCRIPT_BUDGET_CAMERA_MS = 45_000;
 export const EVAL_SCRIPT_BUDGET_MAX_MS = 90_000;
+// The smallest in-page budget the server will honour. A --timeout below this is
+// floored to it, so any sub-floor value is useless as a real ms budget AND is
+// almost always seconds typed as ms (--timeout 120 meaning 120s) — the guard in
+// the action rejects it up front with the unit named, rather than letting it
+// silently floor and then stall with an opaque "1s budget" error.
+export const EVAL_SCRIPT_BUDGET_MIN_MS = 1_000;
 
 /** The in-page budget this call gets: the caller's --timeout when given, else the
  *  default for the kind of run (roomier under --camera/--fake-media). Clamped to
@@ -259,7 +265,7 @@ export function capScriptBudgetMs(rawTimeout: string | undefined, hasMedia: bool
     ));
     return EVAL_SCRIPT_BUDGET_MAX_MS;
   }
-  return Math.max(1_000, parsed);
+  return Math.max(EVAL_SCRIPT_BUDGET_MIN_MS, parsed);
 }
 
 /** Upper bound on the server-side work this eval asked for. EVERY leg the caller
@@ -525,20 +531,24 @@ export const pageEvalCommand = new Command('eval')
       );
     }
 
-    // --timeout is in MILLISECONDS. A tiny value is almost always seconds typed
-    // as ms (--timeout 90 meaning 90s), which would otherwise clamp SILENTLY to
-    // the 1s in-page floor — the script then stalls with no hint about the unit.
-    // Reject it up front, naming the unit and the ms value they meant, so the fix
-    // is one obvious edit instead of a doomed run. (Values ≥100 that are meant as
-    // seconds exceed the max anyway and are caught by capScriptBudgetMs's cap.)
+    // --timeout is in MILLISECONDS — but the sibling `sandbox run --timeout` is in
+    // SECONDS, so an agent naturally carries the seconds habit here (--timeout 120
+    // meaning 120s). Any value below the in-page floor is the tell: a real ms budget
+    // that small is useless (it just floors to the minimum), so a sub-floor number
+    // is almost always seconds typed as ms. Left alone it clamps SILENTLY to a ~1s
+    // budget and the script then stalls with an opaque "1s budget" error that never
+    // reveals the unit mix-up. Reject it up front, naming the unit AND the ms value
+    // they meant, so the fix is one obvious edit instead of a doomed run.
     if (opts.timeout !== undefined) {
       const t = parseInt(opts.timeout, 10);
-      if (Number.isFinite(t) && t > 0 && t < 100) {
+      if (Number.isFinite(t) && t > 0 && t < EVAL_SCRIPT_BUDGET_MIN_MS) {
+        const overMax = t * 1000 > EVAL_SCRIPT_BUDGET_MAX_MS;
         const asMs = Math.min(t * 1000, EVAL_SCRIPT_BUDGET_MAX_MS);
         pageEvalCommand.error(
-          `error: --timeout is in MILLISECONDS (got ${t}, which is under the 1000ms in-page floor). ` +
-          `${t} looks like seconds — for ${t} second${t === 1 ? '' : 's'} pass --timeout ${asMs}` +
-          `${t * 1000 > EVAL_SCRIPT_BUDGET_MAX_MS ? ` (${t}s is over the ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s max)` : ''}.`,
+          `error: --timeout is in MILLISECONDS (got ${t}, under the ${EVAL_SCRIPT_BUDGET_MIN_MS}ms in-page floor). ` +
+          `Unlike \`sandbox run --timeout\` (seconds), page eval's is ms. ${t} looks like seconds — ` +
+          `for ${t} second${t === 1 ? '' : 's'} pass --timeout ${asMs}` +
+          `${overMax ? ` (${t}s is over the ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s max, so this is the ceiling)` : ''}.`,
         );
       }
     }
