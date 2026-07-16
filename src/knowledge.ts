@@ -173,7 +173,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-audio\` - sound effects, music, transcription
 - \`app-auth\` - sign in with Gipity, popup vs redirect
 - \`app-files\` - uploads, variants, file listing
-- \`app-image\` - text-to-image only (no input image / editing); providers, sizes, aspect ratios
+- \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
 - \`app-notify\` - web push notifications for deployed apps (incl. iOS home-screen web apps) - notify kit + injected notify() service, platform owns the keys
