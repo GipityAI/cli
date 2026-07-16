@@ -256,6 +256,25 @@ test('gipity page eval sends the default in-page budget when --timeout is omitte
   assert.equal((req!.body as { timeoutMs?: number }).timeoutMs, EVAL_SCRIPT_BUDGET_MS);
 });
 
+// `sandbox run --timeout` is SECONDS, so an agent carries the habit here and
+// types `--timeout 120` meaning 120s. Any sub-floor value floors to ~1s and then
+// stalls with an opaque "1s budget" error; reject it up front, naming the unit
+// and the ms value they meant, before any request goes out.
+test('gipity page eval rejects a sub-floor --timeout as seconds typed as ms', async () => {
+  mock.reset();
+  for (const secs of ['120', '90', '60', '30', '1']) {
+    const r = await run(['page', 'eval', 'https://example.com', '1', '--timeout', secs]);
+    assert.notEqual(r.status, 0, `--timeout ${secs} should be rejected`);
+    assert.match(r.stderr, /MILLISECONDS/);
+    assert.match(r.stderr, /sandbox run --timeout.*seconds/);
+    // Names the ms value they actually meant (clamped to the 90s ceiling).
+    const expectedMs = Math.min(parseInt(secs, 10) * 1000, 90_000);
+    assert.match(r.stderr, new RegExp(`--timeout ${expectedMs}\\b`));
+  }
+  // No request should have been sent for any of the rejected calls.
+  assert.equal(mock.requests().length, 0);
+});
+
 test('capScriptBudgetMs defaults roomier under synthetic media and clamps over the max', () => {
   assert.equal(capScriptBudgetMs(undefined, false), EVAL_SCRIPT_BUDGET_MS);
   assert.equal(capScriptBudgetMs(undefined, true), EVAL_SCRIPT_BUDGET_CAMERA_MS);

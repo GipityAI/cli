@@ -1,143 +1,92 @@
 import { Command } from 'commander';
-import { statSync, readdirSync } from 'fs';
-import { join, basename, posix, resolve, dirname } from 'path';
+import { statSync } from 'fs';
+import { basename } from 'path';
+import { post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
-import { uploadOneFile, hashFile, guessMime, UPLOAD_CONCURRENCY } from '../upload.js';
+import { transferToS3, guessMime, type ReadyInit } from '../upload.js';
 import { formatSize } from '../utils.js';
-import { error as clrError, dim } from '../colors.js';
+import { success, muted, brand } from '../colors.js';
+import { withSpinner } from '../progress.js';
+import { run } from '../helpers/index.js';
 
-interface UploadOpts {
-  recursive?: boolean;
-  mime?: string;
-  concurrency?: string;
-  dryRun?: boolean;
-  project?: string;
+interface InitResponse { data: ReadyInit }
+interface CompleteResponse {
+  data: {
+    guid: string;
+    name: string;
+    size: number;
+    content_type: string;
+    url: string;
+    is_public: boolean;
+  };
 }
 
-interface PlannedFile {
-  localPath: string;
-  virtualPath: string;
-  size: number;
-}
-
-/** Walk a directory recursively, returning every file's absolute path. */
-function walkFiles(root: string): string[] {
-  const out: string[] = [];
-  const stack: string[] = [root];
-  while (stack.length) {
-    const dir = stack.pop()!;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) stack.push(full);
-      else if (entry.isFile()) out.push(full);
-    }
-  }
-  return out;
-}
-
-/** Compose the destination virtual path for a given source file under a recursive walk. */
-function destFor(localFile: string, srcRoot: string, destRoot: string): string {
-  // POSIX-style virtual paths regardless of host OS.
-  const rel = localFile.slice(srcRoot.length).replace(/\\/g, '/').replace(/^\/+/, '');
-  return posix.join(destRoot.replace(/\\/g, '/').replace(/\/$/, ''), rel);
-}
-
+// The app-uploads store (`/api/<guid>/uploads/*`) mints a DURABLE, worker-reachable
+// URL the instant the file lands - no `gipity deploy` needed. That is the whole
+// point of this command: it removes the deploy-a-fixture-then-delete-it dance an
+// agent otherwise has to do to hand a job/function a real input file to fetch.
+// (Uploading into the project tree with `gipity push` does NOT give a public URL
+// until you deploy; this does.)
 export const uploadCommand = new Command('upload')
-  .description('Upload files')
-  .argument('<src>', 'Local source file or directory')
-  .argument('[dest]', 'Destination path in the project (defaults to /)')
-  .option('-r, --recursive', 'Upload a directory recursively')
-  .option('--mime <type>', 'Override the content-type (default: detect from extension)')
-  .option('--concurrency <n>', `Parallel files (default ${UPLOAD_CONCURRENCY})`)
-  .option('--dry-run', 'Print what would be uploaded; do not call the network')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
-  .action(async (src: string, destArg: string | undefined, opts: UploadOpts) => {
+  .description(`Upload a local file and print a durable, worker-reachable URL for it.
+
+The URL works immediately - no \`gipity deploy\` - and any job or function can
+fetch it. Use it to hand a GPU/CPU job a real input file when testing end-to-end:
+
+  gipity upload song.mp3
+  gipity job submit split-stems --data '{"audio_url":"<printed url>"}'
+
+By default the file is PUBLIC: a plain \`media.gipity.ai\` CDN url that resolves
+from anywhere, so a cloud worker can always fetch it. Pass --private for a
+token-signed serve url instead (reachable only by holders of the url).`)
+  .argument('<file>', 'Local file to upload')
+  .option('--private', 'Store as a private token-signed serve URL instead of a public CDN url')
+  .option('--content-type <mime>', 'Override the content type (default: detected from the file extension)')
+  .option('--json', 'Output as JSON')
+  .action((file: string, opts) => run('Upload', async () => {
+    const { config } = await resolveProjectContext();
+
+    let size: number;
     try {
-      const { config } = await resolveProjectContext({ projectOverride: opts.project });
-      const dest = destArg ?? '/';
-      const srcStat = statSync(src);
-
-      // Collect the work plan.
-      const planned: PlannedFile[] = [];
-      if (srcStat.isDirectory()) {
-        if (!opts.recursive) {
-          throw new Error(`${src} is a directory - pass -r/--recursive to upload it`);
-        }
-        // Slice from the parent of src so the directory name itself is preserved
-        // in the virtual path (e.g. `hooks/a.sh` → `hooks/a.sh`, not `a.sh`).
-        const srcAbs = resolve(src);
-        const sliceRoot = dirname(srcAbs);
-        for (const file of walkFiles(src)) {
-          planned.push({
-            localPath: file,
-            virtualPath: destFor(resolve(file), sliceRoot, dest),
-            size: statSync(file).size,
-          });
-        }
-      } else if (srcStat.isFile()) {
-        // If dest looks like a directory (ends in / or no extension on a file path), append basename.
-        const looksLikeDir = dest.endsWith('/') || (opts.recursive === true);
-        const virtualPath = looksLikeDir
-          ? posix.join(dest.replace(/\/$/, ''), basename(src))
-          : dest;
-        planned.push({ localPath: src, virtualPath, size: srcStat.size });
-      } else {
-        throw new Error(`${src} is neither a regular file nor a directory`);
-      }
-
-      if (planned.length === 0) {
-        console.log('Nothing to upload (0 files).');
-        return;
-      }
-
-      const totalBytes = planned.reduce((s, f) => s + f.size, 0);
-      console.log(`Plan: ${planned.length} file${planned.length > 1 ? 's' : ''}, ${formatSize(totalBytes)}`);
-      for (const f of planned) {
-        console.log(`${f.localPath} ${dim('→')} ${f.virtualPath} (${formatSize(f.size)})`);
-      }
-
-      if (opts.dryRun) {
-        console.log('\n--dry-run: skipping all network calls.');
-        return;
-      }
-
-      const concurrency = Math.max(1, parseInt(opts.concurrency ?? String(UPLOAD_CONCURRENCY), 10));
-      const uploadOpts = { mime: opts.mime };
-
-      let cursor = 0;
-      let uploaded = 0, skipped = 0, resumed = 0, failed = 0;
-      const workers: Array<Promise<void>> = [];
-      for (let w = 0; w < Math.min(concurrency, planned.length); w++) {
-        workers.push((async () => {
-          while (true) {
-            const idx = cursor++;
-            if (idx >= planned.length) return;
-            const f = planned[idx];
-            try {
-              const result = await uploadOneFile(config.projectGuid, f.localPath, f.virtualPath, uploadOpts);
-              if (result.status === 'skipped') {
-                skipped++;
-                console.log(`${dim('skip')} ${f.virtualPath} (already current)`);
-              } else if (result.status === 'resumed') {
-                resumed++;
-                console.log(`${dim('resumed')} ${f.virtualPath} v${result.version}`);
-              } else {
-                uploaded++;
-                console.log(`${dim('uploaded')} ${f.virtualPath} v${result.version}`);
-              }
-            } catch (err) {
-              failed++;
-              console.error(clrError(`  fail ${f.virtualPath}: ${(err as Error).message}`));
-            }
-          }
-        })());
-      }
-      await Promise.all(workers);
-
-      console.log(`\nUploaded: ${uploaded}, Resumed: ${resumed}, Skipped: ${skipped}, Failed: ${failed}`);
-      if (failed > 0) process.exit(1);
+      const st = statSync(file);
+      if (!st.isFile()) throw new Error('not a regular file');
+      size = st.size;
     } catch (err) {
-      console.error(clrError(`Upload failed: ${(err as Error).message}`));
-      process.exit(1);
+      throw new Error(`can't read ${file}: ${(err as Error).message}`);
     }
-  });
+    if (size === 0) throw new Error(`${file} is empty - nothing to upload.`);
+
+    const filename = basename(file);
+    const contentType = opts.contentType || guessMime(file);
+
+    const doUpload = async (): Promise<CompleteResponse['data']> => {
+      const init = await post<InitResponse>(`/api/${config.projectGuid}/uploads/init`, {
+        filename,
+        content_type: contentType,
+        size,
+        public: !opts.private,
+      });
+      const fields = await transferToS3(file, size, contentType, init.data);
+      const completeBody: { upload_guid: string; parts?: Array<{ part_number: number; etag: string }> } = {
+        upload_guid: init.data.upload_guid,
+      };
+      // Multipart completion needs the part etags; a single presigned PUT does not.
+      if ('parts' in fields) completeBody.parts = fields.parts;
+      const comp = await post<CompleteResponse>(`/api/${config.projectGuid}/uploads/complete`, completeBody);
+      return comp.data;
+    };
+
+    const data = opts.json
+      ? await doUpload()
+      : await withSpinner(`Uploading ${filename} (${formatSize(size)})…`, doUpload, { done: null });
+
+    if (opts.json) {
+      console.log(JSON.stringify(data));
+      return;
+    }
+
+    console.log(success(`Uploaded ${data.name} (${formatSize(data.size)})`));
+    console.log(`  ${brand(data.url)}`);
+    console.log(muted(`  Durable, worker-reachable URL - pass it straight to a job/function as an input URL.`));
+    console.log(muted(`  ${data.is_public ? 'public (CDN)' : 'private (token-signed)'} · guid: ${data.guid}`));
+  }));

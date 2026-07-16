@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { runCliAsync, makeTmpHome } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
+import { scratchRefsInCode } from '../commands/sandbox.js';
 
 let mock: MockServer;
 let home: string;
@@ -96,6 +97,34 @@ test('gipity sandbox run does not claim a local sync for files that never landed
   assert.doesNotMatch(r.stdout, /synced to this directory/);
   assert.match(r.stdout, /Output files saved to project/);
   assert.match(r.stdout, /gipity sync/);
+});
+
+test('gipity sandbox run nudges toward tmp/ when a bare-filename output lands at the project root', async () => {
+  resetMock();
+  // A stray root-level output (test.mp3) alongside a real asset under src/. Only
+  // the root file gets the "will deploy / use tmp/" nudge; the src/ one does not.
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  const files = { 'test.mp3': 'probe\n', 'src/keeper.mp3': 'asset\n' };
+  const remote = Object.entries(files).map(([path, body], i) => {
+    mkdirSync(join(d, dirname(path)), { recursive: true });
+    writeFileSync(join(d, path), body);
+    return {
+      path, size: Buffer.byteLength(body), modified: new Date(0).toISOString(),
+      type: 'file', guid: `f_${i}`, serverVersion: 1,
+      contentHash: createHash('sha256').update(body).digest('hex'),
+    };
+  });
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 100, timedOut: false,
+    outputFiles: Object.keys(files),
+  } } });
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: remote } }));
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'touch test.mp3 src/keeper.mp3'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /test\.mp3 landed at the project root and will deploy/);
+  assert.match(r.stdout, /write it under tmp\//);
+  // The real asset under src/ is never flagged as a stray.
+  assert.doesNotMatch(r.stdout, /src\/keeper\.mp3 landed at the project root/);
 });
 
 test('gipity sandbox run surfaces a truncation notice when the server clipped output', async () => {
@@ -348,6 +377,93 @@ test('gipity sandbox run rejects a scratch --input path without touching the API
   assert.match(r.stderr, /tmp\/frame\.png/);
   assert.match(r.stderr, /Stage inputs at a real project path/);
   assert.deepEqual(mock.requests(), [], 'no API call should precede the scratch-input check');
+});
+
+// The same trap one step subtler: a scratch file read from INSIDE the code body
+// (not via --input). The auto-mirror skips the scratch namespaces, so the
+// container would hit a bare "No such file" for a path the caller can see on
+// local disk. It's caught pre-sync whether the code names it project-relative
+// (`tmp/sample.md`) or mirror-absolute (`/work/tmp/sample.md`, the path inside
+// the container where the mirror lands the project).
+test('gipity sandbox run rejects a scratch input read from the code body', async () => {
+  resetMock();
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  writeFileSync(join(d, 'tmp/sample.md'), '# staged input');
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'sandbox', 'run', 'python', "print(open('tmp/sample.md').read())"],
+    { env: { HOME: home }, cwd: d },
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /never mirrored into the sandbox/);
+  assert.match(r.stderr, /tmp\/sample\.md/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede the scratch check');
+});
+
+test('gipity sandbox run rejects a /work/-prefixed scratch input read from the code body', async () => {
+  resetMock();
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  writeFileSync(join(d, 'tmp/sample.md'), '# staged input');
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'pandoc /work/tmp/sample.md -o out.pdf'],
+    { env: { HOME: home }, cwd: d },
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /never mirrored into the sandbox/);
+  // Reported project-relative - the /work/ mirror prefix is stripped.
+  assert.match(r.stderr, /tmp\/sample\.md/);
+  assert.doesNotMatch(r.stderr, /work\/tmp/);
+  assert.deepEqual(mock.requests(), [], 'no API call should precede the scratch check');
+});
+
+// Writing OUTPUT under tmp/ is the supported "look once" path, not a trap: the
+// file doesn't exist yet, so the guard must let it through to the server.
+test('gipity sandbox run allows writing a scratch OUTPUT under tmp/', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+    scratchFiles: [{ path: 'tmp/preview.png', contentBase64: Buffer.from('x').toString('base64') }],
+  } } });
+  const r = await fresh(['sandbox', 'run', 'bash', 'pdftoppm -png docs/report.pdf tmp/preview']);
+  assert.equal(r.status, 0, r.stderr);
+});
+
+// A scratch OUTPUT comes back to local disk after the first run, so on a
+// RE-RUN the target exists locally - the guard must still let it through when
+// every reference is output-positioned, or the normal iterate loop hard-fails.
+test('gipity sandbox run allows RE-running a command whose scratch OUTPUT already exists locally', async () => {
+  resetMock();
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: [] } }));
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  // A prior run already wrote the scratch OUTPUT back to local disk, so it
+  // exists — but every reference to it is an -o target, so the re-run must pass.
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  writeFileSync(join(d, 'tmp', 'report.pdf'), 'previous run output');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'pandoc docs/report.md -o tmp/report.pdf'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  // ...while a genuine READ of that same existing scratch file is still refused.
+  const r2 = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'cat tmp/report.pdf'], { env: { HOME: home }, cwd: d });
+  assert.equal(r2.status, 1);
+  assert.match(r2.stderr, /never mirrored into the sandbox/);
+});
+
+// Unit coverage for the candidate matcher: it must surface every scratch
+// namespace (including the `*_tmp/` glob and the /work/-prefixed form) while
+// leaving the container's own /tmp and word-boundary lookalikes alone.
+test('scratchRefsInCode surfaces every scratch shape and ignores lookalikes', () => {
+  assert.deepEqual(scratchRefsInCode("open('tmp/a.pdf')"), ['tmp/a.pdf']);
+  assert.deepEqual(scratchRefsInCode('pandoc /work/tmp/a.md -o out'), ['tmp/a.md']);
+  assert.deepEqual(scratchRefsInCode('cat frames_tmp/b.png'), ['frames_tmp/b.png']);
+  assert.deepEqual(scratchRefsInCode('read .gipityscratch/c.txt'), ['.gipityscratch/c.txt']);
+  // The container's own writable /tmp, a nested tmp, and word-boundary lookalikes
+  // must NOT be flagged.
+  assert.deepEqual(scratchRefsInCode('convert x.png /tmp/out.png'), []);
+  assert.deepEqual(scratchRefsInCode('cat mytmp/x'), []);
+  assert.deepEqual(scratchRefsInCode('cat src/tmp/x'), []);
 });
 
 // ── --discard-output: per-run "drop this output entirely" globs ──────────────

@@ -167,6 +167,63 @@ function explainSplitArgs(args: string[]): string {
   return lines.join('\n');
 }
 
+// Regex fragments for the scratch directory names, derived from SCRATCH_IGNORE
+// so this can never drift from what sync actually ignores. Each pattern's
+// trailing '/' is dropped, dots are escaped, and a leading-`*` glob (`*_tmp/`)
+// becomes a filename-char run so `frames_tmp/` is matched too. `shouldIgnore`
+// is the authoritative filter downstream, so a slightly broad candidate here is
+// harmless — it just gets dropped if sync wouldn't actually ignore it.
+const SCRATCH_DIR_PATTERNS = SCRATCH_IGNORE
+  .map((p) => p.replace(/\/$/, ''))
+  .filter(Boolean)
+  .map((p) => p.replace(/[.]/g, '\\.').replace(/\*/g, '[A-Za-z0-9._-]*'));
+
+/**
+ * References to a scratch directory inside a code body — the files the sandbox's
+ * auto-mirror will NOT carry, because sync ignores the scratch namespaces. Two
+ * shapes of the same trap are matched:
+ *   - project-relative `tmp/nimbus.pdf` (how you name a root file locally), and
+ *   - mirror-absolute `/work/tmp/nimbus.pdf` (how you name that same file inside
+ *     the container, where the auto-mirror lands the project under /work/).
+ * Both are returned project-relative (the `/work/` prefix stripped) so the caller
+ * can resolve them on local disk and print a clean path. Deliberately NOT matched:
+ * `/tmp/out` (the container's own writable /tmp is fine) nor `mytmp/x` (word
+ * boundary). Covers every SCRATCH_IGNORE namespace, including the `*_tmp/` glob.
+ * Returns the distinct referenced paths. Exported for tests.
+ */
+export function scratchRefsInCode(code: string): string[] {
+  const dirs = SCRATCH_DIR_PATTERNS.join('|');
+  if (!dirs) return [];
+  // Match either a `/work/`-prefixed reference or a bare one that is not preceded
+  // by a slash (absolute/nested path) or a word/dot char (mytmp/, a.tmp/).
+  const re = new RegExp(`(?:\\/work\\/|(?<![\\w/.]))(?:${dirs})\\/[A-Za-z0-9._\\-\\/]+`, 'g');
+  return [...new Set((code.match(re) ?? []).map((m) => m.replace(/^\/work\//, '')))];
+}
+
+/** True when every reference to `p` in the code sits in an output position
+ *  (-o/--output/-of/>/>>/tee). A scratch OUTPUT lands on local disk after the
+ *  first run, so existence alone can't distinguish it from a staged input on a
+ *  RE-RUN of the same command - without this check the guard hard-fails the
+ *  normal iterate loop (run, tweak, run again) with a wrong diagnosis. */
+export function isWriteTarget(code: string, p: string): boolean {
+  const path = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const occur = new RegExp(`(?:\\/work\\/)?${path}(?![\\w./-])`, 'g');
+  const asOutput = new RegExp(
+    `(?:^|[\\s'"\`;(])(?:-o|-of|--out(?:put)?(?:[= ])|>>?|tee(?:\\s+-a)?)\\s*['"\`]?(?:\\/work\\/)?${path}(?![\\w./-])`,
+  );
+  const n = (code.match(occur) ?? []).length;
+  if (n === 0) return false;
+  // Cheap conservative pass: single occurrence and it matches an output shape.
+  if (n === 1) return asOutput.test(code);
+  // Multiple occurrences: every one must be output-positioned.
+  let all = true;
+  for (const m of code.matchAll(occur)) {
+    const start = Math.max(0, (m.index ?? 0) - 24);
+    if (!asOutput.test(code.slice(start, (m.index ?? 0) + m[0].length + 1))) { all = false; break; }
+  }
+  return all;
+}
+
 /** Project-relative path from the process cwd, or undefined when there's
  *  no local config (one-off mode) or the cwd is at/above the project root. */
 function resolveRelativeCwd(): string | undefined {
@@ -297,7 +354,9 @@ GCC/Rust).
     }
 
     if (inlineCode !== undefined && filePath) {
-      console.error(clrError('Pass either an inline <code> arg or --file <path>, not both'));
+      console.error(clrError('Pass the code ONE way, not both: an inline <code> arg OR --file <path>.'));
+      console.error(dim("  inline:  gipity sandbox run bash 'echo hi'"));
+      console.error(dim('  file:    gipity sandbox run --file script.sh'));
       process.exit(1);
     }
     if (inlineCode === undefined && !filePath) {
@@ -347,6 +406,31 @@ GCC/Rust).
       console.error(dim(`  ${SCRATCH_IGNORE.join(', ')} are ignored by sync, so the sandbox never sees them.`));
       console.error(dim('  Stage inputs at a real project path (src/, docs/, assets/) and delete them afterward.'));
       process.exit(1);
+    }
+
+    // Same trap, one step less obvious: a scratch file referenced as an INPUT
+    // from inside the code body (not via --input). The auto-mirror skips the
+    // scratch namespaces, so the container hits a bare "No such file" for a path
+    // the caller can plainly see on local disk. Catch it here, pre-sync, with the
+    // reason. We flag a reference only when that scratch file ACTUALLY EXISTS
+    // locally — which cleanly separates a staged input (must exist to be read)
+    // from a scratch OUTPUT target like `tmp/preview.png` (valid; doesn't exist
+    // yet, and outputs written under tmp/ come back on their own).
+    if (source) {
+      const scratchReads = scratchRefsInCode(source).filter(
+        (p) => shouldIgnore(p, SCRATCH_IGNORE)
+          && existsSync(resolve(process.cwd(), p))
+          // A previous run's OUTPUT lands locally, so on a re-run it exists -
+          // but if every reference is output-positioned it's still an output.
+          && !isWriteTarget(source, p),
+      );
+      if (scratchReads.length) {
+        console.error(clrError(`Scratch files are never mirrored into the sandbox, so it can't read: ${scratchReads.join(', ')}`));
+        console.error(dim(`  ${SCRATCH_IGNORE.join(', ')} are ignored by sync, so the sandbox never sees them.`));
+        console.error(dim('  Stage the input at a real project path (src/, docs/, assets/) and delete it afterward.'));
+        console.error(dim('  (Writing OUTPUT under tmp/ is fine — scratch outputs come back to your local tmp/.)'));
+        process.exit(1);
+      }
     }
 
     // Push local working-tree changes up before executing. The sandbox mirrors
@@ -456,6 +540,18 @@ GCC/Rust).
           console.log('\nOutput files saved to project:');
           for (const f of notOnDisk) console.log(`${f}`);
           if (pulledLocal) console.log(dim("Not pulled locally - run 'gipity sync' to fetch them."));
+        }
+        // A sandbox output that lands directly at the project ROOT (a bare
+        // filename, no directory) is almost always a throwaway probe, not a
+        // real asset - real assets live under src/, functions/, assets/, etc.
+        // Root files sync and are picked up by the deploy `files` phase, so a
+        // stray one ships unless the caller remembers to delete it. Point at
+        // tmp/ (local-only, never synced or deployed) at the moment of use so
+        // the next probe never has to be hand-cleaned off a deployable path.
+        const rootStrays = [...onDisk, ...notOnDisk].filter((f: string) => !f.includes('/'));
+        if (rootStrays.length > 0) {
+          console.log(dim(`\nNote: ${rootStrays.join(', ')} landed at the project root and will deploy with the files phase.`));
+          console.log(dim('For a throwaway probe or fixture, write it under tmp/ instead - scratch outputs stay on local disk and never sync or deploy.'));
         }
       }
       if (scratchWritten.length > 0) {

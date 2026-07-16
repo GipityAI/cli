@@ -55,12 +55,13 @@ test('gipity generate image POSTs and downloads from the returned URL', async ()
 });
 
 // The image models return whatever format they feel like — a BFL "png" request
-// comes back as JPEG — so honouring the caller's -o extension writes JPEG bytes
-// into a .png. That extension then lies to everything downstream: `page eval
-// --camera` validates and dispatches on it, and an agent that Reads the file gets
-// image bytes whose header contradicts the name and has to stop and work out
-// which one to believe. The bytes are the fact; the -o extension is a request.
-test('gipity generate image names the file after the bytes, not the -o extension', async () => {
+// comes back as JPEG — but an explicit -o path is a name the caller has committed
+// to and will chain the NEXT command against (`--input fist.png`, `page eval
+// --camera fist.png`). Renaming it to match the bytes moves the file out from
+// under that already-written second command, costing a "saved as .jpg, retry with
+// the right path" turn. So an explicit -o is honoured VERBATIM (every downstream
+// consumer sniffs the bytes, not the name), with the format mismatch stated.
+test('gipity generate image honours the explicit -o path verbatim', async () => {
   mock.reset();
   const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('\x00\x10JFIF\x00')]);
   mock.on('POST /projects/p_TestProj/generate/image', { body: {
@@ -74,12 +75,35 @@ test('gipity generate image names the file after the bytes, not the -o extension
   const r = await freshIn(dir, ['generate', 'image', 'a closed fist', '-o', 'tmp/fist.png']);
   assert.equal(r.status, 0, r.stderr);
 
-  // Saved under the real format, and the mismatch is stated rather than silent.
-  assert.match(r.stdout, /Saved to \/.*\/tmp\/fist\.jpg/);
+  // Saved at the EXACT requested path so the chained next command just works,
+  // and the format mismatch is stated (not silent) rather than renaming the file.
+  assert.match(r.stdout, /Saved to \/.*\/tmp\/fist\.png/);
+  assert.match(r.stderr, /holds JPEG bytes/);
+  assert.equal(readFileSync(join(dir, 'tmp', 'fist.png'))[0], 0xff);
+  // No surprise second path — the file is where, and only where, it was asked for.
+  assert.throws(() => readFileSync(join(dir, 'tmp', 'fist.jpg')));
+});
+
+// The auto-generated default filename (no -o) has no committed path to break, so
+// there we DO name the file after its real bytes — a tidy, honest extension.
+test('gipity generate image names the default file after the bytes', async () => {
+  mock.reset();
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('\x00\x10JFIF\x00')]);
+  mock.on('POST /projects/p_TestProj/generate/image', { body: {
+    url: `${mock.apiBase}/files/out.bin`,
+    content_type: 'image/png',
+    model: 'flux-2-pro', provider: 'bfl', size_bytes: jpeg.length,
+  } });
+  mock.on('GET /files/out.bin', { contentType: 'image/png', raw: jpeg });
+
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshIn(dir, ['generate', 'image', 'a closed fist']);
+  assert.equal(r.status, 0, r.stderr);
+
+  assert.match(r.stdout, /Saved to \/.*\/generated\.jpg/);
   assert.match(r.stderr, /returned JPEG, not PNG/);
-  assert.equal(readFileSync(join(dir, 'tmp', 'fist.jpg'))[0], 0xff);
-  // The misnamed file must not exist at all — one file, correctly named.
-  assert.throws(() => readFileSync(join(dir, 'tmp', 'fist.png')));
+  assert.equal(readFileSync(join(dir, 'generated.jpg'))[0], 0xff);
+  assert.throws(() => readFileSync(join(dir, 'generated.png')));
 });
 
 test('gipity generate surfaces an out-of-credits 402 with the buy link', async () => {
