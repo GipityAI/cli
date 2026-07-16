@@ -1239,42 +1239,52 @@ async function pickOrCreateProject(
 
   // Reserve slot 1 for "create new", slot 2 for "use this dir" when shown.
   const reserved = showAdopt ? 2 : 1;
-  // Pickable single-keypress range is 1-9; leave one slot for "Show all"
-  // when there are more projects than fit.
-  const maxRecent = 9 - reserved - 1; // worst case: keep slot 9 free for "show all"
-  const recent = filtered.slice(0, maxRecent);
-  const hasMore = filtered.length > recent.length;
+  // Pickable single-keypress range is 1-9. When every project fits, list
+  // them all; otherwise the actions grow a "Search projects" slot right
+  // after the reserved ones and "Show more" takes slot 9 - accounts with
+  // hundreds of projects can't scroll a dump. Action rows render in a
+  // different color than project rows so the two groups read apart.
+  const fitsAll = filtered.length <= 9 - reserved;
+  const hasMore = !fitsAll;
+  const searchSlot = hasMore ? reserved + 1 : 0;
+  const projectBase = reserved + (hasMore ? 1 : 0); // slots projectBase+1.. are projects
+  const recent = fitsAll ? filtered : filtered.slice(0, 9 - reserved - 2);
+  const moreSlot = hasMore ? projectBase + recent.length + 1 : 0; // always 9 when shown
 
   // Loop so that a refused/declined adopt-cwd re-shows the picker rather
   // than dropping the user into a shell.
   while (true) {
     const newProjectLabel = formatNewProjectLabel(existingSlugs);
     console.log(`  ${bold('Choose project to open:')}\n`);
-    console.log(`    ${bold('1.')} Create new project          ${muted(`(${newProjectLabel})`)}`);
+    console.log(`    ${bold('1.')} ${info('Create new project')}          ${muted(`(${newProjectLabel})`)}`);
     if (showAdopt) {
-      console.log(`    ${bold('2.')} Use this directory          ${muted(`(${formatCwdLabel(cwd)})`)}`);
+      console.log(`    ${bold('2.')} ${info('Use this directory')}          ${muted(`(${formatCwdLabel(cwd)})`)}`);
+    }
+    if (hasMore) {
+      console.log(`    ${bold(`${searchSlot}.`)} ${info('Search projects')} ${muted(`(${filtered.length} total)`)}`);
     }
     recent.forEach((p, i) =>
-      console.log(`    ${bold(`${i + reserved + 1}.`)} ${p.name} ${muted(`(${p.slug})`)}`),
+      console.log(`    ${bold(`${projectBase + i + 1}.`)} ${p.name} ${muted(`(${p.slug})`)}`),
     );
     if (hasMore) {
-      console.log(`    ${bold(`${recent.length + reserved + 1}.`)} Show all projects`);
+      console.log(`    ${bold(`${moreSlot}.`)} ${info('Show more')}`);
     }
     console.log('');
 
-    const maxOption = recent.length + reserved + (hasMore ? 1 : 0);
+    const maxOption = projectBase + recent.length + (hasMore ? 1 : 0);
     const idx = await pickOne('Choose', maxOption, 1);
 
-    // Recent project (slots reserved+1 .. recent.length+reserved).
-    if (idx > reserved && idx <= recent.length + reserved) {
-      return { kind: 'pick', project: recent[idx - reserved - 1] };
+    // Recent project (slots projectBase+1 .. projectBase+recent.length).
+    if (idx > projectBase && idx <= projectBase + recent.length) {
+      return { kind: 'pick', project: recent[idx - projectBase - 1] };
     }
 
-    // Show all projects (one past the last recent slot).
-    if (hasMore && idx === recent.length + reserved + 1) {
-      const picked = await pickFromAll(filtered);
+    // Search (right after the reserved slots) / Show more (slot 9).
+    if (hasMore && (idx === searchSlot || idx === moreSlot)) {
+      const picked = await browseProjects(filtered, { search: idx === searchSlot });
       if (picked) return { kind: 'pick', project: picked };
-      continue; // user bailed; re-show top picker
+      console.log('');
+      continue; // user backed out; re-show top picker
     }
 
     // Slot 2 = "Use this directory" (only when shown).
@@ -1290,18 +1300,80 @@ async function pickOrCreateProject(
   }
 }
 
-/** Render "Show all projects" with numbered list; returns the picked
- *  project or null if the user picked "create new" (slot 1) or invalid. */
-async function pickFromAll(filtered: ProjectData[]): Promise<ProjectData | null> {
+const PROJECT_PAGE_SIZE = 10;
+
+/** Case-insensitive substring match on project name or slug. An empty or
+ *  whitespace-only query matches everything. Exported for tests. */
+export function searchProjects(all: ProjectData[], query: string): ProjectData[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return all;
+  return all.filter(p => p.name.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q));
+}
+
+/** Paged, searchable project list - the shared renderer behind both the
+ *  "Search projects" and "Show more" picker slots. Shows PROJECT_PAGE_SIZE
+ *  rows at a time with numbering that stays stable across pages, then reads
+ *  a full line (not single-keypress - numbers can exceed 9):
+ *    Enter → next page · <number> → open that project
+ *    s → new search (always over the FULL list, never the current subset)
+ *    q → back to the main picker (returns null).
+ *  `opts.search` starts by prompting for a query instead of listing all.
+ *  Exported for tests. */
+export async function browseProjects(
+  all: ProjectData[],
+  opts: { search?: boolean } = {},
+): Promise<ProjectData | null> {
+  let items = all;
+  let heading = 'All projects';
+
+  // Prompt for a query and swap the working list to the matches. Returns
+  // false (list unchanged) on empty input or zero matches.
+  const runSearch = async (): Promise<boolean> => {
+    const q = await prompt(`  ${bold('Search projects:')} `);
+    if (!q) return false;
+    const matches = searchProjects(all, q);
+    if (matches.length === 0) {
+      console.log(`  ${muted(`No projects match "${q}".`)}`);
+      return false;
+    }
+    items = matches;
+    heading = `Projects matching "${q}"`;
+    return true;
+  };
+
   console.log('');
-  console.log(`  ${bold('All projects:')}\n`);
-  console.log(`    ${bold('1.')} Create new project`);
-  filtered.forEach((p, i) => console.log(`    ${bold(`${i + 2}.`)} ${p.name} ${muted(`(${p.slug})`)}`));
-  console.log('');
-  const allChoice = await prompt(`  Choose (1-${filtered.length + 1}): `);
-  const allIdx = parseInt(allChoice, 10);
-  if (allIdx >= 2 && allIdx <= filtered.length + 1) return filtered[allIdx - 2];
-  return null;
+  if (opts.search && !(await runSearch())) return null;
+
+  let shown = 0;
+  while (true) {
+    if (shown < items.length) {
+      const page = items.slice(shown, shown + PROJECT_PAGE_SIZE);
+      if (shown === 0) console.log(`  ${bold(`${heading}`)} ${muted(`(${items.length})`)}\n`);
+      page.forEach((p, i) =>
+        console.log(`    ${bold(`${String(shown + i + 1).padStart(3)}.`)} ${p.name} ${muted(`(${p.slug})`)}`),
+      );
+      shown += page.length;
+      console.log('');
+    }
+    const more = shown < items.length;
+    const hints = [
+      more ? `Enter = next ${Math.min(PROJECT_PAGE_SIZE, items.length - shown)}` : null,
+      'number = open',
+      's = search',
+      'q = back',
+    ].filter(Boolean).join(' · ');
+    const answer = (await prompt(`  ${bold('Choose')} ${muted(`(${hints})`)}: `)).toLowerCase();
+
+    if (answer === '' && more) continue; // Enter → next page
+    if (answer === '' || answer === 'q') return null;
+    if (answer === 's') {
+      if (await runSearch()) { shown = 0; console.log(''); }
+      continue;
+    }
+    const n = parseInt(answer, 10);
+    if (Number.isInteger(n) && n >= 1 && n <= shown) return items[n - 1];
+    console.log(`  ${muted('Type one of the numbers above, Enter for more, s to search, or q to go back.')}`);
+  }
 }
 
 /** Show "(~/GipityProjects/project-NNN)" - the exact dir option 1 will
