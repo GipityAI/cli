@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig } from '../config.js';
+import { requireConfig, resolveApiBase } from '../config.js';
 import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
@@ -173,7 +173,11 @@ export const deployCommand = new Command('deploy')
         // for an API-only app the endpoint address IS the deliverable, so name
         // it instead of leaving it to be inferred from a template comment.
         if (d.phases?.some(p => p.name === 'functions')) {
-          console.log(`${muted('Functions:')} POST ${brand(`${config.apiBase}/api/${config.projectGuid}/fn/<name>`)}`);
+          // Print the base the CLI actually calls (resolveApiBase honors the
+          // --api-base flag and GIPITY_API_BASE env), not the raw stored
+          // config.apiBase - otherwise on any override we'd advertise a host we
+          // didn't deploy to and send the caller probing the wrong instance.
+          console.log(`${muted('Functions:')} POST ${brand(`${resolveApiBase()}/api/${config.projectGuid}/fn/<name>`)}`);
           console.log(muted('  (same address on dev and prod; names: gipity fn list; verify the public path: gipity fn call <name> --anon)'));
         }
         await inspectAfter();

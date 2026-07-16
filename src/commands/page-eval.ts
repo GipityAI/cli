@@ -187,6 +187,14 @@ export function capWaitForTimeoutMs(raw: string): number {
   return WAIT_FOR_MAX_MS;
 }
 
+/** Read a --file/--reload-file script. `-` means stdin, so an agent can pipe a
+ *  heredoc straight in — `gipity page eval <url> --file - <<'EOF' … EOF` — with
+ *  no throwaway tmp file to write and then clean up. readFileSync(0) drains fd 0
+ *  (stdin) to EOF. Any other value is a path on disk. */
+export function readScriptFile(pathArg: string): string {
+  return readFileSync(pathArg === '-' ? 0 : pathArg, 'utf8');
+}
+
 /** True when `s` is an expression (`document.title`, an IIFE) rather than a
  *  statement body (`const x = …; return x`). Mirrors the server's own parse
  *  choice: only an expression may be spliced into `return (…)`. Nothing is
@@ -421,7 +429,7 @@ export const pageEvalCommand = new Command('eval')
   .description('Evaluate JS in a real browser on a page (DOM, computed styles, element rects; inline expr or --file script). ONE client per call - to verify realtime/presence across concurrent clients use `page test --observe` instead')
   .argument('<url>', 'URL to load')
   .argument('[expr]', `JavaScript to evaluate in page context (inline expression or statement body; await works, and the trailing expression is returned automatically — REPL-style — so no explicit return is needed; result is JSON-serialized). Omit when using --file. Time budget: the body has ${EVAL_SCRIPT_BUDGET_MS / 1000}s to finish after page load (${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s with --camera) - raise it with --timeout, max ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s.`)
-  .option('--file <path>', `Read the script body from a file instead of the inline <expr> arg (mutually exclusive). Runs as an async function body, so top-level return/await work. Same post-load budget as <expr> (--timeout).`)
+  .option('--file <path>', `Read the script body from a file instead of the inline <expr> arg (mutually exclusive), or --file - to read it from stdin (pipe a heredoc: --file - <<'EOF' … EOF) with no tmp file. Runs as an async function body, so top-level return/await work. Same post-load budget as <expr> (--timeout).`)
   .option(
     '--step <expr>',
     `Run another expression against the SAME loaded page, after <expr> (repeat, max ${MAX_EVAL_STEPS}). Whatever that page load paid for — a vision model coming up, a game booting, a socket connecting — stays up for every step, so an N-part check costs ONE page load instead of N. Each step gets its own in-page budget and its own reported result.`,
@@ -487,9 +495,11 @@ export const pageEvalCommand = new Command('eval')
     let expr = exprArg as string;
     if (opts.file) {
       try {
-        expr = readFileSync(opts.file, 'utf8');
+        expr = readScriptFile(opts.file);
       } catch {
-        pageEvalCommand.error(`error: Cannot read file: ${opts.file}`);
+        pageEvalCommand.error(opts.file === '-'
+          ? 'error: --file - reads the script from stdin, but stdin was empty/unreadable — pipe it in, e.g. gipity page eval "<url>" --file - <<\'EOF\' … EOF'
+          : `error: Cannot read file: ${opts.file}`);
       }
     }
 
@@ -501,7 +511,7 @@ export const pageEvalCommand = new Command('eval')
     let reloadExpr: string | undefined = opts.reload;
     if (opts.reloadFile) {
       try {
-        reloadExpr = readFileSync(opts.reloadFile, 'utf8');
+        reloadExpr = readScriptFile(opts.reloadFile);
       } catch {
         pageEvalCommand.error(`error: Cannot read file: ${opts.reloadFile}`);
       }
@@ -686,7 +696,7 @@ export const pageEvalCommand = new Command('eval')
       }
       if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
-      console.error(opts.file ? `${muted('Script:')} ${opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
+      console.error(opts.file ? `${muted('Script:')} ${opts.file === '-' ? '(stdin)' : opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
       if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
       if (emptyState) console.log(muted(`\n${emptyHint}`));
