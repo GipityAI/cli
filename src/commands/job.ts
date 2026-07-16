@@ -28,7 +28,7 @@ jobCommand
   .command('submit <name> [body]')
   .description('Submit a job (returns a run guid; poll with `job status <guid>`)')
   .option('-d, --data <json>', 'JSON input body: inline JSON, @file to read a file, or @- / - for stdin')
-  .option('--file <field=@path>', 'Attach a file as base64 under <field> (repeatable), e.g. --file image=@scan.png', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--file <field=@path>', 'Attach a file as { data, media_type } under <field> (the vision/media service shape), repeatable, e.g. --file image=@scan.png', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--idempotency-key <key>', 'Idempotency key (replays return the existing run)')
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Submit', async () => {

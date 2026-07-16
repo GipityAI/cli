@@ -84,7 +84,7 @@ fnCommand
   .command('call <name> [body]')
   .description('Call a function')
   .option('-d, --data <json>', 'JSON request body: inline JSON, @file to read a file, or @- / - for stdin')
-  .option('--file <field=@path>', 'Attach a file as base64 under <field> (repeatable), e.g. --file image=@receipt.png', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--file <field=@path>', 'Attach a file as { data, media_type } under <field> (the vision/media service shape), repeatable, e.g. --file image=@receipt.png', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--anon', 'Call as an anonymous visitor (the public path a signed-out user hits) instead of as your signed-in account')
   .option('--field <path>', 'Print only this field of the result (dot path, e.g. items.0.short_guid)')
   .option('--json', 'Output as JSON')

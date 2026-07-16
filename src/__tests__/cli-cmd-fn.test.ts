@@ -123,16 +123,19 @@ test('gipity fn call --body is accepted as an alias for --data', async () => {
   assert.deepEqual(post!.body, { name: 'world' });
 });
 
-test('gipity fn call --file base64-encodes a file into the JSON body (no manual base64 dance)', async () => {
+test('gipity fn call --file attaches a file as { data, media_type } matching the vision service shape (no manual base64 dance)', async () => {
   mock.reset();
   mock.on('POST /api/p_TestProj/fn/extract', { body: { data: { ok: true, text: 'hi' } } });
-  const img = join(tmpdir(), `fn-file-${process.pid}.bin`);
+  const img = join(tmpdir(), `fn-file-${process.pid}.png`);
   writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   const r = await fresh(['fn', 'call', 'extract', '{"lang":"en"}', '--file', `image=@${img}`]);
   assert.equal(r.status, 0, r.stderr);
   const post = mock.requests().find(q => q.method === 'POST' && q.url === '/api/p_TestProj/fn/extract');
   assert.ok(post, 'expected the call to POST');
-  assert.deepEqual(post!.body, { lang: 'en', image: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64') });
+  assert.deepEqual(post!.body, {
+    lang: 'en',
+    image: { data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'), media_type: 'image/png' },
+  });
 });
 
 test('gipity fn call --anon calls the public path with an app token and no user auth (cli#122)', async () => {
