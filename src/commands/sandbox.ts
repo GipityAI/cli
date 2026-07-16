@@ -200,6 +200,30 @@ export function scratchRefsInCode(code: string): string[] {
   return [...new Set((code.match(re) ?? []).map((m) => m.replace(/^\/work\//, '')))];
 }
 
+/** True when every reference to `p` in the code sits in an output position
+ *  (-o/--output/-of/>/>>/tee). A scratch OUTPUT lands on local disk after the
+ *  first run, so existence alone can't distinguish it from a staged input on a
+ *  RE-RUN of the same command - without this check the guard hard-fails the
+ *  normal iterate loop (run, tweak, run again) with a wrong diagnosis. */
+export function isWriteTarget(code: string, p: string): boolean {
+  const path = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const occur = new RegExp(`(?:\\/work\\/)?${path}(?![\\w./-])`, 'g');
+  const asOutput = new RegExp(
+    `(?:^|[\\s'"\`;(])(?:-o|-of|--out(?:put)?(?:[= ])|>>?|tee(?:\\s+-a)?)\\s*['"\`]?(?:\\/work\\/)?${path}(?![\\w./-])`,
+  );
+  const n = (code.match(occur) ?? []).length;
+  if (n === 0) return false;
+  // Cheap conservative pass: single occurrence and it matches an output shape.
+  if (n === 1) return asOutput.test(code);
+  // Multiple occurrences: every one must be output-positioned.
+  let all = true;
+  for (const m of code.matchAll(occur)) {
+    const start = Math.max(0, (m.index ?? 0) - 24);
+    if (!asOutput.test(code.slice(start, (m.index ?? 0) + m[0].length + 1))) { all = false; break; }
+  }
+  return all;
+}
+
 /** Project-relative path from the process cwd, or undefined when there's
  *  no local config (one-off mode) or the cwd is at/above the project root. */
 function resolveRelativeCwd(): string | undefined {
@@ -394,7 +418,11 @@ GCC/Rust).
     // yet, and outputs written under tmp/ come back on their own).
     if (source) {
       const scratchReads = scratchRefsInCode(source).filter(
-        (p) => shouldIgnore(p, SCRATCH_IGNORE) && existsSync(resolve(process.cwd(), p)),
+        (p) => shouldIgnore(p, SCRATCH_IGNORE)
+          && existsSync(resolve(process.cwd(), p))
+          // A previous run's OUTPUT lands locally, so on a re-run it exists -
+          // but if every reference is output-positioned it's still an output.
+          && !isWriteTarget(source, p),
       );
       if (scratchReads.length) {
         console.error(clrError(`Scratch files are never mirrored into the sandbox, so it can't read: ${scratchReads.join(', ')}`));

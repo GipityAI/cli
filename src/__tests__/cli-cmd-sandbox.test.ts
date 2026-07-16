@@ -429,6 +429,28 @@ test('gipity sandbox run allows writing a scratch OUTPUT under tmp/', async () =
   assert.equal(r.status, 0, r.stderr);
 });
 
+// A scratch OUTPUT comes back to local disk after the first run, so on a
+// RE-RUN the target exists locally - the guard must still let it through when
+// every reference is output-positioned, or the normal iterate loop hard-fails.
+test('gipity sandbox run allows RE-running a command whose scratch OUTPUT already exists locally', async () => {
+  resetMock();
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: [] } }));
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  // A prior run already wrote the scratch OUTPUT back to local disk, so it
+  // exists — but every reference to it is an -o target, so the re-run must pass.
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  writeFileSync(join(d, 'tmp', 'report.pdf'), 'previous run output');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'pandoc docs/report.md -o tmp/report.pdf'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  // ...while a genuine READ of that same existing scratch file is still refused.
+  const r2 = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'cat tmp/report.pdf'], { env: { HOME: home }, cwd: d });
+  assert.equal(r2.status, 1);
+  assert.match(r2.stderr, /never mirrored into the sandbox/);
+});
+
 // Unit coverage for the candidate matcher: it must surface every scratch
 // namespace (including the `*_tmp/` glob and the /work/-prefixed form) while
 // leaving the container's own /tmp and word-boundary lookalikes alone.
