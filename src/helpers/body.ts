@@ -12,6 +12,7 @@
  * path sidesteps the shell argument entirely.
  */
 import { readFileSync } from 'node:fs';
+import { guessMime } from '../upload.js';
 
 /** Read all of stdin synchronously (fd 0). Returns '' if stdin is a TTY. */
 function readStdin(): string {
@@ -24,17 +25,21 @@ function readStdin(): string {
 }
 
 /**
- * Read a `--file field=@path` (or `field=path`) spec, base64-encode the file's
- * bytes, and return `[field, base64]`. This is the ergonomic path for calling
- * an image / audio / document function end-to-end: instead of a manual
+ * Read a `--file field=@path` (or `field=path`) spec and return
+ * `[field, { data, media_type }]`. This is the ergonomic path for calling an
+ * image / audio / document function end-to-end: instead of a manual
  * `base64 | grep | python json.dumps` dance to stuff a photo into a JSON body,
- * the CLI reads the file itself and encodes it. The leading `@` is optional
- * (accepted for symmetry with `--data @file`).
+ * the CLI reads the file itself, base64-encodes it, and wraps it in the
+ * `{ data, media_type }` envelope every Gipity vision/media service and the
+ * browser SDK expect (see the `image` field in app-llm). A bare base64 string
+ * would mismatch that shape, so attachments always carry their media type
+ * (detected from the file extension). The leading `@` is optional (accepted
+ * for symmetry with `--data @file`).
  */
-export function readFileField(spec: string): [string, string] {
+export function readFileField(spec: string): [string, { data: string; media_type: string }] {
   const eq = spec.indexOf('=');
   if (eq === -1) {
-    throw new Error(`Invalid --file '${spec}': expected field=@path (e.g. --file data=@receipt.png).`);
+    throw new Error(`Invalid --file '${spec}': expected field=@path (e.g. --file image=@receipt.png).`);
   }
   const field = spec.slice(0, eq).trim();
   let path = spec.slice(eq + 1);
@@ -42,7 +47,7 @@ export function readFileField(spec: string): [string, string] {
   if (!field) throw new Error(`Invalid --file '${spec}': missing field name before '='.`);
   if (!path) throw new Error(`Invalid --file '${spec}': missing file path after '='.`);
   try {
-    return [field, readFileSync(path).toString('base64')];
+    return [field, { data: readFileSync(path).toString('base64'), media_type: guessMime(path) }];
   } catch (e) {
     throw new Error(`Cannot read --file '${path}': ${(e as Error).message}`);
   }
@@ -50,9 +55,10 @@ export function readFileField(spec: string): [string, string] {
 
 /**
  * Resolve a JSON body and merge in any `--file field=@path` attachments, each
- * base64-encoded under its field. `fileSpecs` is the repeatable `--file` list.
- * File attachments require an object body (they can't merge into an array or
- * scalar), which is the normal case for a function/job request.
+ * attached as `{ data, media_type }` under its field. `fileSpecs` is the
+ * repeatable `--file` list. File attachments require an object body (they can't
+ * merge into an array or scalar), which is the normal case for a function/job
+ * request.
  */
 export function resolveBody(raw: string | undefined, fileSpecs?: string[]): unknown {
   const body = resolveJsonBody(raw);
@@ -62,8 +68,8 @@ export function resolveBody(raw: string | undefined, fileSpecs?: string[]): unkn
   }
   const obj = body as Record<string, unknown>;
   for (const spec of fileSpecs) {
-    const [field, b64] = readFileField(spec);
-    obj[field] = b64;
+    const [field, attachment] = readFileField(spec);
+    obj[field] = attachment;
   }
   return obj;
 }

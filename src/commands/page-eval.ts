@@ -457,7 +457,7 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait-timeout <ms>', `Max ms to wait for --wait-for before giving up (max ${WAIT_FOR_MAX_MS})`, '5000')
   .option(
     '--timeout <ms>',
-    `How long the script itself may run IN the page - its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
+    `How long the script itself may run IN the page, in MILLISECONDS (so 90s = 90000, NOT 90) - its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; floor 1000, max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
   )
   .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
   .option('--json', 'Output as JSON')
@@ -523,6 +523,24 @@ export const pageEvalCommand = new Command('eval')
         `error: at most ${MAX_EVAL_STEPS} --step expressions ride on one page load (got ${steps.length}) — ` +
         `do more per step, or split this into two evals`,
       );
+    }
+
+    // --timeout is in MILLISECONDS. A tiny value is almost always seconds typed
+    // as ms (--timeout 90 meaning 90s), which would otherwise clamp SILENTLY to
+    // the 1s in-page floor — the script then stalls with no hint about the unit.
+    // Reject it up front, naming the unit and the ms value they meant, so the fix
+    // is one obvious edit instead of a doomed run. (Values ≥100 that are meant as
+    // seconds exceed the max anyway and are caught by capScriptBudgetMs's cap.)
+    if (opts.timeout !== undefined) {
+      const t = parseInt(opts.timeout, 10);
+      if (Number.isFinite(t) && t > 0 && t < 100) {
+        const asMs = Math.min(t * 1000, EVAL_SCRIPT_BUDGET_MAX_MS);
+        pageEvalCommand.error(
+          `error: --timeout is in MILLISECONDS (got ${t}, which is under the 1000ms in-page floor). ` +
+          `${t} looks like seconds — for ${t} second${t === 1 ? '' : 's'} pass --timeout ${asMs}` +
+          `${t * 1000 > EVAL_SCRIPT_BUDGET_MAX_MS ? ` (${t}s is over the ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s max)` : ''}.`,
+        );
+      }
     }
 
     let waitMs = capWaitMs(opts.wait, url);
