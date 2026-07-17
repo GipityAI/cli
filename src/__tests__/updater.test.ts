@@ -1,9 +1,10 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readFileSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { compareSemver } from '../updater/check.js';
+import { isWedged, acquireUpdateLock, releaseUpdateLock, resetLocalTree } from '../updater/install.js';
 import { resolveCommand } from '../platform.js';
 
 describe('resolveCommand', () => {
@@ -36,6 +37,63 @@ describe('compareSemver', () => {
   it('treats missing components as zero', () => {
     assert.equal(compareSemver('1.0', '1.0.0'), 0);
     assert.ok(compareSemver('1.0.1', '1.0') > 0);
+  });
+});
+
+describe('isWedged', () => {
+  it('matches interrupted-install corruption codes', () => {
+    assert.equal(isWedged('npm error code ENOTEMPTY\nnpm error syscall rename'), true);
+    assert.equal(isWedged('npm error code EEXIST'), true);
+    assert.equal(isWedged('npm error code EJSONPARSE\nnpm error JSON.parse Invalid package.json'), true);
+  });
+
+  it('does not match transient or registry failures (must not wipe a working tree)', () => {
+    assert.equal(isWedged(''), false);
+    assert.equal(isWedged('npm error code E404\nnpm error 404 Not Found'), false);
+    assert.equal(isWedged('npm error code ERESOLVE'), false);
+    assert.equal(isWedged('npm error code ENETUNREACH'), false);
+  });
+});
+
+// Lock and reset take explicit path overrides so tests stay inside a temp
+// dir (module-level defaults point at the real ~/.gipity, captured at import).
+describe('update lock + tree reset', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'gipity-test-'));
+  });
+
+  it('lock round-trips: acquire, contend, release, reacquire', () => {
+    const lock = join(tmp, 'update.lock');
+    assert.equal(acquireUpdateLock(lock), true);
+    assert.equal(acquireUpdateLock(lock), false);
+    releaseUpdateLock(lock);
+    assert.equal(acquireUpdateLock(lock), true);
+    releaseUpdateLock(lock);
+  });
+
+  it('takes over a stale lock from a dead updater', () => {
+    const lock = join(tmp, 'update.lock');
+    assert.equal(acquireUpdateLock(lock), true);
+    const old = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lock, old, old);
+    assert.equal(acquireUpdateLock(lock), true);
+    releaseUpdateLock(lock);
+  });
+
+  it('resetLocalTree wipes node_modules and lockfile and rewrites package.json', () => {
+    const local = join(tmp, 'local');
+    mkdirSync(join(local, 'node_modules', '.gipity-abc123'), { recursive: true });
+    writeFileSync(join(local, 'node_modules', '.gipity-abc123', 'leftover.js'), 'x');
+    writeFileSync(join(local, 'package-lock.json'), '{}');
+    writeFileSync(join(local, 'package.json'), '{truncated');
+    resetLocalTree(local);
+    assert.equal(existsSync(join(local, 'node_modules')), false);
+    assert.equal(existsSync(join(local, 'package-lock.json')), false);
+    const pkg = JSON.parse(readFileSync(join(local, 'package.json'), 'utf-8'));
+    assert.equal(pkg.name, 'gipity-local');
+    assert.equal(pkg.private, true);
   });
 });
 

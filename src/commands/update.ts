@@ -15,5 +15,9 @@ export const updateCommand = new Command('update')
       console.log(success('Already on the latest version.'));
     } else {
       console.log(warning(`No update applied: ${result.reason}`));
+      if (result.reason?.startsWith('npm install')) {
+        console.log(dim('Full npm output: ~/.gipity/update.log'));
+        console.log(dim('If it keeps failing, delete ~/.gipity/local and run any gipity command to reinstall.'));
+      }
     }
   });
