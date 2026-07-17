@@ -49,6 +49,25 @@ fileCommand
   }));
 
 fileCommand
+  .command('url <path>')
+  .description('Durable public URL for a project file - no deploy needed. Reachable by browsers, GPU jobs, and external services the moment the file syncs; ideal for throwaway test fixtures (delete the file to revoke the link).')
+  .option('--download', 'URL forces a download (Content-Disposition: attachment)')
+  .option('--json', 'Output as JSON')
+  .action((path: string, opts) => run('Url', async () => {
+    const { config } = await resolveProjectContext();
+    const qs = new URLSearchParams({ path });
+    if (opts.download) qs.set('download', '1');
+    const res = await get<{ data: { url: string; file_guid: string } }>(
+      `/projects/${config.projectGuid}/files/url?${qs.toString()}`
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(res.data));
+    } else {
+      console.log(res.data.url);
+    }
+  }));
+
+fileCommand
   .command('tree [path]')
   .description('Show the file tree')
   .option('--json', 'Output as JSON')
