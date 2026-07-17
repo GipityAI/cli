@@ -30,6 +30,27 @@ function printSkippedCandidates(skipped: Array<{ path: string; reason: string }>
   console.log(muted('Run frontend/kit module tests in the sandbox: gipity sandbox run bash "node <file>"'));
 }
 
+/** Tests call functions over REST (`ctx.fn.call`), which resolves against the
+ *  DEPLOYED functions — a function that's only been written locally isn't
+ *  registered yet, so its call 404s with `Function 'name' not found`. Running
+ *  `gipity test` right after writing a function (before deploying) is a natural
+ *  instinct, and the bare 404 gives no hint that a deploy is the missing step.
+ *  Detect that exact failure shape and name the fix. Returns the distinct
+ *  function names that 404'd, or [] when no failure looks like this. */
+function undeployedFunctionsFromFailures(
+  results: Array<{ status: string; error?: string }>,
+): string[] {
+  const names = new Set<string>();
+  for (const r of results) {
+    if (r.status !== 'failed' || !r.error) continue;
+    // Shape: "Function <name> failed: 404 NOT_FOUND - Function '<name>' not found"
+    if (!/404\b/.test(r.error) || !/not\s+found/i.test(r.error)) continue;
+    const m = r.error.match(/Function ['"]?([\w-]+)['"]? (?:not found|failed)/i);
+    if (m) names.add(m[1]);
+  }
+  return [...names];
+}
+
 interface TestStatusResponse {
   data: {
     runGuid: string;
@@ -272,6 +293,20 @@ export const testCommand = new Command('test')
           console.log(`  ${statusIcon('failed')} ${where}${r.name || '(unnamed test - the file may have crashed outside a test)'}`);
           console.log(`      ${clrError(r.error || `(no assertion message recorded - inspect with: gipity test status ${runGuid} --json)`)}`);
         }
+        console.log('');
+      }
+
+      // Tests call functions against the DEPLOYED build, so a function written
+      // but not yet deployed 404s. That ordering (deploy → test) is invisible in
+      // a bare 404, so when we see that failure shape, name the fix once.
+      const undeployed = undeployedFunctionsFromFailures(data.results);
+      if (undeployed.length > 0) {
+        const list = undeployed.map((n) => `'${n}'`).join(', ');
+        console.log(warning(
+          `${undeployed.length === 1 ? 'Function' : 'Functions'} ${list} 404'd: tests call functions against the ` +
+          `DEPLOYED build, and ${undeployed.length === 1 ? 'this one is' : 'these are'} not deployed yet.`,
+        ));
+        console.log(muted('Deploy first, then re-run: gipity deploy dev && gipity test'));
         console.log('');
       }
 
