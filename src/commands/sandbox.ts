@@ -6,7 +6,7 @@ import { resolveProjectContext, getConfigPath, getProjectRoot, shouldIgnore } fr
 import { SCRATCH_IGNORE } from '../setup.js';
 import { sync } from '../sync.js';
 import { error as clrError, dim } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { run, parseDuration } from '../helpers/index.js';
 import { createProgressReporter, withSpinner } from '../progress.js';
 
 const LANG_MAP: Record<string, string> = {
@@ -200,28 +200,45 @@ export function scratchRefsInCode(code: string): string[] {
   return [...new Set((code.match(re) ?? []).map((m) => m.replace(/^\/work\//, '')))];
 }
 
-/** True when every reference to `p` in the code sits in an output position
- *  (-o/--output/-of/>/>>/tee). A scratch OUTPUT lands on local disk after the
- *  first run, so existence alone can't distinguish it from a staged input on a
- *  RE-RUN of the same command - without this check the guard hard-fails the
- *  normal iterate loop (run, tweak, run again) with a wrong diagnosis. */
+/**
+ * True when the code WRITES `p` at its FIRST use, so the file is produced inside
+ * the sandbox and any later reference (an `ls`/`cat` to inspect it, a second
+ * pass over it) reads that in-sandbox copy rather than an unmirrored input. Two
+ * output shapes are recognized, judged at the path's first occurrence:
+ *   - a flagged/redirected output: `-o p`, `-of p`, `--output p`, `> p`, `>> p`, `tee p`;
+ *   - an ffmpeg trailing-positional output: ffmpeg names its output as the last
+ *     positional (NO `-o` flag), so a path in an ffmpeg segment that is not the
+ *     `-i`/`--input` argument is an output.
+ * This keeps the write-then-inspect pattern in one script working (ffmpeg writes
+ * tmp/clip.mp4, then `ls tmp/clip.mp4`), while still catching a genuine staged
+ * INPUT read whose first use is not a write (`cat tmp/x`, `pandoc tmp/x.md ...`,
+ * `open('tmp/x')`, `ffmpeg -i tmp/x ...`). It also lets the normal iterate loop
+ * through: a scratch OUTPUT lands locally after the first run, so on a re-run it
+ * exists, but its first reference is still the write.
+ */
 export function isWriteTarget(code: string, p: string): boolean {
   const path = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const occur = new RegExp(`(?:\\/work\\/)?${path}(?![\\w./-])`, 'g');
-  const asOutput = new RegExp(
-    `(?:^|[\\s'"\`;(])(?:-o|-of|--out(?:put)?(?:[= ])|>>?|tee(?:\\s+-a)?)\\s*['"\`]?(?:\\/work\\/)?${path}(?![\\w./-])`,
+  const m = new RegExp(`(?:\\/work\\/)?${path}(?![\\w./-])`).exec(code);
+  if (!m) return false;
+  const idx = m.index;
+  const before = code.slice(Math.max(0, idx - 40), idx);
+  // Flagged / redirected output position immediately before the path.
+  if (/(?:^|[\s'"`;(])(?:-o|-of|--out(?:put)?[= ]|>>?|tee(?:\s+-a)?)\s*['"`]?(?:\/work\/)?$/.test(before)) return true;
+  // ffmpeg's output is a trailing positional (no `-o`): a path in an ffmpeg
+  // segment that isn't the `-i`/`--input` argument is an output.
+  const segStart = Math.max(
+    code.lastIndexOf('&&', idx), code.lastIndexOf('||', idx),
+    code.lastIndexOf(';', idx), code.lastIndexOf('|', idx), code.lastIndexOf('\n', idx),
   );
-  const n = (code.match(occur) ?? []).length;
-  if (n === 0) return false;
-  // Cheap conservative pass: single occurrence and it matches an output shape.
-  if (n === 1) return asOutput.test(code);
-  // Multiple occurrences: every one must be output-positioned.
-  let all = true;
-  for (const m of code.matchAll(occur)) {
-    const start = Math.max(0, (m.index ?? 0) - 24);
-    if (!asOutput.test(code.slice(start, (m.index ?? 0) + m[0].length + 1))) { all = false; break; }
-  }
-  return all;
+  // segStart points at the FIRST char of the separator; a two-char operator
+  // (`&&`/`||`) leaves its second char in the slice, so strip any leading
+  // operator/space chars before reading the command word. Without this, the
+  // canonical `mkdir -p tmp && ffmpeg -i a.png tmp/out.mp4` idiom left a stray
+  // `&` that defeated the command extractor and false-blocked the re-run.
+  const seg = code.slice(segStart + 1, idx).replace(/^[\s&|;]+/, '');
+  const cmd = /^\s*([A-Za-z0-9_./-]+)/.exec(seg)?.[1]?.split('/').pop()?.toLowerCase();
+  const afterInputFlag = /(?:^|[\s'"`])(?:-i|--input)[= ]\s*['"`]?$/.test(before);
+  return cmd === 'ffmpeg' && !afterInputFlag;
 }
 
 /** Project-relative path from the process cwd, or undefined when there's
@@ -251,7 +268,16 @@ sandboxCommand
   // positional arg is the canonical spelling). Accept it as a working alias
   // rather than bouncing the guess into an unknown-option --help detour.
   .addOption(new Option('--code <code>', 'Alias for the positional inline <code> arg').hideHelp())
-  .option('--timeout <seconds>', 'Execution timeout in seconds', '30')
+  // `bash -c '<code>'` and `node -e '<code>'` are the universal ways to run an
+  // inline command, and an agent reaches for them by reflex - but the bare
+  // `-c` / `-e` used to hit commander's OWN parser first ("unknown option
+  // '-c'"), before the interpreter-token logic below ever ran. Declaring them
+  // as hidden inline-code aliases makes the idiom just work: `-c`/`--cmd`
+  // implies bash, `-e`/`--eval` implies node, and a leading `bash`/`python`/
+  // `node` token still pins the language (so `python -c '...'` runs as python).
+  .addOption(new Option('-c, --cmd <code>', 'Inline code (bash idiom: `sandbox run bash -c "<code>"`)').hideHelp())
+  .addOption(new Option('-e, --eval <code>', 'Inline code (node idiom: `sandbox run node -e "<code>"`)').hideHelp())
+  .option('--timeout <seconds>', 'Execution timeout. Bare number = seconds; or pass an explicit unit that means the same on both this and `page eval --timeout`, e.g. --timeout 90s.', '30')
   .option(
     '--input <path>',
     'Narrow to specific project files instead of auto-mirroring the whole tree (repeatable). Use this only for >1 GB projects or when you want surgical control.',
@@ -303,6 +329,8 @@ Examples:
   $ gipity sandbox run --file build_report.py
   $ gipity sandbox run python build_report.py   # same thing, interpreter shorthand
   $ gipity sandbox run bash "echo hi; ffmpeg -version"   # inline, language pinned
+  $ gipity sandbox run bash -c "ffmpeg -version"         # the bash -c idiom also works
+  $ gipity sandbox run node -e "console.log(process.version)"  # and node -e
 
   # Surgical: only these files are mirrored in
   $ gipity sandbox run --language bash \\
@@ -332,13 +360,26 @@ GCC/Rust).
     let inlineCode: string | undefined;
     let filePath: string | undefined = opts.file;
     let langFromInterp: string | undefined;
-    // --code alias: fold it into the positional slot before the shape checks.
-    if (opts.code !== undefined) {
-      if (args.length) {
-        console.error(clrError('Pass the code once: either positionally or via --code, not both'));
+    // Inline code may arrive via a flag alias instead of the positional slot:
+    //   --code            language-agnostic (needs --language or an interpreter token)
+    //   --cmd / -c        the `bash -c '<code>'` idiom → implies bash
+    //   --eval / -e       the `node -e '<code>'` idiom → implies node
+    // Fold whichever was given into the positional slot before the shape checks,
+    // preserving a leading interpreter token (`python -c '...'` stays python).
+    const flagCode = opts.code ?? opts.cmd ?? opts.eval;
+    if (flagCode !== undefined) {
+      // The positional slot may legitimately hold ONLY a leading interpreter
+      // token that pins the language; anything more is a duplicate copy of the code.
+      const leadIsInterp = args.length === 1 && INTERPRETERS[args[0].toLowerCase()] !== undefined;
+      if (args.length > (leadIsInterp ? 1 : 0)) {
+        console.error(clrError('Pass the code once: either positionally or via --code/--cmd/-c/--eval/-e, not both'));
         process.exit(1);
       }
-      args = [opts.code];
+      const interp = leadIsInterp ? args[0]
+        : opts.cmd !== undefined ? 'bash'
+        : opts.eval !== undefined ? 'node'
+        : undefined;
+      args = interp ? [interp, flagCode] : [flagCode];
     }
     if (args.length >= 2 && INTERPRETERS[args[0].toLowerCase()] !== undefined) {
       langFromInterp = INTERPRETERS[args[0].toLowerCase()];
@@ -392,7 +433,10 @@ GCC/Rust).
     // Args are good - now it's worth resolving (and announcing) the project.
     const { config } = await resolveProjectContext();
 
-    const timeout = parseInt(opts.timeout, 10);
+    // A bare number is native SECONDS; an explicit suffix (90s / 1500ms / 2m) is
+    // portable with `page eval --timeout` and converted to seconds here.
+    const durOpt = parseDuration(opts.timeout, 's');
+    const timeout = durOpt ? Math.max(1, Math.round(durOpt.value)) : parseInt(opts.timeout, 10);
     const cwd = resolveRelativeCwd();
 
     // A scratch path is never synced, so it can never reach the VFS the sandbox
@@ -421,7 +465,10 @@ GCC/Rust).
         (p) => shouldIgnore(p, SCRATCH_IGNORE)
           && existsSync(resolve(process.cwd(), p))
           // A previous run's OUTPUT lands locally, so on a re-run it exists -
-          // but if every reference is output-positioned it's still an output.
+          // but a path written at its FIRST use (ffmpeg output, -o, >) is
+          // produced in the sandbox, so a later inspect (`ls`/`cat`) in the same
+          // script reads that copy, not the mirror. Only a genuine staged input
+          // read (first use isn't a write) is blocked.
           && !isWriteTarget(source, p),
       );
       if (scratchReads.length) {
@@ -562,7 +609,37 @@ GCC/Rust).
         console.log(dim('\nDiscarded (--discard-output):'));
         for (const f of res.data.skippedOutputFiles) console.log(dim(`${f}`));
       }
+      // Silent-failure guard: a command that exits 0 yet leaves a 0-byte output
+      // almost always failed silently - a broken ffmpeg filter, or an OOM the
+      // shell swallowed. Without this the only signal is an `ls -la` afterward,
+      // and the agent burns a turn inferring "the encode failed" from a file
+      // size. Name it at the moment it happens, for scratch (bytes returned
+      // inline) and synced outputs (stat on local disk) alike.
+      if (res.data.exitCode === 0) {
+        const emptyScratch = (res.data.scratchFiles ?? [])
+          .filter((f) => f.contentBase64.length === 0)
+          .map((f) => f.path.replace(/\\/g, '/'));
+        const root = getProjectRoot();
+        const emptyOutputs = pulledLocal && root
+          ? (res.data.outputFiles ?? []).filter((f: string) => {
+              try { return statSync(resolve(root, f)).size === 0; } catch { return false; }
+            })
+          : [];
+        const empties = [...new Set([...emptyScratch, ...emptyOutputs])];
+        if (empties.length > 0) {
+          console.error(dim(`Note: ${empties.join(', ')} was written but is empty (0 bytes) - the command exited 0 but likely failed silently (a broken filter, or an out-of-memory kill the shell swallowed). Re-check the command, or shrink the job if it may have run out of memory.`));
+        }
+      }
       if (res.data.exitCode !== 0) {
+        // A process killed by a signal exits 128+signal. 137 (SIGKILL) on the
+        // sandbox is almost always the OS OOM-killer - the raw `/work/_run.sh:
+        // Killed` line the shell prints never says so, so a bare retry at the
+        // same size just OOMs again. Name it and point at the usual fix.
+        if (res.data.exitCode === 137) {
+          console.error(clrError('The sandbox process was killed (exit 137) - it ran out of memory.'));
+          console.error(dim('  Shrink the job: for ffmpeg, downscale (-vf scale=640:-2) and add -preset ultrafast;'));
+          console.error(dim('  for ImageMagick, lower -density/-resize. Process in smaller chunks if it still OOMs.'));
+        }
         // No "did you mean another language?" hint is needed: the language is now
         // always something the caller pinned, never a silent default we chose.
         process.exit(res.data.exitCode);

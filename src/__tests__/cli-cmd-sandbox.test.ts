@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { runCliAsync, makeTmpHome } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
-import { scratchRefsInCode } from '../commands/sandbox.js';
+import { scratchRefsInCode, isWriteTarget } from '../commands/sandbox.js';
 
 let mock: MockServer;
 let home: string;
@@ -194,6 +194,70 @@ test('gipity sandbox run <interpreter> <inline-code> pins the language for a non
   assert.equal(r.status, 0, r.stderr);
   assert.equal(posted?.language, 'bash');
   assert.equal(posted?.code, 'echo hi');
+});
+
+// `bash -c '<code>'` / `node -e '<code>'` / `--cmd` are the universal ways to
+// run an inline command, and an agent types them by reflex. The bare `-c`/`-e`
+// used to hit commander's own parser first ("unknown option '-c'"); they are now
+// hidden inline-code aliases so the idiom just works. `-c`/`--cmd` implies bash,
+// `-e`/`--eval` implies node, and a leading interpreter token still pins the language.
+test('gipity sandbox run bash -c "<code>" runs the inline command as bash', async () => {
+  resetMock();
+  let posted: { code: string; language: string } | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as { code: string; language: string };
+    return { body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', 'bash', '-c', 'ffmpeg -version']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(posted?.language, 'bash');
+  assert.equal(posted?.code, 'ffmpeg -version');
+});
+
+test('gipity sandbox run --cmd "<code>" implies bash', async () => {
+  resetMock();
+  let posted: { code: string; language: string } | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as { code: string; language: string };
+    return { body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', '--cmd', 'echo hi']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(posted?.language, 'bash');
+  assert.equal(posted?.code, 'echo hi');
+});
+
+test('gipity sandbox run node -e "<code>" implies javascript', async () => {
+  resetMock();
+  let posted: { code: string; language: string } | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as { code: string; language: string };
+    return { body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', 'node', '-e', 'console.log(1)']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(posted?.language, 'javascript');
+  assert.equal(posted?.code, 'console.log(1)');
+});
+
+test('gipity sandbox run python -c "<code>" lets the interpreter token pin the language', async () => {
+  resetMock();
+  let posted: { code: string; language: string } | undefined;
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    posted = req.body as { code: string; language: string };
+    return { body: { data: { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 10, timedOut: false } } };
+  });
+  const r = await fresh(['sandbox', 'run', 'python', '-c', 'print(1)']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(posted?.language, 'python');
+  assert.equal(posted?.code, 'print(1)');
+});
+
+test('gipity sandbox run rejects code passed both positionally and via --cmd', async () => {
+  resetMock();
+  const r = await fresh(['sandbox', 'run', 'bash', 'echo a', '--cmd', 'echo b']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Pass the code once/i);
 });
 
 // The language is never guessed for CODE snippets - `x = 1` parses as Python
@@ -449,6 +513,84 @@ test('gipity sandbox run allows RE-running a command whose scratch OUTPUT alread
   const r2 = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'cat tmp/report.pdf'], { env: { HOME: home }, cwd: d });
   assert.equal(r2.status, 1);
   assert.match(r2.stderr, /never mirrored into the sandbox/);
+});
+
+// The write-then-inspect pattern in ONE script (write an output to tmp/, then
+// `ls`/`cat` it to check it) must NOT be blocked: the file is created inside the
+// sandbox, so the trailing read hits that in-sandbox copy, not an unmirrored
+// input. Previously this was double-blocked once the 0-byte output existed
+// locally, because the guard required EVERY reference to be output-positioned.
+test('gipity sandbox run allows writing a scratch output then inspecting it in the same script', async () => {
+  resetMock();
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: [] } }));
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  // A prior run already left the (empty) output on local disk, exactly the state
+  // that triggered the double-block: the file exists AND is read after the write.
+  writeFileSync(join(d, 'tmp', 'street.mp4'), '');
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'ffmpeg -y -i docs/still.png -t 3 tmp/street.mp4 && ls -la tmp/street.mp4'],
+    { env: { HOME: home }, cwd: d },
+  );
+  assert.equal(r.status, 0, r.stderr);
+});
+
+// Same write-then-inspect, but ffmpeg follows a two-char `&&` operator (the
+// canonical `mkdir -p tmp && ffmpeg …` idiom). The segment parser must strip the
+// leftover operator char, or ffmpeg's trailing-positional output is misread as a
+// scratch INPUT and the re-run false-blocks once the output exists locally.
+test('gipity sandbox run allows ffmpeg output after a && operator (mkdir -p tmp && ffmpeg …)', async () => {
+  resetMock();
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: [] } }));
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  writeFileSync(join(d, 'tmp', 'out.mp4'), '');
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'mkdir -p tmp && ffmpeg -y -i docs/a.png -t 3 tmp/out.mp4'],
+    { env: { HOME: home }, cwd: d },
+  );
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test('isWriteTarget recognizes an ffmpeg output positioned after && / || (two-char operator)', () => {
+  assert.equal(isWriteTarget('mkdir -p tmp && ffmpeg -i a.png tmp/out.mp4', 'tmp/out.mp4'), true);
+  assert.equal(isWriteTarget('x || ffmpeg -i a.png tmp/out.mp4', 'tmp/out.mp4'), true);
+  // A genuine INPUT after && is still not a write target (fail-closed).
+  assert.equal(isWriteTarget('mkdir -p out && ffmpeg -i tmp/in.png out/x.mp4', 'tmp/in.png'), false);
+});
+
+// An OOM-kill exits 137 (128+SIGKILL); the raw shell output never says "out of
+// memory", so the run must name it and point at the fix instead of leaving the
+// agent to infer it from a cryptic `Killed` line.
+test('gipity sandbox run explains an exit-137 OOM kill', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 137, stdout: 'frame= 51 fps= 47', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  const r = await fresh(['sandbox', 'run', 'bash', 'ffmpeg -i big.png -vf scale=1280:720 out.mp4']);
+  assert.equal(r.status, 137);
+  assert.match(r.stderr, /ran out of memory/i);
+  assert.match(r.stderr, /ultrafast/);
+});
+
+// A command that exits 0 but leaves a 0-byte output failed silently - surface it
+// rather than reporting plain success.
+test('gipity sandbox run flags a 0-byte scratch output on an exit-0 run', async () => {
+  resetMock();
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+    scratchFiles: [{ path: 'tmp/street.mp4', contentBase64: '' }],
+  } } });
+  const r = await fresh(['sandbox', 'run', 'bash', 'ffmpeg -i docs/still.png tmp/street.mp4']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /empty \(0 bytes\)/i);
+  assert.match(r.stderr, /failed silently/i);
 });
 
 // Unit coverage for the candidate matcher: it must surface every scratch

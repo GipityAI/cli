@@ -123,9 +123,12 @@ describe('cli-smoke: error behavior', () => {
     const out = (r.stdout + r.stderr).replace(/\s+$/, '');
     const lastLine = out.slice(out.lastIndexOf('\n') + 1);
     assert.match(lastLine, /error: missing required argument 'url'/);
-    // Help still renders inline (no second --help trip), including addHelpText.
+    // Usage + options render inline (no second --help trip) so the agent can
+    // self-correct, but the verbose examples/realtime narrative (addHelpText)
+    // does NOT: dumping ~70 lines of off-topic guidance on a one-line arg error
+    // buries the error and its trailing realtime block has misled agents.
     assert.match(out, /Usage: gipity page eval/);
-    assert.match(out, /Testing realtime\/shared state/);
+    assert.doesNotMatch(out, /Testing realtime\/shared state/);
   });
 
   it('eval with a url but neither <expr> nor --file renders help inline, error last', () => {
@@ -137,7 +140,8 @@ describe('cli-smoke: error behavior', () => {
     const lastLine = out.slice(out.lastIndexOf('\n') + 1);
     assert.match(lastLine, /error: Provide an inline <expr> arg or --file <path>/);
     assert.match(out, /Usage: gipity page eval/);
-    assert.match(out, /Testing realtime\/shared state/);
+    // Same as above: no verbose examples/realtime narrative on the error path.
+    assert.doesNotMatch(out, /Testing realtime\/shared state/);
     assert.notEqual(r.status, 0);
   });
 
@@ -156,4 +160,14 @@ describe('cli-smoke: subcommand --help wiring', () => {
       assert.equal(r.status, 0, `${cmd} --help failed: ${r.stderr}`);
     });
   }
+
+  it('page eval --help DOES show the full examples/realtime narrative', () => {
+    // The narrative is withheld only on the error path; an explicit --help is
+    // where the examples, time-budget, and realtime guidance belong in full.
+    const r = runCli(['page', 'eval', '--help']);
+    assert.equal(r.status, 0);
+    const out = r.stdout + r.stderr;
+    assert.match(out, /Testing realtime\/shared state/);
+    assert.match(out, /Examples:/);
+  });
 });

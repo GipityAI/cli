@@ -28,8 +28,13 @@ export const serviceCommand = new Command('service')
 serviceCommand
   .command('list')
   .description('List callable app services')
-  .action(() => run('Services', async () => {
+  .option('--json', 'Output the service list as JSON')
+  .action((opts) => run('Services', async () => {
     requireConfig();
+    if (opts.json) {
+      console.log(JSON.stringify(SERVICES));
+      return;
+    }
     const width = SERVICES.reduce((m, s) => Math.max(m, s.name.length), 0);
     console.log('Call one with `gipity service call <name> \'{"json":"body"}\'`');
     console.log(muted('(GET endpoints like llm/models, tts/voices take --get and no body)'));

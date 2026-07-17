@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { Command, Option } from 'commander';
 import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted, warning, success } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { run, parseDuration } from '../helpers/index.js';
 import { getAuth } from '../auth.js';
 import { resolveProjectContext } from '../config.js';
 import { uploadPublicFixture, uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
@@ -444,7 +444,7 @@ export const pageEvalCommand = new Command('eval')
   )
   .option(
     '--fixture <path>',
-    'Host a local file and expose it to the eval as `fixtureUrl` (and under `fixtures` by basename) to fetch in-page. For verifying a render/parse path against a real binary (an MP3, an image) - no size limit, auto-deleted after the run. Repeat for several files (single-value so it never swallows the inline <expr>).',
+    'Host a local file and expose it to the eval as `fixtureUrl` (and under `fixtures` by basename) to fetch in-page. For verifying a render/parse path against a real binary (an MP3, an image) - no size limit, auto-deleted after the run. The hosted URL has permissive CORS, so `new Image(); img.crossOrigin="anonymous"; img.src=fixtureUrl` decodes untainted for a canvas/pixel read - this is the UPLOAD analog of --camera: feed a known photo/video to a file-upload vision app (web-vision-detect) and run its detector, no need to deploy a throwaway test asset into the app. Repeat for several files (single-value so it never swallows the inline <expr>).',
     (val: string, prev: string[]) => [...prev, val],
     [] as string[],
   )
@@ -463,7 +463,7 @@ export const pageEvalCommand = new Command('eval')
   .option('--wait-timeout <ms>', `Max ms to wait for --wait-for before giving up (max ${WAIT_FOR_MAX_MS})`, '5000')
   .option(
     '--timeout <ms>',
-    `How long the script itself may run IN the page, in MILLISECONDS (so 90s = 90000, NOT 90) - its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; floor 1000, max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
+    `How long the script itself may run IN the page. Bare number = MILLISECONDS (so 90s = 90000, NOT 90); or pass an explicit unit that means the same on both this and \`sandbox run --timeout\` — --timeout 90s. Its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; floor 1000, max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
   )
   .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
   .option('--json', 'Output as JSON')
@@ -531,23 +531,38 @@ export const pageEvalCommand = new Command('eval')
       );
     }
 
-    // --timeout is in MILLISECONDS — but the sibling `sandbox run --timeout` is in
-    // SECONDS, so an agent naturally carries the seconds habit here (--timeout 120
-    // meaning 120s). Any value below the in-page floor is the tell: a real ms budget
-    // that small is useless (it just floors to the minimum), so a sub-floor number
-    // is almost always seconds typed as ms. Left alone it clamps SILENTLY to a ~1s
-    // budget and the script then stalls with an opaque "1s budget" error that never
-    // reveals the unit mix-up. Reject it up front, naming the unit AND the ms value
-    // they meant, so the fix is one obvious edit instead of a doomed run.
+    // --timeout is native MILLISECONDS here but native SECONDS on the sibling
+    // `sandbox run --timeout`. An explicit unit suffix reconciles them: `--timeout
+    // 90s` means 90 seconds on BOTH commands. A suffixed value is normalized to ms
+    // up front, so the rest of this action (and the bare-number guard below) sees a
+    // plain ms number and the portable form just works.
+    if (opts.timeout !== undefined) {
+      const dur = parseDuration(opts.timeout, 'ms');
+      if (dur?.hadSuffix) opts.timeout = String(Math.round(dur.value));
+    }
+    // A BARE number below the in-page floor is the unit-mixup tell: a real ms
+    // budget that small is useless (it just floors to the minimum), so a sub-floor
+    // bare number is almost always seconds typed as ms (--timeout 90 meaning 90s).
+    // Left alone it clamps SILENTLY to a ~1s budget and the script then stalls with
+    // an opaque "1s budget" error that never reveals the unit mix-up. Reject it up
+    // front, naming the unit AND the portable suffix form, so the fix is one obvious
+    // edit instead of a doomed run.
     if (opts.timeout !== undefined) {
       const t = parseInt(opts.timeout, 10);
       if (Number.isFinite(t) && t > 0 && t < EVAL_SCRIPT_BUDGET_MIN_MS) {
         const overMax = t * 1000 > EVAL_SCRIPT_BUDGET_MAX_MS;
         const asMs = Math.min(t * 1000, EVAL_SCRIPT_BUDGET_MAX_MS);
-        pageEvalCommand.error(
-          `error: --timeout is in MILLISECONDS (got ${t}, under the ${EVAL_SCRIPT_BUDGET_MIN_MS}ms in-page floor). ` +
-          `Unlike \`sandbox run --timeout\` (seconds), page eval's is ms. ${t} looks like seconds — ` +
-          `for ${t} second${t === 1 ? '' : 's'} pass --timeout ${asMs}` +
+        // A value-mixup, not an arg-SHAPE error: the message below already carries
+        // the complete fix (pass `--timeout ${t}s`), so this does NOT go through
+        // pageEvalCommand.error() — that dumps the whole options list bracketing
+        // the message, and an agent piping the output through `| tail` reads the
+        // option list as "it rejected me with help" and misses the one-line fix.
+        // Throw instead: `run()` prints just the targeted message, nothing else.
+        throw new Error(
+          `--timeout is in MILLISECONDS (got ${t}, under the ${EVAL_SCRIPT_BUDGET_MIN_MS}ms in-page floor). ` +
+          `Unlike \`sandbox run --timeout\` (seconds), page eval's is ms — or pass an explicit unit that means the ` +
+          `same on both: --timeout ${t}s. ${t} looks like seconds, so for ${t} second${t === 1 ? '' : 's'} pass ` +
+          `--timeout ${t}s (= ${asMs}ms)` +
           `${overMax ? ` (${t}s is over the ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s max, so this is the ceiling)` : ''}.`,
         );
       }
@@ -762,7 +777,16 @@ for (const f of JS_DECOY_FLAGS) pageEvalCommand.addOption(new Option(`${f} <valu
 // clients see each other (presence, shared state). For that, use the genuinely-
 // concurrent `page test --observe` instead, which overlaps N clients and reports
 // whether they actually ran together.
-pageEvalCommand.addHelpText('after', `
+//
+// This whole narrative renders ONLY on an explicit `--help`, never on an
+// arg-shape error. An error dumps the command via outputHelp too, but appending
+// ~70 lines of examples/time-budget/realtime guidance on top of a one-line "URL
+// must be absolute" buries the actual error — and its trailing realtime block,
+// off-topic for a plain probe, has misled agents into "fixing the eval syntax".
+// The one realtime pointer worth keeping on error already lives in the command
+// DESCRIPTION ("ONE client per call - use `page test --observe`"), which renders
+// on error anyway, so nothing is lost by withholding the manual here.
+pageEvalCommand.addHelpText('after', (context) => context.error ? '' : `
 Examples:
   gipity page eval "https://dev.gipity.ai/me/app/" "document.title"
   # Functionally test a page's own code paths: save a script that drives the UI
@@ -798,6 +822,16 @@ Examples:
     "window.__vision.gesture()" \\
     --step "document.getElementById('see').textContent" \\
     --step "({ score: score.textContent, verdict: verdict.textContent })"
+  # File-UPLOAD vision app (web-vision-detect, no camera)? --fixture is the analog of
+  # --camera: it hosts your test photo at a CORS-permissive URL, so you feed the kit's
+  # detector a known image and read back the labels - no deploying a throwaway asset into
+  # the app tree (and no cleanup redeploy). crossOrigin='anonymous' keeps the canvas clean.
+  gipity generate image "street scene: three people, two cars, one dog" -o street.jpg
+  gipity page eval "https://dev.gipity.ai/me/app/" --fixture street.jpg \\
+    "const { createDetector } = await import('./packages/web-vision-detect/index.js'); \\
+     const det = await createDetector({ model: 'nano' }); \\
+     const img = new Image(); img.crossOrigin = 'anonymous'; img.src = fixtureUrl; await img.decode(); \\
+     const { detections } = await det.detect(img); return detections.map(d => d.label);"
 
 Module resolution: dynamic import() specifiers starting with ./ or ../ resolve
 against the PAGE URL, so import('./packages/i18n/index.js') loads the app's own

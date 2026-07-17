@@ -8,6 +8,7 @@ import { brand, bold, muted, success, warning } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
+import { readScriptFile } from './page-eval.js';
 import { uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number; device?: string };
@@ -287,6 +288,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--wait-for <selector>', `Wait until this CSS selector appears before capturing, then capture (deterministic - beats guessing a --wait). Same flag as page eval/inspect. Gate on what you are photographing ('[data-vision="ready"]', '#verdict:not(:empty)'). Max ${WAIT_FOR_MAX_MS}ms (--wait-timeout).`)
   .option('--wait-timeout <ms>', `Max ms to wait for --wait-for before giving up (default ${WAIT_FOR_DEFAULT_MS}, max ${WAIT_FOR_MAX_MS}). Timing out is reported - the capture still happens, so you see the state it got stuck in.`)
   .option('--action <js>','Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./…\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
+  .option('--file <path>', 'Read the pre-capture script from a file instead of inline --action (mutually exclusive), or --file - to read it from stdin (pipe a heredoc: --file - <<\'EOF\' … EOF) with no tmp file. For a multi-step driver — click through a flow, wait for it to render — then capture. Same async-function-body semantics as --action; same --file flag as page eval.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
@@ -318,8 +320,26 @@ export const pageScreenshotCommand = new Command('screenshot')
         `Note: treating ${aliasFlag} as --action — it runs your JS in the page before the capture. --action is the canonical flag.`,
       ));
     }
-    const actionScript = [opts.action, ...ACTION_ALIAS_FLAGS.map((f) => opts[f.slice(2)])]
+    // The pre-capture script can come inline (--action / its JS-intent aliases) or
+    // from a file/stdin (--file, the same script-passing ergonomics as page eval).
+    // They are mutually exclusive: one page load runs one pre-capture body, so a
+    // caller that passed both meant one of them — say so rather than silently
+    // concatenating a driver script onto a stray click.
+    const inlineAction = [opts.action, ...ACTION_ALIAS_FLAGS.map((f) => opts[f.slice(2)])]
       .filter(Boolean).join('\n');
+    if (opts.file && inlineAction) {
+      throw new Error('Pass either --file <path> or an inline --action script, not both');
+    }
+    let actionScript = inlineAction;
+    if (opts.file) {
+      try {
+        actionScript = readScriptFile(opts.file);
+      } catch {
+        throw new Error(opts.file === '-'
+          ? "--file - reads the pre-capture script from stdin, but stdin was empty/unreadable — pipe it in, e.g. gipity page screenshot \"<url>\" --file - <<'EOF' … EOF"
+          : `Cannot read file: ${opts.file}`);
+      }
+    }
     // --wait is the canonical name (it is what `page inspect`/`page eval` call it);
     // --post-load-delay stays as a hidden alias. Whether the caller named EITHER is
     // what decides the defaults below, so keep the raw "was it set" signal.
@@ -610,9 +630,17 @@ Waiting for the page to reach a state before the shot?
 
 Capturing a state that needs an interaction (start a game, open a menu, dismiss a modal)?
   Use --action to run JS in the page before the shot — it fires after the wait
-  (and after any --wait-for gate), then settles again so the result has painted. Do
-  NOT hand-roll a 'page eval' that returns a base64 image: the eval result is capped
-  (~16KB) and truncates the PNG.
+  (and after any --wait-for gate), then settles again so the result has painted. For
+  a multi-step driver (click, wait, click) pipe it as a heredoc with --file - (same
+  as 'page eval') instead of cramming it into one inline string:
+    gipity page screenshot "https://dev.gipity.ai/me/app/" --file - <<'EOF'
+    document.getElementById('load-sample').click();
+    await new Promise(r => setTimeout(r, 500));
+    document.getElementById('run').click();
+    await new Promise(r => setTimeout(r, 2000));
+    EOF
+  Do NOT hand-roll a 'page eval' that returns a base64 image: the eval result is
+  capped (~16KB) and truncates the PNG.
 
 Capturing an off-screen region or reading element data?
     • --full captures the ENTIRE scrollable page (then crop to the region).

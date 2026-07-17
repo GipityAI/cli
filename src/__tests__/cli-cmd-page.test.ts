@@ -244,6 +244,22 @@ test('gipity page eval --timeout sets the in-page script budget on the kickoff b
   assert.equal((req!.body as { timeoutMs?: number }).timeoutMs, 90000);
 });
 
+// An explicit unit suffix means the SAME thing on both `page eval --timeout`
+// (native ms) and `sandbox run --timeout` (native seconds): --timeout 90s is 90
+// seconds on both. Here it normalizes to a 90000ms in-page budget — no unit-mixup
+// rejection, because the caller was explicit.
+test('gipity page eval --timeout accepts a portable unit suffix (90s → 90000ms)', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-ts', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-ts', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '1', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', '1', '--timeout', '90s']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url === '/tools/browser/eval');
+  assert.equal((req!.body as { timeoutMs?: number }).timeoutMs, 90000);
+});
+
 test('gipity page eval sends the default in-page budget when --timeout is omitted', async () => {
   mock.reset();
   mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-t2', status: 'queued' } } });
@@ -267,9 +283,11 @@ test('gipity page eval rejects a sub-floor --timeout as seconds typed as ms', as
     assert.notEqual(r.status, 0, `--timeout ${secs} should be rejected`);
     assert.match(r.stderr, /MILLISECONDS/);
     assert.match(r.stderr, /sandbox run --timeout.*seconds/);
-    // Names the ms value they actually meant (clamped to the 90s ceiling).
+    // Recommends the portable suffix form (means the same on both siblings)...
+    assert.match(r.stderr, new RegExp(`--timeout ${secs}s\\b`));
+    // ...and names the ms value they meant (clamped to the 90s ceiling).
     const expectedMs = Math.min(parseInt(secs, 10) * 1000, 90_000);
-    assert.match(r.stderr, new RegExp(`--timeout ${expectedMs}\\b`));
+    assert.match(r.stderr, new RegExp(`${expectedMs}ms\\b`));
   }
   // No request should have been sent for any of the rejected calls.
   assert.equal(mock.requests().length, 0);
