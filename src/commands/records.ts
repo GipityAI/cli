@@ -103,6 +103,23 @@ recordsCommand
   }));
 
 recordsCommand
+  .command('history <table> <id>')
+  .description('Audit history for a record (who/what changed it, with English summaries)')
+  .option('--limit <n>', 'Max events', '20')
+  .option('--json', 'Output as JSON')
+  .action((table: string, id: string, opts) => run('History', async () => {
+    const config = requireConfig();
+    const res = await get<{ data: any[] }>(
+      `/api/${config.projectGuid}/records/${table}/${id}/history?limit=${encodeURIComponent(opts.limit)}`,
+    );
+
+    printList(res.data, opts, 'No history for this record.', e => {
+      const summary = e.detail?.summary || `${e.action} ${e.entity_type} ${e.entity_id}`;
+      return `${muted(e.created_at)}  ${bold(e.source || '-')}  ${summary}`;
+    });
+  }));
+
+recordsCommand
   .command('create <table>')
   .description('Create a record')
   .requiredOption('--data <json>', 'JSON object with field values')
