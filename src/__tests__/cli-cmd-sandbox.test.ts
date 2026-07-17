@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { runCliAsync, makeTmpHome } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
-import { scratchRefsInCode } from '../commands/sandbox.js';
+import { scratchRefsInCode, isWriteTarget } from '../commands/sandbox.js';
 
 let mock: MockServer;
 let home: string;
@@ -536,6 +536,33 @@ test('gipity sandbox run allows writing a scratch output then inspecting it in t
     { env: { HOME: home }, cwd: d },
   );
   assert.equal(r.status, 0, r.stderr);
+});
+
+// Same write-then-inspect, but ffmpeg follows a two-char `&&` operator (the
+// canonical `mkdir -p tmp && ffmpeg …` idiom). The segment parser must strip the
+// leftover operator char, or ffmpeg's trailing-positional output is misread as a
+// scratch INPUT and the re-run false-blocks once the output exists locally.
+test('gipity sandbox run allows ffmpeg output after a && operator (mkdir -p tmp && ffmpeg …)', async () => {
+  resetMock();
+  mock.on('GET /projects/p_TestProj/files/tree', () => ({ body: { data: [] } }));
+  mock.on('POST /projects/p_TestProj/sandbox/execute', { body: { data: {
+    exitCode: 0, stdout: '', stderr: '', durationMs: 10, timedOut: false,
+  } } });
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'tmp'), { recursive: true });
+  writeFileSync(join(d, 'tmp', 'out.mp4'), '');
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'sandbox', 'run', 'bash', 'mkdir -p tmp && ffmpeg -y -i docs/a.png -t 3 tmp/out.mp4'],
+    { env: { HOME: home }, cwd: d },
+  );
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test('isWriteTarget recognizes an ffmpeg output positioned after && / || (two-char operator)', () => {
+  assert.equal(isWriteTarget('mkdir -p tmp && ffmpeg -i a.png tmp/out.mp4', 'tmp/out.mp4'), true);
+  assert.equal(isWriteTarget('x || ffmpeg -i a.png tmp/out.mp4', 'tmp/out.mp4'), true);
+  // A genuine INPUT after && is still not a write target (fail-closed).
+  assert.equal(isWriteTarget('mkdir -p out && ffmpeg -i tmp/in.png out/x.mp4', 'tmp/in.png'), false);
 });
 
 // An OOM-kill exits 137 (128+SIGKILL); the raw shell output never says "out of

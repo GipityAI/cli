@@ -230,7 +230,12 @@ export function isWriteTarget(code: string, p: string): boolean {
     code.lastIndexOf('&&', idx), code.lastIndexOf('||', idx),
     code.lastIndexOf(';', idx), code.lastIndexOf('|', idx), code.lastIndexOf('\n', idx),
   );
-  const seg = code.slice(segStart + 1, idx);
+  // segStart points at the FIRST char of the separator; a two-char operator
+  // (`&&`/`||`) leaves its second char in the slice, so strip any leading
+  // operator/space chars before reading the command word. Without this, the
+  // canonical `mkdir -p tmp && ffmpeg -i a.png tmp/out.mp4` idiom left a stray
+  // `&` that defeated the command extractor and false-blocked the re-run.
+  const seg = code.slice(segStart + 1, idx).replace(/^[\s&|;]+/, '');
   const cmd = /^\s*([A-Za-z0-9_./-]+)/.exec(seg)?.[1]?.split('/').pop()?.toLowerCase();
   const afterInputFlag = /(?:^|[\s'"`])(?:-i|--input)[= ]\s*['"`]?$/.test(before);
   return cmd === 'ffmpeg' && !afterInputFlag;
