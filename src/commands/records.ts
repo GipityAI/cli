@@ -10,7 +10,7 @@ import { confirm } from '../utils.js';
 // Records API is the only records surface that exists server-side; there is no
 // /projects/<guid>/records mirror.)
 export const recordsCommand = new Command('records')
-  .description('Manage records-kit data (registry-driven CRUD)');
+  .description('Manage app records (Gipity Records - validated CRUD with audit history)');
 
 recordsCommand
   .command('list')
