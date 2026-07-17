@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Background updater. Invoked detached by the shim; can also be invoked
 // directly by `gipity update --force`.
-import { appendFileSync, existsSync } from 'fs';
-import { LOCAL_DIR, LOCAL_ENTRY, UPDATE_LOG, readState, writeState, updatesDisabled } from './state.js';
-import { resolveCommand, spawnSyncCommand } from '../platform.js';
+import { appendFileSync } from 'fs';
+import { UPDATE_LOG, readState, writeState, updatesDisabled } from './state.js';
+import { npmInstallGipity, isWedged, resetLocalTree, acquireUpdateLock, releaseUpdateLock, type NpmInstallResult } from './install.js';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -34,16 +34,25 @@ async function fetchLatestVersion(): Promise<string> {
   return json.version;
 }
 
-function installVersion(version: string): boolean {
-  // --ignore-scripts: this runs unattended in the background, so don't let a
-  // compromised package's install lifecycle hooks execute. gipity ships
-  // precompiled (dist/) and its deps need no build step, so nothing is lost.
-  const res = spawnSyncCommand(resolveCommand('npm'), ['install', '--silent', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
-    cwd: LOCAL_DIR,
-    stdio: 'ignore',
-  });
-  if (res.error) log(`npm spawn failed: ${res.error.message}`);
-  return res.status === 0 && existsSync(LOCAL_ENTRY);
+function installVersion(version: string): { ok: boolean; detail?: string } {
+  let res: NpmInstallResult = npmInstallGipity(version);
+  if (!res.ok && !res.spawnError && isWedged(res.stderr)) {
+    // Interrupted-install corruption fails every npm run in the dir forever;
+    // wipe the tree and retry once.
+    log(`wedged install tree detected; wiping node_modules and retrying:\n${res.stderr.trim().slice(-2000)}`);
+    resetLocalTree();
+    res = npmInstallGipity(version);
+    if (res.ok) log('clean reinstall succeeded');
+  }
+  if (res.ok) return { ok: true };
+  if (res.spawnError) {
+    log(`npm spawn failed: ${res.spawnError.message}`);
+    return { ok: false, detail: res.spawnError.message };
+  }
+  if (res.stderr.trim()) log(`npm stderr (exit ${res.status}):\n${res.stderr.trim().slice(-2000)}`);
+  if (res.status === 0) return { ok: false, detail: 'npm succeeded but the installed package is missing dist/index.js' };
+  const firstLine = res.stderr.split('\n').map(l => l.trim()).find(l => l.length > 0) || `npm exit ${res.status}`;
+  return { ok: false, detail: firstLine.length > 160 ? firstLine.slice(0, 157) + '...' : firstLine };
 }
 
 export interface CheckOptions {
@@ -86,10 +95,22 @@ export async function runCheck(opts: CheckOptions = {}): Promise<{ updated: bool
     return { updated: false, reason: 'up-to-date' };
   }
 
+  if (!acquireUpdateLock()) {
+    log('skipped: another update is already in progress');
+    return { updated: false, reason: 'another update is already in progress' };
+  }
   log(`upgrading ${current} → ${latest}`);
-  const ok = installVersion(latest);
+  // Stamp before the (possibly long) install so concurrent gipity commands
+  // don't all decide an update is due; the lock is the hard guard.
   state.lastCheckAt = Date.now();
-  if (ok) {
+  writeState(state);
+  let install: { ok: boolean; detail?: string };
+  try {
+    install = installVersion(latest);
+  } finally {
+    releaseUpdateLock();
+  }
+  if (install.ok) {
     state.installedVersion = latest;
     state.lastError = null;
     writeState(state);
@@ -97,7 +118,7 @@ export async function runCheck(opts: CheckOptions = {}): Promise<{ updated: bool
     return { updated: true, from: current, to: latest };
   }
 
-  state.lastError = `npm install gipity@${latest} failed`;
+  state.lastError = `npm install gipity@${latest} failed` + (install.detail ? `: ${install.detail}` : '');
   writeState(state);
   log(state.lastError);
   return { updated: false, reason: state.lastError };
