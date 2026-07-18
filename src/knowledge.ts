@@ -186,6 +186,7 @@ App development skills:
 - \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
 - \`app-import\` - import apps from GitHub/.gip bundles (incl. Vercel/Replit/Lovable porting) and export any project as a portable .gip - app_import tool, gipity save/load
+- \`app-records\` - Gipity Records: declared tables → validated CRUD, provenance, workflows, auto UI
 - \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the isolated test DB)
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
 - \`jobs\` - long-running CPU + GPU compute jobs (Python / Node / bash)
