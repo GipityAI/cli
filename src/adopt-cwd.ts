@@ -162,7 +162,7 @@ export function formatCwdLabel(cwd: string): string {
   if (norm.startsWith(home + sep)) {
     const tail = norm.slice(home.length + 1).split(sep);
     if (tail.length <= 2) return '~/' + tail.join('/');
-    return '~/…/' + tail.slice(-2).join('/');
+    return '~/.../' + tail.slice(-2).join('/');
   }
   // Outside home: show parent/this for non-root paths.
   const parts = norm.split(sep).filter(Boolean);

@@ -19,8 +19,7 @@ import { Command } from 'commander';
 import { getAuth, sessionExpired, refreshTokenIfNeeded } from '../auth.js';
 import { interactiveLogin } from '../login-flow.js';
 import { runRelaySetup } from '../relay/onboarding.js';
-import * as relayState from '../relay/state.js';
-import { bold, brand, success, muted, error as clrError } from '../colors.js';
+import { bold, muted, error as clrError } from '../colors.js';
 
 export const connectCommand = new Command('connect')
   .alias('setup') // legacy name, kept working but not advertised
@@ -47,11 +46,10 @@ export const connectCommand = new Command('connect')
       // ── Step 2: Relay setup (always run — the user asked for it) ───────
       const enabled = await runRelaySetup({ mode: 'run-now' });
 
-      // ── Step 3: Done. No project, no Claude Code launch. ──────────────
+      // ── Step 3: Done. No project, no Claude Code launch. The shared flow
+      // already printed its own "Done!" line - just add the manage hint. ──
       if (enabled) {
-        const running = relayState.isRelayEnabled() && !relayState.isPaused();
-        console.log(`  ${success('Done')} — your relay ${running ? 'is running in the background' : 'is set up'} and will start with your computer.`);
-        console.log(`  ${muted('Open')} ${brand('gipity.ai')} ${muted('and start a chat to drive your coding agent here. Manage it with `gipity relay status`.')}`);
+        console.log(`  ${muted('Manage it anytime with `gipity relay status`.')}`);
       } else {
         console.log(`  ${muted('No relay set up. Run `gipity connect` again anytime, or `gipity build` to start building.')}`);
       }

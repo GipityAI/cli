@@ -40,7 +40,7 @@ secretsCommand
     }
     console.log(bold(`${res.data.length} ${scope} secret${res.data.length === 1 ? '' : 's'}:`));
     for (const s of res.data) {
-      const masked = s.preview ? muted(`…${s.preview}`) : muted('(hidden)');
+      const masked = s.preview ? muted(`...${s.preview}`) : muted('(hidden)');
       console.log(`  ${s.name}  ${masked}  ${muted(`updated ${new Date(s.updated_at).toLocaleDateString()}`)}`);
     }
   }));

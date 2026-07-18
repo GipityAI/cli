@@ -77,7 +77,7 @@ export const deployCommand = new Command('deploy')
       });
       const res = opts.json
         ? await doDeploy()
-        : await withSpinner(`Deploying to ${target}…`, doDeploy, { done: null });
+        : await withSpinner(`Deploying to ${target}...`, doDeploy, { done: null });
 
       const d = res.data;
 

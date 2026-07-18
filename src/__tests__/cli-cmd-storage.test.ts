@@ -79,7 +79,7 @@ test('gipity storage usage discloses the per-project cap and accounts for the ta
   assert.match(r.stdout, /By project\s+\(top 2 of 602, live files only\)/);
   // The 600 unlisted projects hold 2.5 GB - (1.5 + 0.5) GB of bytes and
   // 5000 - 1203 files. Both are reported rather than dropped on the floor.
-  assert.match(r.stdout, /…and 600 more\s+512\.0 MB\s+3,797 files/);
+  assert.match(r.stdout, /\.\.\.and 600 more\s+512\.0 MB\s+3,797 files/);
   assert.doesNotMatch(r.stdout, /undefined|NaN/);
 });
 

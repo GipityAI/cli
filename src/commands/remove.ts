@@ -32,7 +32,7 @@ export const removeCommand = new Command('remove')
     const doRemove = () => post<{ data: RemoveResponse }>(`/projects/${config.projectGuid}/remove`, { name: kit });
     const res = opts.json
       ? await doRemove()
-      : await withSpinner('Removing…', doRemove, { done: null });
+      : await withSpinner('Removing...', doRemove, { done: null });
     const data = res.data;
     // Pull the kit's deletions locally. Whitelist ONLY the kit's own removed files
     // so they bypass the bulk-delete guard (the removal is explicit), while any

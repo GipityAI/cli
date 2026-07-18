@@ -1661,7 +1661,7 @@ test('summarizeExpr truncates a long single-line expr', () => {
   const long = `document.querySelector('${'x'.repeat(200)}')`;
   const out = summarizeExpr(long);
   assert.ok(out.length < long.length);
-  assert.match(out, /…/);
+  assert.match(out, /\.\.\./);
   assert.match(out, /chars\)$/);
 });
 

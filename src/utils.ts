@@ -63,8 +63,8 @@ function rerunWithYes(): string {
  *
  *  - `opts.default` controls which answer Enter / unknown-key selects. Defaults to `'no'`.
  *  - `opts.skip` (or the global `--yes` flag) auto-returns `true`.
- *  - Renders a `[Y/n]` or `[y/N]` hint automatically - callers should NOT append
- *    their own y/N suffix to `question`.
+ *  - Renders a `[Y/n]:` or `[y/N]:` hint automatically - callers should NOT
+ *    append their own y/N suffix (or a trailing `?`/`:`) to `question`.
  *  - In non-TTY environments without `--yes`, returns `false` and prints a hint. */
 export async function confirm(
   question: string,
@@ -80,7 +80,7 @@ export async function confirm(
     return false;
   }
   const hint = defaultYes ? dim('[Y/n]') : dim('[y/N]');
-  process.stdout.write(`${question} ${hint} `);
+  process.stdout.write(`${question} ${hint}: `);
 
   const { stdin } = process;
   const wasRaw = stdin.isRaw ?? false;

@@ -348,7 +348,7 @@ export const pageTestCommand = new Command('test')
   // Interactive mode (--observe drives it):
   .option('--observe <expr>', 'Interactive: JS expression sampled in each client to read shared state (e.g. presence count). Switches on interactive mode.')
   .option('--action <expr>', 'Interactive: one-time JS run in each client before observing (e.g. fill a name + submit). {{label}}/{{i}} are substituted per client.')
-  .option('--labels <csv>', 'Per-client labels substituted for {{label}} in the URL/--action/--observe (default client-0, client-1, …)')
+  .option('--labels <csv>', 'Per-client labels substituted for {{label}} in the URL/--action/--observe (default client-0, client-1, ...)')
   .option('--hold <ms>', `Interactive: total observe window per client (${MIN_HOLD_MS}-${MAX_HOLD_MS}ms)`, '8000')
   .option('--samples <k>', 'Interactive: number of observations across the hold window (2-30)', '6')
   .option('--wait-for <selector>', 'Interactive: wait for this CSS selector before running --action (deterministic readiness gate)')

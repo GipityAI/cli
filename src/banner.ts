@@ -144,12 +144,11 @@ function padR(s: string, width: number): string {
   return gap > 0 ? s + ' '.repeat(gap) : s;
 }
 
-/** Truncate from the left with a leading ellipsis if longer than maxW (plain text). */
+/** Truncate from the left with a leading "..." if longer than maxW (plain text). */
 function leadingEllipsify(s: string, maxW: number): string {
   if (s.length <= maxW) return s;
-  if (maxW <= 1) return s.slice(-maxW);
-  if (maxW <= 3) return '…'.padStart(maxW);
-  return '…' + s.slice(-(maxW - 1));
+  if (maxW <= 4) return s.slice(-maxW);
+  return '...' + s.slice(-(maxW - 3));
 }
 
 function center(s: string, width: number): string {

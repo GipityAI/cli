@@ -243,7 +243,7 @@ workflowCommand
 
 workflowCommand
   .command('runs <name> [runGuid]')
-  .description('List recent runs, or pass a run guid (wr_…) to see that run\'s per-step outputs')
+  .description('List recent runs, or pass a run guid (wr_...) to see that run\'s per-step outputs')
   .option('--json', 'Output as JSON')
   .action((name: string, runGuid: string | undefined, _opts, cmd) => run('Runs', async () => {
     const opts = mergedOpts(cmd);

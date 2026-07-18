@@ -228,7 +228,7 @@ export const addCommand = new Command('add')
     const doAdd = () => post<{ data: AddResponse }>(`/projects/${config.projectGuid}/add`, body);
     const res = opts.json
       ? await doAdd()
-      : await withSpinner('Installing…', doAdd, { done: null });
+      : await withSpinner('Installing...', doAdd, { done: null });
 
     // Pull the created/installed files down to local.
     const syncResult = await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });

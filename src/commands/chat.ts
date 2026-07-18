@@ -56,7 +56,7 @@ export const chatCommand = new Command('chat')
       const doChat = () => post<ChatResponse>(endpoint, body);
       const res = opts.json
         ? await doChat()
-        : await withSpinner('Thinking…', doChat, { done: null });
+        : await withSpinner('Thinking...', doChat, { done: null });
 
       // Save conversation guid for continuity. Skipped in one-off mode: the
       // config was resolved from the server's Home project and there is no

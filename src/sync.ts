@@ -279,7 +279,7 @@ export async function acquireLock(progress?: ProgressReporter): Promise<() => vo
       // First time we're forced to wait: open the spinner so the wait is visible
       // (with an elapsed timer) rather than reading as a frozen process.
       if (!waitSpinner) {
-        waitSpinner = progress?.spinner('Waiting for another sync to finish…') ?? null;
+        waitSpinner = progress?.spinner('Waiting for another sync to finish...') ?? null;
       }
       await new Promise(r => setTimeout(r, LOCK_POLL_MS));
     }
@@ -899,9 +899,9 @@ async function syncInner(
   const p = opts.progress;
 
   const baseline = readBaseline(projectGuid);
-  p?.phase('Scanning local files…');
+  p?.phase('Scanning local files...');
   const local = walkLocal(root, ignore, baseline.files);
-  p?.phase('Checking Gipity for changes…');
+  p?.phase('Checking Gipity for changes...');
   const remote = await fetchRemote(projectGuid);
   // Ignored paths are invisible on BOTH sides: filtering only the local walk
   // would classify a remote copy as "added" (pull it), then next pass as a
@@ -922,7 +922,7 @@ async function syncInner(
     const r = remote.get(path);
     if (r?.sha256 || baseline.files[path]) needHash.push(path);
   }
-  if (needHash.length) p?.phase(`Hashing ${needHash.length} file${needHash.length === 1 ? '' : 's'}…`);
+  if (needHash.length) p?.phase(`Hashing ${needHash.length} file${needHash.length === 1 ? '' : 's'}...`);
   await ensureLocalHashes(root, local, needHash);
 
   const planned = plan(local, remote, baseline.files);
@@ -1059,7 +1059,7 @@ async function syncInner(
       // Either way we fall through to the single-file recovery below rather than
       // proceeding on a half-empty tree - a partial download must never be
       // mistaken for a complete one.
-      errors.push(`Bulk download incomplete (${(err as Error).message}); recovering files individually…`);
+      errors.push(`Bulk download incomplete (${(err as Error).message}); recovering files individually...`);
     } finally {
       // Settle the bar even if the extracted-byte tally fell short of the
       // estimate (the live line stays open until something hits 100% or finish()).
@@ -1072,7 +1072,7 @@ async function syncInner(
     // an earlier truncated pull.
     const missing = wantedDownloads.filter(a => !downloadedBytes.has(a.path));
     if (missing.length) {
-      p?.phase(`Recovering ${missing.length} file${missing.length === 1 ? '' : 's'} the bulk download dropped…`);
+      p?.phase(`Recovering ${missing.length} file${missing.length === 1 ? '' : 's'} the bulk download dropped...`);
       for (const a of missing) {
         // Verify against the remote's content hash: the downloads pass records
         // this sha into the baseline, so bytes that don't match it must be

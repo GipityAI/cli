@@ -32,8 +32,8 @@ describe('createProgressReporter', () => {
   });
 
   it('prints a committed line per phase', () => {
-    const out = capture(true, (r) => r.phase('Scanning local files…'));
-    assert.match(out, /Scanning local files…/);
+    const out = capture(true, (r) => r.phase('Scanning local files...'));
+    assert.match(out, /Scanning local files.../);
     assert.match(out, /\n$/);
   });
 

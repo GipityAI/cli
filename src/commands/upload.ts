@@ -78,7 +78,7 @@ token-signed serve url instead (reachable only by holders of the url).`)
 
     const data = opts.json
       ? await doUpload()
-      : await withSpinner(`Uploading ${filename} (${formatSize(size)})…`, doUpload, { done: null });
+      : await withSpinner(`Uploading ${filename} (${formatSize(size)})...`, doUpload, { done: null });
 
     if (opts.json) {
       console.log(JSON.stringify(data));

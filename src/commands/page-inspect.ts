@@ -54,10 +54,10 @@ function shortUrl(url: string, truncate = true, maxLen = 100): string {
     result = url;
   }
   if (!truncate || result.length <= maxLen) return result;
-  const keep = maxLen - 1;
+  const keep = maxLen - 3;
   const headLen = Math.ceil(keep / 2);
   const tailLen = Math.floor(keep / 2);
-  return result.slice(0, headLen) + '…' + result.slice(-tailLen);
+  return result.slice(0, headLen) + '...' + result.slice(-tailLen);
 }
 
 export const pageInspectCommand = new Command('inspect')

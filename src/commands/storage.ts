@@ -107,13 +107,13 @@ function printUsage(d: StorageUsageData): void {
     console.log(`${bold('By project')} ${muted(scope)}`);
     for (const p of d.projects) {
       const name = p.projectName ?? '(no project)';
-      row(name.length > 16 ? `${name.slice(0, 15)}…` : name,
+      row(name.length > 16 ? `${name.slice(0, 13)}...` : name,
         formatBytes(p.liveBytes), `${p.liveFiles.toLocaleString()} files`);
     }
     if (hidden > 0) {
       const shownBytes = d.projects.reduce((n, p) => n + p.liveBytes, 0);
       const shownFiles = d.projects.reduce((n, p) => n + p.liveFiles, 0);
-      row(`…and ${hidden.toLocaleString()} more`,
+      row(`...and ${hidden.toLocaleString()} more`,
         formatBytes(totals.liveBytes - shownBytes),
         `${(totals.liveFiles - shownFiles).toLocaleString()} files`);
     }

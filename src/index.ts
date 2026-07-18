@@ -404,7 +404,7 @@ function resolveTargetCommand(argv: string[]): Command {
     let message = `error: unexpected extra argument${excess.length === 1 ? '' : 's'} ${list}${forSubcommand}.`;
     const kv = excess.map(a => /^([A-Za-z][\w-]*)=/.exec(a)).find(Boolean);
     if (kv) {
-      message += ` Options are passed as \`--${kv[1]} <value>\`, not \`${kv[1]}=…\` - did you mean \`--${kv[1]}\`?`;
+      message += ` Options are passed as \`--${kv[1]} <value>\`, not \`${kv[1]}=...\` - did you mean \`--${kv[1]}\`?`;
     }
     (this as unknown as { error(m: string, o: { code: string }): void })
       .error(message, { code: 'commander.excessArguments' });

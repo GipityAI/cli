@@ -136,7 +136,7 @@ const TAG: Record<Verdict, string> = {
 };
 
 export const pageFetchCommand = new Command('fetch')
-  .description('Verify deployed non-rendered files (llms.txt, AGENTS.md, robots.txt, served JSON…) really exist - catches the static-host trap where a missing file returns 200 with the SPA shell instead of a 404')
+  .description('Verify deployed non-rendered files (llms.txt, AGENTS.md, robots.txt, served JSON...) really exist - catches the static-host trap where a missing file returns 200 with the SPA shell instead of a 404')
   .argument('<url>', 'Deployed app base URL; file paths resolve relative to it')
   .argument('<paths...>', 'One or more file paths to verify, e.g. llms.txt AGENTS.md robots.txt')
   .option('--json', 'Output as JSON')

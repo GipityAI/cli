@@ -177,7 +177,7 @@ async function pollTestStatus(projectGuid: string, runGuid: string, opts: { json
           const tally = data.passed + data.failed > 0
             ? ` (${data.passed} passed${data.failed > 0 ? `, ${data.failed} failed` : ''} so far)`
             : '';
-          console.log(muted(`  … still running — ${progress}${tally}, ${elapsed}s elapsed`));
+          console.log(muted(`  ... still running - ${progress}${tally}, ${elapsed}s elapsed`));
           if (now - startTime >= LONG_RUN_MS && !longRunHintShown) {
             longRunHintShown = true;
             console.log(muted('  Note: progressing, not hung. LLM-backed tests can take minutes. To verify one function fast, use `gipity fn call <name>`; narrow this suite with `gipity test <path>`.'));

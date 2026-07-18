@@ -287,8 +287,8 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--wait <ms>', `Sleep this many ms after DOMContentLoaded before capturing (default 1000, max ${MAX_POST_LOAD_DELAY_MS}). With --camera it defaults to ${CAMERA_DEFAULT_DELAY_MS} so the vision model is up. Same flag as page eval/inspect.`)
   .option('--wait-for <selector>', `Wait until this CSS selector appears before capturing, then capture (deterministic - beats guessing a --wait). Same flag as page eval/inspect. Gate on what you are photographing ('[data-vision="ready"]', '#verdict:not(:empty)'). Max ${WAIT_FOR_MAX_MS}ms (--wait-timeout).`)
   .option('--wait-timeout <ms>', `Max ms to wait for --wait-for before giving up (default ${WAIT_FOR_DEFAULT_MS}, max ${WAIT_FOR_MAX_MS}). Timing out is reported - the capture still happens, so you see the state it got stuck in.`)
-  .option('--action <js>','Run JS in the page before capturing — e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./…\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
-  .option('--file <path>', 'Read the pre-capture script from a file instead of inline --action (mutually exclusive), or --file - to read it from stdin (pipe a heredoc: --file - <<\'EOF\' … EOF) with no tmp file. For a multi-step driver — click through a flow, wait for it to render — then capture. Same async-function-body semantics as --action; same --file flag as page eval.')
+  .option('--action <js>','Run JS in the page before capturing - e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./...\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
+  .option('--file <path>', 'Read the pre-capture script from a file instead of inline --action (mutually exclusive), or --file - to read it from stdin (pipe a heredoc: --file - <<\'EOF\' ... EOF) with no tmp file. For a multi-step driver - click through a flow, wait for it to render - then capture. Same async-function-body semantics as --action; same --file flag as page eval.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
@@ -336,7 +336,7 @@ export const pageScreenshotCommand = new Command('screenshot')
         actionScript = readScriptFile(opts.file);
       } catch {
         throw new Error(opts.file === '-'
-          ? "--file - reads the pre-capture script from stdin, but stdin was empty/unreadable — pipe it in, e.g. gipity page screenshot \"<url>\" --file - <<'EOF' … EOF"
+          ? "--file - reads the pre-capture script from stdin, but stdin was empty/unreadable - pipe it in, e.g. gipity page screenshot \"<url>\" --file - <<'EOF' ... EOF"
           : `Cannot read file: ${opts.file}`);
       }
     }
@@ -440,7 +440,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (opts.camera) {
       assertCameraFile(opts.camera);
       if (!projectGuid) throw new Error('--camera needs a linked project (the frame is hosted for the browser to fetch) — run `gipity link` first.');
-      console.log(muted(`Hosting camera feed ${opts.camera}…`));
+      console.log(muted(`Hosting camera feed ${opts.camera}...`));
       camera = await uploadCameraFeed(projectGuid, opts.camera);
     }
 
@@ -478,7 +478,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       try {
         entries = opts.json
           ? await doShoot()
-          : await withSpinner('Capturing…', doShoot, { done: null });
+          : await withSpinner('Capturing...', doShoot, { done: null });
       } catch (err) {
         // The sandbox budget covers the WHOLE capture — load, --action, settle,
         // render. The server's timeout text (rightly) says the page was never

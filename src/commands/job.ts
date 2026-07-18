@@ -102,7 +102,7 @@ jobCommand
         const prog = r.progress_pct != null
           ? `${Math.round(r.progress_pct * 100)}%${r.progress_message ? ` (${r.progress_message})` : ''}`
           : r.status;
-        if (prog !== lastProgress) { console.error(muted(`… ${prog}`)); lastProgress = prog; }
+        if (prog !== lastProgress) { console.error(muted(`... ${prog}`)); lastProgress = prog; }
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
@@ -195,7 +195,7 @@ jobCommand
       res = await fetch(url, { headers, signal: controller.signal });
     } catch (e) {
       if (peekedOut) {
-        console.error(muted(`… still streaming after ${peekSeconds}s. Run \`gipity job logs ${runGuid} --timeout ${Math.round(peekSeconds)}\` again to keep watching, or \`gipity job wait ${runGuid}\` to block until it finishes.`));
+        console.error(muted(`... still streaming after ${peekSeconds}s. Run \`gipity job logs ${runGuid} --timeout ${Math.round(peekSeconds)}\` again to keep watching, or \`gipity job wait ${runGuid}\` to block until it finishes.`));
         return;
       }
       throw e;
@@ -216,7 +216,7 @@ jobCommand
       } catch (e) {
         // Peek window elapsed mid-stream: report cleanly and exit 0 (not an error).
         if (peekedOut) {
-          console.error(muted(`… still streaming after ${peekSeconds}s. Run \`gipity job logs ${runGuid} --timeout ${Math.round(peekSeconds)}\` again to keep watching, or \`gipity job wait ${runGuid}\` to block until it finishes.`));
+          console.error(muted(`... still streaming after ${peekSeconds}s. Run \`gipity job logs ${runGuid} --timeout ${Math.round(peekSeconds)}\` again to keep watching, or \`gipity job wait ${runGuid}\` to block until it finishes.`));
           return;
         }
         throw e;

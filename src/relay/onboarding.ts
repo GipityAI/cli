@@ -77,12 +77,12 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
       console.log('');
       console.log(`  ${success('Registered as')} ${bold(existingDevice.name)} ${muted(`(${existingDevice.guid})`)}`);
       if (state.isPaused()) {
-        console.log(`  ${dim('The relay is paused — resume it with')} ${brand('gipity relay resume')}${dim('.')}`);
+        console.log(`  ${dim('The relay is paused - resume it with')} ${brand('gipity relay resume')}${dim('.')}`);
       } else {
         console.log(`  ${dim('The relay is running. Open')} ${brand('gipity.ai')}${dim(' and type `/claude` to drive Claude Code here.')}`);
       }
       console.log('');
-      console.log(`  ${dim('To register this computer again — for example under a different name —')}`);
+      console.log(`  ${dim('To register this computer again (for example under a different name),')}`);
       console.log(`  ${dim('unregister it first, then re-run setup:')}`);
       console.log(`      ${brand('gipity relay revoke')}   ${dim('# unpairs this computer and removes the login service')}`);
       console.log(`      ${brand('gipity connect')}        ${dim('# register it again (asks for a new name)')}`);
@@ -93,35 +93,37 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
 
   // Header. `gipity setup` frames it as the deliberate action it is; the
   // `gipity claude` first-run frames it as an optional add-on it's offering.
+  // Lines are pre-wrapped short so they never rewrap in a normal terminal.
   if (opts.mode === 'run-now') {
     console.log(`  ${bold('Set up this computer as a relay')}`);
-    console.log(`  ${dim('A relay runs your coding agent (Claude Code, Codex, or Grok) here so you can drive it from the web (')}${brand('gipity.ai')}${dim(') on any browser.')}`);
-    console.log(`  ${dim('It uses your Claude, Codex, or Grok subscription — the cheapest way to pay for tokens.')}`);
+    console.log(`  ${dim('Gipity drives the coding agents on this computer from the web (')}${brand('gipity.ai')}${dim(')')}`);
+    console.log(`  ${dim('on any browser, desktop or phone. Uses your Claude, Codex, or Grok')}`);
+    console.log(`  ${dim('subscription - the cheapest way to pay for tokens.')}`);
   } else {
-    console.log(`  ${bold('Remote control of your coding agent')}`);
-    console.log(`  ${dim('Drive your coding agent on this computer from the web (')}${brand('gipity.ai')}${dim(') on any browser (desktop or phone).')}`);
-    console.log('');
-    console.log(`  ${dim('Enable now (takes 2 seconds) or turn on later with')} ${brand('gipity connect')}`);
+    console.log(`  ${bold('Optional:')} ${dim('Gipity can drive the coding agents on this computer from the')}`);
+    console.log(`  ${dim('web (')}${brand('gipity.ai')}${dim(') on any browser, desktop or phone. Like Claude Code remote')}`);
+    console.log(`  ${dim('control, but one pane for all your coding agents.')}`);
   }
   console.log('');
 
   const promptText = opts.mode === 'run-now'
-    ? '  Set up remote control on this computer?'
-    : '  Enable remote control?';
+    ? '  Set up remote control on this computer'
+    : '  Enable remote control';
   const enable = await confirm(promptText, { default: 'yes' });
   if (!enable) {
     state.setRelayEnabled(false);
-    console.log(`  ${muted('Skipped.')}`);
+    console.log(`  ${muted('Skipped. Turn on later with')} ${brand('gipity connect')}${muted('.')}`);
     console.log('');
     return false;
   }
+  console.log('');
 
   // Device name - show a friendly default (owner + device kind); Enter accepts.
   const defaultName = friendlyDeviceName();
   const rawName = await prompt(`  Device name [${bold(defaultName)}]: `);
   const name = (rawName || defaultName).trim();
   if (!name || name.length > 100) {
-    console.error(`  ${clrError('Device name must be 1–100 non-whitespace characters. Skipping.')}`);
+    console.error(`  ${clrError('Device name must be 1-100 non-whitespace characters. Skipping.')}`);
     state.setRelayEnabled(false);
     return false;
   }
@@ -141,14 +143,13 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
     return false;
   }
 
-  // Start the daemon for this session.
-  const startNow = await confirm('  Start the relay now (and on future `gipity build` runs)?', { default: 'yes' });
-  if (startNow) {
-    startDaemon();
-  }
+  // The user said yes to remote control - start the daemon now, no extra
+  // question. `gipity build` keeps it running on future runs.
+  startDaemon();
+  console.log('');
 
   // Offer OS-level autostart (launchd / systemd --user / Task Scheduler).
-  const autostartOs = await confirm('  Also start at OS login (auto-start with Windows / macOS / Linux)?', { default: 'yes' });
+  const autostartOs = await confirm('  Also start at OS login', { default: 'yes' });
   if (autostartOs) {
     try {
       const res = installAutostart();
@@ -164,9 +165,8 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
         } else {
           console.log(`  ${muted('Autostart install returned non-zero - you can run')} ${brand('gipity relay install')} ${muted('later.')}`);
         }
-      } else {
-        console.log(`  ${success('Auto-start installed.')} ${dim(res.summary)}`);
       }
+      // Success is silent - the Done line below covers it.
     } catch (err) {
       if (err instanceof UnsupportedPlatformError) {
         console.log(`  ${muted(`Auto-start not supported on ${process.platform}; skipping.`)}`);
@@ -177,20 +177,16 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   }
 
   // Diagnostics consent - default on, clearly opt-out. Only ask once.
+  // (No personal data or file paths are ever sent; `gipity relay diagnostics
+  // on|off` flips it later.)
   if (state.getDiagnosticsConsent() === undefined) {
-    const diag = await confirm(
-      '  Share anonymous diagnostics (CPU/GPU/memory/disk/versions) to improve reliability?',
-      { default: 'yes' },
-    );
+    console.log('');
+    const diag = await confirm('  Share anonymous diagnostics info', { default: 'yes' });
     state.setDiagnosticsConsent(diag);
-    console.log(`  ${dim(diag
-      ? 'Thanks - no personal data or file paths are ever sent. Turn off anytime with `gipity relay diagnostics off`.'
-      : 'Diagnostics off. Turn on anytime with `gipity relay diagnostics on`.')}`);
   }
 
   console.log('');
-  console.log(`  ${success(`Registered as ${bold(device.name)} (${device.guid}).`)}`);
-  console.log(`  ${dim('In the Gipity web CLI, type `/claude` to dispatch messages to this PC.')}`);
+  console.log(`  ${success(`Done! ${bold(device.name)} is set up. New chats from gipity.ai can now execute here.`)}`);
   console.log('');
   return true;
 }

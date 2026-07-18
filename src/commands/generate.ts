@@ -223,7 +223,7 @@ Examples:
         seed: Number.isFinite(opts.seed) ? opts.seed : undefined,
         input_images: inputImages,
       });
-      const verb = inputImages ? 'Editing image…' : 'Generating image…';
+      const verb = inputImages ? 'Editing image...' : 'Generating image...';
       const result = opts.json
         ? await doGenerate()
         : await withSpinner(verb, doGenerate, { done: null });
@@ -291,7 +291,7 @@ Examples:
       // Veo runs 30-120s; the bouncing bar + timer keeps the wait honest.
       const result = opts.json
         ? await doGenerate()
-        : await withSpinner('Generating video…', doGenerate, { done: null });
+        : await withSpinner('Generating video...', doGenerate, { done: null });
 
       const filename = opts.output || 'generated.mp4';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
@@ -353,7 +353,7 @@ Examples:
       });
       const result = opts.json
         ? await doGenerate()
-        : await withSpinner('Generating speech…', doGenerate, { done: null });
+        : await withSpinner('Generating speech...', doGenerate, { done: null });
 
       const filename = opts.output || 'speech.mp3';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
@@ -407,7 +407,7 @@ Examples:
       });
       const result = opts.json
         ? await doGenerate()
-        : await withSpinner('Generating music…', doGenerate, { done: null });
+        : await withSpinner('Generating music...', doGenerate, { done: null });
 
       const filename = opts.output || 'music.mp3';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
@@ -459,7 +459,7 @@ Examples:
       });
       const result = opts.json
         ? await doGenerate()
-        : await withSpinner('Generating sound effect…', doGenerate, { done: null });
+        : await withSpinner('Generating sound effect...', doGenerate, { done: null });
 
       const filename = opts.output || 'sound.mp3';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);

@@ -170,9 +170,9 @@ describe('formatCwdLabel', () => {
     assert.equal(formatCwdLabel(join(homedir(), 'Github', 'Gipity')), '~/Github/Gipity');
   });
 
-  it('uses ~/…/last-2 when deeper in home', () => {
+  it('uses ~/.../last-2 when deeper in home', () => {
     const deep = join(homedir(), 'a', 'b', 'c', 'd');
-    assert.equal(formatCwdLabel(deep), '~/…/c/d');
+    assert.equal(formatCwdLabel(deep), '~/.../c/d');
   });
 
   it('shows parent/this for non-home paths', () => {

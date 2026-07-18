@@ -55,7 +55,7 @@ export const saveCommand = new Command('save')
     const doExport = () => downloadWithHeaders(`/projects/${config.projectGuid}/export`);
     const { buffer, headers } = opts.json
       ? await doExport()
-      : await withSpinner('Exporting…', doExport, { done: null });
+      : await withSpinner('Exporting...', doExport, { done: null });
 
     const filename = dispositionFilename(headers) ?? `${config.projectSlug}.gip`;
     let dest = path.resolve(output ?? filename);

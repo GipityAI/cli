@@ -79,7 +79,7 @@ gmailCommand
   .option('--cc <email>', 'Cc recipient (repeatable)', collect, [] as string[])
   .option('--bcc <email>', 'Bcc recipient (repeatable)', collect, [] as string[])
   .option('--reply-to <email>', 'Reply-To header address')
-  .requiredOption('--subject <s>', 'Subject (usually "Re: …" of the original)')
+  .requiredOption('--subject <s>', 'Subject (usually "Re: ..." of the original)')
   .requiredOption('--body <text>', 'Reply body (you compose the quote header)')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Reply', async () => {

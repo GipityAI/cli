@@ -200,7 +200,7 @@ export const loadCommand = new Command('load')
     if (opts.inspect) {
       const res = opts.json
         ? await doInspect()
-        : await withSpinner('Inspecting…', doInspect, { done: null });
+        : await withSpinner('Inspecting...', doInspect, { done: null });
       if (opts.json) {
         console.log(JSON.stringify(res.data));
         return;
@@ -211,7 +211,7 @@ export const loadCommand = new Command('load')
 
     const { data, partial } = opts.json
       ? await doImport()
-      : await withSpinner('Importing…', doImport, { done: null });
+      : await withSpinner('Importing...', doImport, { done: null });
     const project = data.project;
 
     // Materialize a local dir and link it, exactly like `gipity project create`:

@@ -526,7 +526,7 @@ GCC/Rust).
     });
     const res = opts.json
       ? await doRun()
-      : await withSpinner('Running in sandbox…', doRun, { done: null });
+      : await withSpinner('Running in sandbox...', doRun, { done: null });
 
     // Pull sandbox-written outputs down to the local cwd automatically. The
     // server has already mirrored them into the project (VFS) and handed back

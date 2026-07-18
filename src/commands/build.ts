@@ -62,7 +62,7 @@ const __clPkg = readOwnPkg(__clDir);
  *  incomplete pull, so we can tell the user plainly that nothing was deleted. */
 function reportSyncResult(result: SyncResult): void {
   if (result.aborted) {
-    console.log(`  ${warning('Merge cancelled — this folder was NOT synced with the project.')}`);
+    console.log(`  ${warning('Merge cancelled - this folder was NOT synced with the project.')}`);
     console.log(`  ${muted('For a clean copy, quit and open the project in an empty folder. To merge anyway, run `gipity sync`.')}`);
     return;
   }
@@ -70,9 +70,9 @@ function reportSyncResult(result: SyncResult): void {
     console.log(`  Synced ${result.applied} change${result.applied > 1 ? 's' : ''} with Gipity.`);
   }
   if (result.errors.length) {
-    console.log(`  ${warning(`Sync finished with ${result.errors.length} problem${result.errors.length === 1 ? '' : 's'} — your local copy may be incomplete:`)}`);
+    console.log(`  ${warning(`Sync finished with ${result.errors.length} problem${result.errors.length === 1 ? '' : 's'} - your local copy may be incomplete:`)}`);
     for (const e of result.errors.slice(0, 8)) console.log(`    - ${e}`);
-    if (result.errors.length > 8) console.log(`    …and ${result.errors.length - 8} more.`);
+    if (result.errors.length > 8) console.log(`    ...and ${result.errors.length - 8} more.`);
     console.log(`  ${muted('Nothing was deleted. Re-run `gipity sync` to finish the pull.')}`);
   }
 }
@@ -161,7 +161,7 @@ function localFsFallback(dir: string): ProjectStats {
   };
   walk(dir, 0);
   const topLevel = topLevelEntries.length
-    ? topLevelEntries.slice(0, 20).join(', ') + (topLevelEntries.length > 20 ? ', …' : '')
+    ? topLevelEntries.slice(0, 20).join(', ') + (topLevelEntries.length > 20 ? ', ...' : '')
     : '(empty directory)';
   return { fileCount, folderCount, totalBytes, topLevel };
 }
@@ -562,6 +562,7 @@ async function runLaunch(
         }
 
         setupProjectTools();
+        if (!nonInteractive) console.log(`  ${muted('Installed Gipity plugin, skills, and hooks.')}`);
 
         if (nonInteractive) {
           // Headless: the -p message is wrapped later (Step 3). Just record
@@ -741,6 +742,7 @@ async function runLaunch(
         initialPrompt = '';
 
         setupProjectTools();
+        if (!nonInteractive) console.log(`  ${muted('Installed Gipity plugin, skills, and hooks.')}`);
 
         console.log(`  ${success(`Project "${project.name}" ready.`)}\n`);
       }
@@ -887,9 +889,8 @@ async function runLaunch(
 
       if (!nonInteractive) {
         console.log(`  ${bold('Launching Claude Code, powered by Gipity.')}`);
-        console.log(`  ${muted("Just tell Claude what you'd like to build or do - everything Claude can do,")}`);
-        console.log(`  ${muted('plus hosting, databases, and live deploys on Gipity.')}`);
         if (convGuidForHooks) {
+          console.log('');
           console.log(`  ${muted(`This session is saved to Gipity - watch it live at ${brand('prompt.gipity.ai')}. (--no-capture on init to disable.)`)}`);
         }
         console.log('');
@@ -1032,10 +1033,10 @@ async function pickAgent(lastUsed: string | undefined): Promise<string> {
   const defaultIdx = AGENT_ADAPTERS.findIndex(a => a.key === defaultKey) + 1;
   console.log(`  ${bold('Which coding agent?')}\n`);
   AGENT_ADAPTERS.forEach((a, i) => {
-    const installed = binaryOnPath(a.binary) || (a.key === 'claude' && isClaudeInstalled());
+    // Keep the list clean: no install-state notes (picking an uninstalled
+    // agent installs it, or fails with the install hint at that point).
     const notes: string[] = [];
     if (a.key === lastUsed) notes.push('last used');
-    if (!installed) notes.push(a.ensureInstalled ? "not installed - we'll install it" : 'not installed');
     if (a.key === 'codex' && !a.hooksSupportedOnPlatform(process.platform)) {
       notes.push('session recording unavailable on Windows');
     }
@@ -1160,9 +1161,8 @@ async function launchNonClaudeAgent(adapter: RemoteAgentAdapter, ctx: {
   } else {
     agentArgs = [...adapter.buildInteractiveArgs({ resume, model }), ...extras];
     console.log(`  ${bold(`Launching ${adapter.displayName}, powered by Gipity.`)}`);
-    console.log(`  ${muted(`Just tell ${adapter.displayName} what you'd like to build or do - plus hosting,`)}`);
-    console.log(`  ${muted('databases, and live deploys on Gipity.')}`);
     if (convGuid) {
+      console.log('');
       console.log(`  ${muted(`This session is saved to Gipity - watch it live at ${brand('prompt.gipity.ai')}. (--no-capture on init to disable.)`)}`);
     }
     if (adapter.oneTimeSetupNote) {
