@@ -4,6 +4,7 @@ import { publicPost } from '../api.js';
 import { prompt, decodeJwtExp } from '../utils.js';
 import { success, error as clrError, muted } from '../colors.js';
 import { flushBugQueue } from '../bug-queue.js';
+import { warnBeforeCodeIfUnexpectedNewAccount, warnIfUnexpectedNewAccount } from '../login-flow.js';
 
 export const loginCommand = new Command('login')
   .description('Log in or sign up')
@@ -22,9 +23,10 @@ export const loginCommand = new Command('login')
 
       // Email only → send code and exit (non-interactive step 1)
       if (email && !code) {
-        await publicPost('/auth/login', { email });
+        const sendRes = await publicPost<{ isNewUser?: boolean }>('/auth/login', { email });
         console.log('Check your email for a 6-digit code.');
         console.log(muted(`Then run: gipity login --email ${email} --code <code>`));
+        warnBeforeCodeIfUnexpectedNewAccount(sendRes.isNewUser, email);
         return;
       }
 
@@ -39,9 +41,10 @@ export const loginCommand = new Command('login')
         process.exit(1);
       }
 
-      await publicPost('/auth/login', { email });
+      const sendRes = await publicPost<{ isNewUser?: boolean }>('/auth/login', { email });
       console.log('');
       console.log('Check your email for a 6-digit code.');
+      warnBeforeCodeIfUnexpectedNewAccount(sendRes.isNewUser, email);
 
       code = await prompt('Code: ');
       await verify(email, code);
@@ -52,10 +55,11 @@ export const loginCommand = new Command('login')
   });
 
 async function verify(email: string, code: string): Promise<void> {
+  const priorAuth = getAuth();
   const res = await publicPost<{
     accessToken: string;
     refreshToken: string;
-    isNewUser: boolean;
+    isNewUser?: boolean;
   }>('/auth/verify', { email, code });
 
   const exp = decodeJwtExp(res.accessToken);
@@ -73,6 +77,7 @@ async function verify(email: string, code: string): Promise<void> {
   });
 
   console.log(success(`Logged in (${email}).`));
+  warnIfUnexpectedNewAccount(res.isNewUser, email, priorAuth);
 
   // A fresh session is the clearest "we're reconnected" signal - clear any bug
   // reports that got stranded while this account's session was expired/offline.

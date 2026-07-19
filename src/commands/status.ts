@@ -4,7 +4,7 @@ import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { getAuth, sessionExpired } from '../auth.js';
 import { get, usingEnvToken, ApiError } from '../api.js';
-import { getConfig, liveUrl } from '../config.js';
+import { getConfig, liveUrl, resolveApiBase } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
 import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopeInstallState } from '../setup.js';
 import { flushBugQueue } from '../bug-queue.js';
@@ -46,15 +46,22 @@ function checkGipityPlugin(): { missing: string[]; ok: boolean; stale: boolean }
  *  - 'none'        not logged in and no GIPITY_TOKEN (no call made) */
 type AuthProbe = 'ok' | 'rejected' | 'unreachable' | 'expired' | 'none';
 
-async function probeAuth(loggedIn: boolean): Promise<AuthProbe> {
-  if (!loggedIn && !usingEnvToken()) return 'none';
-  if (!usingEnvToken() && sessionExpired()) return 'expired';
+/** `account` is the server's `account_slug` for the authenticated identity
+ *  (only populated on 'ok' - the /users/me call that proved the probe also
+ *  returns it) - used for the ownership cross-check against the locally
+ *  cached project (bug cli#S2: a wrong-account session used to read as
+ *  fully healthy until a later command 404'd). */
+async function probeAuth(loggedIn: boolean): Promise<{ state: AuthProbe; account: string | null }> {
+  if (!loggedIn && !usingEnvToken()) return { state: 'none', account: null };
+  if (!usingEnvToken() && sessionExpired()) return { state: 'expired', account: null };
   // Cap the probe well below the API layer's 60s request timeout - status is
   // a diagnostic command and must answer fast even when the network is dark.
-  const timeout = new Promise<'unreachable'>(res => setTimeout(() => res('unreachable'), 5000).unref?.());
-  const call = get('/users/me').then(
-    () => 'ok' as const,
-    (err) => (err instanceof ApiError && err.statusCode === 401 ? 'rejected' as const : 'unreachable' as const),
+  const timeout = new Promise<{ state: AuthProbe; account: string | null }>(
+    res => setTimeout(() => res({ state: 'unreachable', account: null }), 5000).unref?.(),
+  );
+  const call = get<{ data: { accountSlug: string } }>('/users/me').then(
+    (res) => ({ state: 'ok' as const, account: res.data?.accountSlug ?? null }),
+    (err) => ({ state: (err instanceof ApiError && err.statusCode === 401 ? 'rejected' : 'unreachable') as AuthProbe, account: null }),
   );
   return Promise.race([call, timeout]);
 }
@@ -81,6 +88,12 @@ export const statusCommand = new Command('status')
     // is empty, which is the common case, so this stays a no-op most runs.
     const queueDelivered = (auth && !sessionExpired()) ? await flushBugQueue().catch(() => 0) : 0;
     const probe = await probeAuth(!!auth);
+    // RBAC lets a project be shared to a collaborator whose own account
+    // legitimately differs from the project owner's - so this is advisory,
+    // never a hard error. Only meaningful once a live 'ok' call has actually
+    // returned an account to compare against config.accountSlug.
+    const accountMismatch = probe.state === 'ok' && !!config && !!probe.account && probe.account !== config.accountSlug;
+    const apiBaseInUse = resolveApiBase();
 
     if (opts.json) {
       console.log(JSON.stringify({
@@ -89,17 +102,21 @@ export const statusCommand = new Command('status')
           slug: config.projectSlug,
           account: config.accountSlug,
           apiBase: config.apiBase,
+          apiBaseInUse,
           url: liveUrl(config),
         } : null,
         // `valid` reflects the refresh token (the real session) - access
         // tokens auto-renew, so their expiry must not read as "invalid".
         // `probe` is what one live call just proved: 'rejected' means every
         // authenticated command will fail even though `valid` reads true.
+        // 'mismatch' overrides 'ok' when the live account isn't the one that
+        // owns this project - `valid` still reads true (the token IS valid).
         auth: (auth || usingEnvToken()) ? {
           email: auth?.email,
+          account: probe.account,
           source: usingEnvToken() ? 'agent-token' : 'session',
-          valid: usingEnvToken() ? probe !== 'rejected' : !sessionExpired(),
-          probe,
+          valid: usingEnvToken() ? probe.state !== 'rejected' : !sessionExpired(),
+          probe: accountMismatch ? 'mismatch' : probe.state,
         } : null,
         plugin: hookCheck,
       }, null, 2));
@@ -113,24 +130,39 @@ export const statusCommand = new Command('status')
       console.log(`${muted('Account:')} ${config.accountSlug}`);
       console.log(`${muted('Live:')} ${liveUrl(config)}`);
       console.log(`${muted('API:')} ${config.apiBase}`);
+      // apiBase is only what THIS project recorded - resolveApiBase() is what
+      // every real request actually uses (it can diverge via GIPITY_API_BASE,
+      // --api-base, or a disallowed host being dropped to the default). Surface
+      // the divergence rather than silently trusting the recorded value.
+      if (apiBaseInUse !== config.apiBase) {
+        console.log(`${muted('API (in use):')} ${warning(apiBaseInUse)} ${muted('(overrides .gipity.json — GIPITY_API_BASE / --api-base / allowlist)')}`);
+      }
       if (config.agentGuid) console.log(`${muted('Agent:')} ${config.agentGuid}`);
     }
 
     if (usingEnvToken()) {
-      console.log(`${muted('Auth:')} ${probe === 'rejected'
+      console.log(`${muted('Auth:')} ${probe.state === 'rejected'
         ? warning('agent API token (GIPITY_TOKEN) rejected by the server — mint a new one: gipity skill read agent-deploy')
-        : success('agent API token (GIPITY_TOKEN)')}${probe === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
+        : success('agent API token (GIPITY_TOKEN)')}${probe.state === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
     } else if (!auth) {
       console.log(`${muted('Auth:')} ${warning('not logged in. Run: gipity login')}`);
-    } else if (probe === 'expired') {
+    } else if (probe.state === 'expired') {
       console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login (headless/CI: set GIPITY_TOKEN — gipity skill read agent-deploy)`)}`);
-    } else if (probe === 'rejected') {
+    } else if (probe.state === 'rejected') {
       // Locally fresh but the server says no (refresh token rotated away or
       // revoked). Without the live probe this printed a green identity while
       // every authenticated command failed.
       console.log(`${muted('Auth:')} ${warning(`session for ${auth.email} was rejected by the server. Run: gipity login (headless/CI: set GIPITY_TOKEN — gipity skill read agent-deploy)`)}`);
     } else {
-      console.log(`${muted('Auth:')} ${success(auth.email)}${probe === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
+      console.log(`${muted('Auth:')} ${success(auth.email)}${probe.state === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
+    }
+
+    // Source-independent (session or GIPITY_TOKEN): a mismatch under an agent
+    // token is the same wrong-account class and must not be hidden inside the
+    // cascade above, which only special-cases 'rejected' for that source.
+    if (accountMismatch) {
+      console.log(`${muted('Account:')} ${warning(`logged-in account (${probe.account}) differs from this project's account (${config!.accountSlug}). If you didn't expect this you may be logged into the wrong account — run: gipity login`)}`);
+      console.log(muted('(If this project was shared with you via gipity rbac, this is expected.)'));
     }
 
     if (queueDelivered > 0) {
