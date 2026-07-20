@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeJwtExp, isBinaryFile, formatSize, formatAge } from '../utils.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { decodeJwtExp, isBinaryFile, formatSize, formatAge, findWindowsTwinProject, wslPathToWindows } from '../utils.js';
 
 describe('decodeJwtExp', () => {
   it('extracts exp from a valid JWT', () => {
@@ -77,5 +80,52 @@ describe('formatAge', () => {
   it('returns days ago', () => {
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
     assert.equal(formatAge(twoDaysAgo), '2d ago');
+  });
+});
+
+describe('findWindowsTwinProject', () => {
+  const { mkdtempSync, mkdirSync, rmSync } = fs;
+  const { tmpdir } = os;
+  const { join } = path;
+
+  it('finds a same-named project under a Windows-style users base', () => {
+    const base = mkdtempSync(join(tmpdir(), 'wsl-users-'));
+    try {
+      mkdirSync(join(base, 'steve', 'GipityProjects', 'myapp'), { recursive: true });
+      mkdirSync(join(base, 'Public'), { recursive: true }); // pseudo-user, must be skipped
+      const root = mkdtempSync(join(tmpdir(), 'linked-'));
+      const twin = findWindowsTwinProject(join(root), base);
+      assert.equal(twin, null); // root basename is random, no twin
+
+      const linked = join(root, 'myapp');
+      mkdirSync(linked);
+      assert.equal(findWindowsTwinProject(linked, base), join(base, 'steve', 'GipityProjects', 'myapp'));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores the candidate when it IS the linked project (same realpath)', () => {
+    const base = mkdtempSync(join(tmpdir(), 'wsl-users-'));
+    try {
+      const linked = join(base, 'steve', 'GipityProjects', 'onmount');
+      mkdirSync(linked, { recursive: true });
+      assert.equal(findWindowsTwinProject(linked, base), null);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when the users base does not exist', () => {
+    assert.equal(findWindowsTwinProject('/some/project', '/nonexistent/mnt/c/Users'), null);
+  });
+});
+
+describe('wslPathToWindows', () => {
+  it('converts /mnt/c paths to drive-letter form', () => {
+    assert.equal(wslPathToWindows('/mnt/c/Users/steve/GipityProjects/app'), 'C:\\Users\\steve\\GipityProjects\\app');
+  });
+  it('leaves non-mount paths alone', () => {
+    assert.equal(wslPathToWindows('/home/steve/app'), '/home/steve/app');
   });
 });

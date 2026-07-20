@@ -70,6 +70,27 @@ test('gipity job status <guid> renders progress + status', async () => {
   assert.match(r.stdout, /thinking/);
 });
 
+test('gipity job status labels progress of a failed run instead of showing a bare done', async () => {
+  mock.reset();
+  // A run can report 100% (done) right before dying; "progress: 100% (done)"
+  // next to status=failed reads as success, so failed runs get a label.
+  mock.on('GET /projects/p_TestProj/jobs/runs/jr_dead01', { body: { data: {
+    guid: 'jr_dead01',
+    status: 'failed',
+    progress_pct: 1,
+    progress_message: 'done',
+    duration_ms: 55462,
+    error: 'RuntimeError: kaboom',
+    output: null,
+  } } });
+  const r = await fresh(['job', 'status', 'jr_dead01']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /failed/);
+  assert.match(r.stdout, /last progress before failed: 100% \(done\)/);
+  assert.doesNotMatch(r.stdout, /^progress: 100%/m);
+  assert.match(r.stdout, /kaboom/);
+});
+
 test('gipity job runs <name> lists per-run rows with status + duration + guid', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/jobs/align/runs', { body: { data: [

@@ -12,8 +12,7 @@
  * All the non-interactive primitives live in `setup.ts` (`pairDevice`,
  * `startDaemon`, `installAutostart`); this module is only the prompts + copy.
  */
-import { readFileSync } from 'node:fs';
-import { prompt, confirm } from '../utils.js';
+import { prompt, confirm, isWsl } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
 import * as state from './state.js';
 import { UnsupportedPlatformError } from './installers.js';
@@ -40,18 +39,6 @@ export interface RelaySetupOpts {
  * ended up enabled (or was already), `false` if the user declined or a step
  * failed. Non-interactive flows (e.g. `gipity claude -p`) must not call this.
  */
-/** True inside Windows Subsystem for Linux (either env marker or kernel
- *  string). Used to explain autostart failures accurately - WSL ships without
- *  a systemd user session unless the user opts in via /etc/wsl.conf. */
-function isWsl(): boolean {
-  if (process.platform !== 'linux') return false;
-  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
-  try {
-    return /microsoft/i.test(readFileSync('/proc/version', 'utf-8'));
-  } catch {
-    return false;
-  }
-}
 
 export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   const alreadyAnswered = state.getRelayEnabled() !== undefined;

@@ -68,7 +68,13 @@ jobCommand
     const r = res.data;
     const statusColor = r.status === 'success' ? success : r.status === 'failed' ? clrError : muted;
     console.log(`${statusColor(r.status)}  ${muted(r.guid)}`);
-    if (r.progress_pct != null) console.log(`progress: ${Math.round(r.progress_pct * 100)}%${r.progress_message ? ` (${r.progress_message})` : ''}`);
+    if (r.progress_pct != null) {
+      const prog = `${Math.round(r.progress_pct * 100)}%${r.progress_message ? ` (${r.progress_message})` : ''}`;
+      // A failed run can have reported 100% (done) right before dying; a bare
+      // "progress: 100% (done)" next to status=failed reads as success. Label it.
+      const failedish = r.status === 'failed' || r.status === 'cancelled' || r.status === 'canceled' || r.status === 'error';
+      console.log(failedish ? `last progress before ${r.status}: ${prog}` : `progress: ${prog}`);
+    }
     if (r.duration_ms != null) console.log(`duration: ${r.duration_ms}ms`);
     if (r.error) console.log(`${clrError('error:')} ${r.error}`);
     if (r.output) console.log(`output: ${JSON.stringify(r.output)}`);

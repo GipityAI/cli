@@ -150,6 +150,8 @@ Write files locally - Gipity's editor hooks (installed into Claude Code, Grok, a
 
 To keep local-only material (research clones, scratch data, vendored references) in the project directory without syncing or deploying it, list it in a \`.gipityignore\` at the project root - gitignore-style, one pattern per line, \`#\` comments. Ignored paths are invisible to sync in both directions; anything that already synced before being ignored stays on the server until you delete it.
 
+**WSL trap: user-dropped files may be in a Windows-side twin.** On WSL, a same-named folder often exists at \`C:\\Users\\<name>\\GipityProjects\\<project>\` (visible as \`/mnt/c/Users/<name>/GipityProjects/<project>\`) - from Windows Explorer it looks like "the project folder", so users drop new files (audio, images) there. Nothing syncs from it. If the user says files are "in the project" but you can't find them, check that path before searching wider; \`gipity sync\` prints a notice when such a twin exists.
+
 ### Where files go: deploy only ships \`src/\`
 
 Deploy is opt-in, not opt-out: the \`files\` phase uploads **only** what's under \`src/\` (plus \`functions/\` and \`migrations/\` as backend, not CDN files). Anything else at the project root is kept but never deployed. Put each kind of file in the right bucket so scratch and reference material can't bloat a deploy:

@@ -1,5 +1,56 @@
 import { createInterface } from 'readline';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { bold, dim } from './colors.js';
+
+/** True inside Windows Subsystem for Linux (either env marker or kernel
+ *  string). WSL ships without a systemd user session unless the user opts in
+ *  via /etc/wsl.conf, and Windows-side paths live under /mnt/c. */
+export function isWsl(): boolean {
+  if (process.platform !== 'linux') return false;
+  if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true;
+  try {
+    return /microsoft/i.test(readFileSync('/proc/version', 'utf-8'));
+  } catch {
+    return false;
+  }
+}
+
+const WINDOWS_PSEUDO_USERS = new Set(['All Users', 'Default', 'Default User', 'Public', 'desktop.ini']);
+
+/** Under WSL, find a same-named project folder on the Windows side
+ *  (C:\Users\<name>\GipityProjects\<dir>) that is NOT the linked project.
+ *  From Windows Explorer that folder looks like "the project", so users drop
+ *  new files there - but nothing syncs from it. Returns the twin's WSL path,
+ *  or null when there is no twin (or no Windows mount at all). */
+export function findWindowsTwinProject(projectRoot: string, usersBase = '/mnt/c/Users'): string | null {
+  try {
+    const name = basename(projectRoot);
+    if (!name) return null;
+    const realRoot = realpathSync(projectRoot);
+    for (const user of readdirSync(usersBase)) {
+      if (WINDOWS_PSEUDO_USERS.has(user)) continue;
+      const candidate = join(usersBase, user, 'GipityProjects', name);
+      try {
+        if (!statSync(candidate).isDirectory()) continue;
+        if (realpathSync(candidate) === realRoot) continue; // the linked project itself lives on /mnt/c
+        return candidate;
+      } catch {
+        // this user has no such folder - keep scanning
+      }
+    }
+  } catch {
+    // usersBase unreadable: not WSL, or no C: mount
+  }
+  return null;
+}
+
+/** /mnt/c/Users/steve/... -> C:\Users\steve\... for display to a Windows user. */
+export function wslPathToWindows(p: string): string {
+  const m = p.match(/^\/mnt\/([a-z])\/(.*)$/);
+  if (!m) return p;
+  return `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, '\\')}`;
+}
 
 /** Safely decode a JWT payload without signature validation */
 export function decodeJwtExp(token: string): number | null {

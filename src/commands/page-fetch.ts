@@ -36,7 +36,9 @@ interface ProbeSig {
 interface RawResponse {
   status: number;
   contentType: string | null;
-  body: string;
+  body: string;   // UTF-8 view of the body, for HTML sniffing only
+  bytes: number;  // true byte length of the raw body
+  sha256: string; // hash of the raw bytes (binary-safe)
 }
 
 /** Expected content category by filename/extension; null = no expectation. */
@@ -67,10 +69,6 @@ function looksLikeHtml(body: string): boolean {
   return /<!doctype html|<html[\s>]/.test(head);
 }
 
-function sha256(s: string): string {
-  return createHash('sha256').update(s).digest('hex');
-}
-
 function baseWithSlash(url: string): string {
   return url.endsWith('/') ? url : url + '/';
 }
@@ -83,8 +81,16 @@ function resolveUrl(base: string, path: string): string {
 async function fetchRaw(url: string): Promise<RawResponse | null> {
   try {
     const res = await fetch(url, { redirect: 'follow' });
-    const body = await res.text();
-    return { status: res.status, contentType: res.headers.get('content-type'), body };
+    // Read raw bytes, not text(): decoding binary as UTF-8 turns every invalid
+    // byte into a 3-byte replacement char, inflating the measured size ~1.7x.
+    const buf = Buffer.from(await res.arrayBuffer());
+    return {
+      status: res.status,
+      contentType: res.headers.get('content-type'),
+      body: buf.toString('utf-8'),
+      bytes: buf.length,
+      sha256: createHash('sha256').update(buf).digest('hex'),
+    };
   } catch {
     return null; // DNS failure, connection refused, etc.
   }
@@ -98,7 +104,7 @@ async function probeShell(base: string): Promise<ProbeSig> {
   return {
     served: r.status >= 200 && r.status < 300,
     status: r.status,
-    sha256: sha256(r.body),
+    sha256: r.sha256,
     isHtml: looksLikeHtml(r.body),
   };
 }
@@ -106,8 +112,7 @@ async function probeShell(base: string): Promise<ProbeSig> {
 function classify(path: string, r: RawResponse | null, shell: ProbeSig): Omit<FileResult, 'path' | 'url'> {
   if (!r) return { status: null, contentType: null, bytes: 0, verdict: 'MISSING', detail: 'fetch failed (host unreachable)' };
 
-  const bytes = Buffer.byteLength(r.body);
-  const base = { status: r.status, contentType: r.contentType, bytes };
+  const base = { status: r.status, contentType: r.contentType, bytes: r.bytes };
 
   // Honest 404/5xx - the file simply isn't there.
   if (r.status >= 400) return { ...base, verdict: 'MISSING', detail: `HTTP ${r.status}` };
@@ -115,7 +120,7 @@ function classify(path: string, r: RawResponse | null, shell: ProbeSig): Omit<Fi
   const expect = expectedType(path);
 
   // 1) Served the catch-all shell verbatim → 200, but the file isn't deployed.
-  if (shell.served && shell.sha256 && sha256(r.body) === shell.sha256) {
+  if (shell.served && shell.sha256 && r.sha256 === shell.sha256) {
     return { ...base, verdict: 'MISSING', detail: `HTTP ${r.status} but served the SPA shell (file not deployed)` };
   }
   // 2) Asked for a non-HTML asset but got an HTML body → a per-path shell variant.

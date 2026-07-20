@@ -1388,6 +1388,21 @@ test('page fetch: OK when a file is deployed with the right content-type', async
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('page fetch: reports true byte size for binary bodies (no UTF-8 inflation)', async () => {
+  mock.reset();
+  // 100k bytes of 0xFF - invalid UTF-8 everywhere. Reading via text() would
+  // decode each byte to a 3-byte replacement char and report ~300 KB (the bug
+  // that showed a 2.5 MB MP3 as 4.2 MB); the raw byte count must win.
+  const binary = Buffer.alloc(100_000, 0xff);
+  mock.on('GET *', { status: 200, raw: SHELL, contentType: 'text/html' });
+  mock.on('GET /app/song.mp3', { status: 200, raw: binary, contentType: 'audio/mpeg' });
+  const r = await run(['page', 'fetch', `${mock.apiBase}/app/`, 'song.mp3', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.files[0].verdict, 'OK');
+  assert.equal(out.files[0].bytes, 100_000);
+});
+
 test('page fetch: MISSING when a missing file is served as the SPA shell with a 200', async () => {
   mock.reset();
   // Only the catch-all is registered → llms.txt comes back as the shell, 200.

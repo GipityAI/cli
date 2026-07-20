@@ -23,7 +23,7 @@ const SERVICES: Array<{ name: string; method: 'POST' | 'GET'; desc: string }> = 
 
 export const serviceCommand = new Command('service')
   .description('Call an app service (llm, tts, image, transcribe, ...)')
-  .addHelpText('after', '\nCall a Gipity app service: LLM, image, music, TTS, and more.');
+  .addHelpText('after', '\nCall a Gipity app service: LLM, image, music, TTS, and more.\nPer-service docs: gipity skill read app-llm | app-tts | app-image | app-video | app-audio (transcribe, sound, music) | app-location');
 
 serviceCommand
   .command('list')

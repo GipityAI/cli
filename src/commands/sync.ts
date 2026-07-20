@@ -1,7 +1,10 @@
 import { Command } from 'commander';
+import { dirname } from 'node:path';
 import { sync } from '../sync.js';
 import { createProgressReporter } from '../progress.js';
 import { error as clrError, muted } from '../colors.js';
+import { findWindowsTwinProject, isWsl, wslPathToWindows } from '../utils.js';
+import { getConfigPath } from '../config.js';
 
 export const syncCommand = new Command('sync')
   .description('Sync files')
@@ -30,6 +33,20 @@ export const syncCommand = new Command('sync')
         // local). Surface that here as a helpful hint - not a red error - with
         // the one command that resolves it. Only `gipity sync` shows this;
         // deploy/test/sandbox stay silent (their internal sync defers quietly).
+        // WSL trap: a same-named folder under C:\Users\...\GipityProjects looks
+        // like "the project" from Windows Explorer, but files dropped there
+        // never sync. When a twin exists, say so - "Up to date." alone reads as
+        // "your new files are in" when they're sitting on the Windows side.
+        if (isWsl()) {
+          const configPath = getConfigPath();
+          const twin = configPath ? findWindowsTwinProject(dirname(configPath)) : null;
+          if (twin) {
+            console.log(muted(
+              `\nNote: a Windows-side copy of this project exists at ${wslPathToWindows(twin)} and is NOT synced. ` +
+              `If you added files there, move them into this folder so they sync.`,
+            ));
+          }
+        }
         if (result.deferredDeletes > 0) {
           console.log(muted(
             `\n${result.deferredDeletes} file${result.deferredDeletes > 1 ? 's' : ''} on Gipity ` +
