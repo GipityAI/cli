@@ -1,0 +1,47 @@
+{
+  "name": "gipity-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Gipity - deploy web apps and APIs, run SQL, call functions, execute sandboxed code from any MCP client (Claude Code, Cursor, Codex, Copilot).",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "gipity-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "gipity",
+    "deploy",
+    "hosting",
+    "database",
+    "serverless",
+    "ai-agent",
+    "claude",
+    "cursor"
+  ],
+  "homepage": "https://gipity.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GipityAI/cli.git",
+    "directory": "mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
