@@ -40,6 +40,38 @@ describe('buildTemplateVars', () => {
     assert.equal(vars['{{DESCRIPTION_META}}'], '');
     assert.equal(vars['{{OG_DESCRIPTION}}'], '');
   });
+
+  it('{{HEAD_BLOCK}} carries the twitter/og card set and icon links', () => {
+    const vars = buildTemplateVars({ projectGuid: 'p_x', projectName: 'Gorillas' });
+    const head = vars['{{HEAD_BLOCK}}'];
+    assert.match(head, /<title>Gorillas<\/title>/);
+    assert.match(head, /twitter:card" content="summary_large_image"/);
+    assert.match(head, /og:title" content="Gorillas"/);
+    assert.match(head, /apple-touch-icon/);
+    assert.match(head, /rel="manifest"/);
+    assert.match(head, /theme-color" content="#[0-9a-f]{6}"/);
+    // No slugs → no canonical/og:url/og:image (they need an absolute URL).
+    assert.doesNotMatch(head, /canonical|og:url|og:image/);
+  });
+
+  it('{{HEAD_BLOCK}} gains canonical + absolute og:image when slugs are known', () => {
+    const vars = buildTemplateVars({
+      projectGuid: 'p_x', projectName: 'Gorillas', description: 'Bananas at 60fps',
+      accountSlug: 'steve', projectSlug: 'gorillas',
+    });
+    const head = vars['{{HEAD_BLOCK}}'];
+    assert.match(head, /rel="canonical" href="https:\/\/app\.gipity\.ai\/steve\/gorillas\/"/);
+    assert.match(head, /og:image" content="https:\/\/app\.gipity\.ai\/steve\/gorillas\/images\/og-image\.png"/);
+    assert.match(head, /twitter:image"/);
+    assert.match(head, /meta name="description" content="Bananas at 60fps"/);
+  });
+
+  it('{{HEAD_BLOCK}} theme-color is deterministic per project guid', () => {
+    const a = buildTemplateVars({ projectGuid: 'p_abc12345', projectName: 'A' })['{{HEAD_BLOCK}}'];
+    const b = buildTemplateVars({ projectGuid: 'p_abc12345', projectName: 'B' })['{{HEAD_BLOCK}}'];
+    const color = (h: string): string => /theme-color" content="(#[0-9a-f]{6})"/.exec(h)![1];
+    assert.equal(color(a), color(b));
+  });
 });
 
 describe('substituteString', () => {

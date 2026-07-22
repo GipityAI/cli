@@ -66,6 +66,8 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
     const sub = await substituteDir(opts.dir, {
       projectGuid: opts.projectGuid,
       projectName: opts.projectName,
+      accountSlug: opts.accountSlug,
+      projectSlug: opts.projectSlug,
     });
     if (sub.changed.length) {
       console.log(muted(`Resolved template vars in ${sub.changed.length} file${sub.changed.length > 1 ? 's' : ''}.`));

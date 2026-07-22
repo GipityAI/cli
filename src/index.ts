@@ -29,6 +29,7 @@ import { fileCommand } from './commands/file.js';
 import { storageCommand } from './commands/storage.js';
 import { buildCommand, claudeCommand } from './commands/build.js';
 import { addCommand } from './commands/add.js';
+import { brandCommand } from './commands/brand.js';
 import { removeCommand } from './commands/remove.js';
 import { saveCommand } from './commands/save.js';
 import { loadCommand } from './commands/load.js';
@@ -143,7 +144,7 @@ program.enablePositionalOptions();
 // of its context. Humans get the same win: sections follow the order you
 // actually use them - orient, build, wire the backend, then everything else.
 const startGroup     = [statusCommand, initCommand, skillCommand, projectCommand];
-const buildGroup     = [addCommand, removeCommand, saveCommand, loadCommand, deployCommand, pageCommand, testCommand];
+const buildGroup     = [addCommand, removeCommand, brandCommand, saveCommand, loadCommand, deployCommand, pageCommand, testCommand];
 const backendGroup   = [dbCommand, fnCommand, secretsCommand, logsCommand, jobCommand, workflowCommand];
 const servicesGroup  = [serviceCommand, generateCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
@@ -169,6 +170,7 @@ const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
 // single source of truth; this maps names only). Keys must be real skill
 // names (`gipity skill list`).
 const SKILL_DOCS: Record<string, string> = {
+  brand: 'web-app-basics',
   save: 'app-import',
   load: 'app-import',
   github: 'app-import',
