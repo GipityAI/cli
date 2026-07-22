@@ -67,6 +67,7 @@ import {
 } from '../capture/sources/claude-code.js';
 import { parseTranscript as parseCodexTranscript } from '../capture/sources/codex.js';
 import { parseTranscript as parseGrokTranscript } from '../capture/sources/grok.js';
+import { parseTranscript as parseAgyTranscript } from '../capture/sources/agy.js';
 
 const CAPTURE_DIR = join(homedir(), '.gipity', 'capture-state');
 const INGEST_BATCH_MAX = 100; // server caps at 200; stay comfortably under
@@ -116,6 +117,15 @@ export const CAPTURE_SOURCES: Record<string, CaptureSource> = {
       const cwd = hook.cwd ?? process.cwd();
       return join(homedir(), '.grok', 'sessions', encodeURIComponent(cwd), hook.session_id, 'chat_history.jsonl');
     },
+  },
+  agy: {
+    serverSource: 'agy',
+    displayName: 'Antigravity',
+    // agy hook payloads always carry transcriptPath directly (no derivation
+    // needed, unlike Grok) - the agy-specific hook wrapper normalizes it into
+    // this HookInput's transcript_path before invoking this runner.
+    parse: (content, afterUuid, hook) =>
+      parseAgyTranscript(content, afterUuid, { conversationId: hook.session_id }),
   },
 };
 
@@ -488,8 +498,10 @@ function sweepStaleState(): void {
 
 /** Normalize a raw hook payload to snake_case HookInput. Claude Code and
  *  Codex deliver snake_case (`session_id`, `transcript_path`, `cwd`); Grok
- *  Build delivers camelCase (`sessionId`, `hookEventName`, …). Accept both
- *  so one runner serves every harness. */
+ *  Build delivers camelCase (`sessionId`, `hookEventName`, …); agy calls its
+ *  session id `conversationId` (its own hook payload has no session/cwd/event
+ *  fields under any other name - see cli/src/agents/agy.ts). Accept all of
+ *  these so one runner serves every harness. */
 export function normalizeHookInput(raw: any): HookInput {
   if (!raw || typeof raw !== 'object') return {};
   const pick = (...keys: string[]): string | undefined => {
@@ -500,7 +512,7 @@ export function normalizeHookInput(raw: any): HookInput {
     return undefined;
   };
   const hook: HookInput = {
-    session_id: pick('session_id', 'sessionId'),
+    session_id: pick('session_id', 'sessionId', 'conversationId'),
     transcript_path: pick('transcript_path', 'transcriptPath'),
     cwd: pick('cwd', 'workingDirectory'),
     hook_event_name: pick('hook_event_name', 'hookEventName'),
