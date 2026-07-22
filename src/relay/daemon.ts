@@ -506,8 +506,8 @@ interface ClaimedDispatch {
    *  `--model`. Resolved server-side at claim time, so the latest choice wins. */
   model: string | null;
   /** Which coding agent runs this dispatch - the conversation's `source`
-   *  ('claude_code' | 'codex' | 'grok'). Absent from older servers, which
-   *  only ever dispatched Claude. Picks the agent adapter. */
+   *  ('claude_code' | 'codex' | 'grok' | 'agy'). Absent from older servers,
+   *  which only ever dispatched Claude. Picks the agent adapter. */
   remote_type?: string;
   /** Files the user attached in the web CLI, already uploaded into the
    *  project VFS at these project-relative paths. The message text already

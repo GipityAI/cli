@@ -12,6 +12,7 @@ import { detectHarness } from '../client-context.js';
 const TOUCHED = [
   'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH', 'CLAUDE_CODE_SESSION_ID',
   'CODEX_SANDBOX', 'CURSOR_TRACE_ID', 'TERM_PROGRAM', 'AIDER_MODEL', 'GEMINI_CLI',
+  'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_CLI_ALIAS',
   'CI', 'GITHUB_ACTIONS',
 ];
 let saved: Record<string, string | undefined>;
@@ -49,6 +50,21 @@ test('claude-code via CLAUDE_CODE_ENTRYPOINT even without CLAUDECODE', () => {
 test('codex via CODEX_ prefix', () => {
   process.env.CODEX_SANDBOX = 'seatbelt';
   assert.equal(detectHarness().harness, 'codex');
+});
+
+test('agy via ANTIGRAVITY_CONVERSATION_ID, with session parsed', () => {
+  process.env.ANTIGRAVITY_CONVERSATION_ID = 'conv-123';
+  const h = detectHarness();
+  assert.equal(h.harness, 'agy');
+  assert.equal(h.harnessSession, 'conv-123');
+});
+
+test('an ambient ANTIGRAVITY_ var other than CONVERSATION_ID does not false-positive as agy', () => {
+  // The Antigravity IDE's own integrated terminal sets ANTIGRAVITY_CLI_ALIAS
+  // in every shell it spawns - a user just having the IDE open (with no agy
+  // hook/session running) must not be misattributed as an agy invocation.
+  process.env.ANTIGRAVITY_CLI_ALIAS = 'agy-ide';
+  assert.equal(detectHarness().harness, 'manual');
 });
 
 test('cursor via TERM_PROGRAM', () => {

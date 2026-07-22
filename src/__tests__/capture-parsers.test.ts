@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTranscript as parseCodex } from '../capture/sources/codex.js';
 import { parseTranscript as parseGrok } from '../capture/sources/grok.js';
+import { parseTranscript as parseAgy } from '../capture/sources/agy.js';
 
 const CODEX_SID = '019f5bb2-2d82-75b1-948f-9039e8a376c8';
 
@@ -195,6 +196,106 @@ describe('grok chat_history parser', () => {
   });
 });
 
+const AGY_CID = '838e4ef3-ea93-468f-a06d-2f2cfc1fdef1';
+
+// Trimmed copy of a REAL agy transcript_full.jsonl (v1.1.2, 2026-07-22) - the
+// repeated EPHEMERAL_MESSAGE/SYSTEM_MESSAGE bodies are shortened, everything
+// else (types, step_index, structure) is verbatim. Note step_index 5/6 are
+// swapped in the real file (CHECKPOINT logged after CODE_ACTION but with a
+// lower index) - kept as-is since the parser must watermark on line position,
+// never step_index.
+const agyLines = [
+  { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: '2026-07-22T21:34:29Z',
+    content: '<USER_REQUEST>\nCreate a file called hello.txt in the current directory containing the text hi. Then stop.\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-07-22T14:34:29-07:00.\n</ADDITIONAL_METADATA>' },
+  { step_index: 1, source: 'SYSTEM', type: 'CONVERSATION_HISTORY', status: 'DONE', created_at: '2026-07-22T21:34:29Z' },
+  { step_index: 2, source: 'SYSTEM', type: 'EPHEMERAL_MESSAGE', status: 'DONE', created_at: '2026-07-22T21:34:29Z',
+    content: 'The following is an <EPHEMERAL_MESSAGE> ... critical instructions ...' },
+  { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-07-22T21:34:29Z',
+    thinking: 'Deciding to use write_to_file...',
+    tool_calls: [{ name: 'write_to_file', args: { CodeContent: 'hi', TargetFile: '/tmp/agy-hook-probe/hello.txt', Overwrite: false } }] },
+  { step_index: 4, source: 'MODEL', type: 'CODE_ACTION', status: 'DONE', created_at: '2026-07-22T21:34:35Z',
+    content: 'Created At: 2026-07-22T14:34:35-07:00\nCompleted At: 2026-07-22T14:34:35-07:00\nCreated file file:///tmp/agy-hook-probe/hello.txt with requested content.' },
+  { step_index: 6, source: 'SYSTEM', type: 'EPHEMERAL_MESSAGE', status: 'DONE', created_at: '2026-07-22T21:34:35Z',
+    content: 'The following is an <EPHEMERAL_MESSAGE> ... critical instructions ...' },
+  { step_index: 5, source: 'SYSTEM', type: 'CHECKPOINT', status: 'DONE', created_at: '2026-07-22T21:34:35Z',
+    content: '{{ CHECKPOINT 0 }}\nThe earlier parts of this conversation have been truncated...' },
+  { step_index: 7, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-07-22T21:34:35Z',
+    content: 'I have created the file [hello.txt](file:///tmp/agy-hook-probe/hello.txt) with the content "hi" as requested.',
+    thinking: 'Confirming the file was created...' },
+];
+const AGY_JSONL = agyLines.map(l => JSON.stringify(l)).join('\n') + '\n';
+
+describe('agy transcript parser', () => {
+  it('maps a real transcript to prompt/system/assistant entries, skipping internal bookkeeping', () => {
+    const { entries, lastUuid, foundWatermark } = parseAgy(AGY_JSONL, null, { conversationId: AGY_CID });
+    assert.equal(foundWatermark, true);
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'system', 'assistant']);
+
+    const [prompt, action, reply] = entries as any[];
+    assert.equal(prompt.prompt, 'Create a file called hello.txt in the current directory containing the text hi. Then stop.');
+    assert.match(action.content, /Created file file:\/\/\/tmp\/agy-hook-probe\/hello\.txt/);
+    assert.match(reply.text, /content "hi" as requested/);
+    // Watermark is positional on the last processed LINE, not step_index
+    // (lines 5/6 carry swapped step_index values in the real file).
+    assert.equal(lastUuid, `${AGY_CID}#${agyLines.length - 1}`);
+    assert.ok(entries.every(e => typeof (e as any).ts === 'string'));
+  });
+
+  it('a thinking-only PLANNER_RESPONSE (no content, about to call a tool) is skipped, not surfaced empty', () => {
+    const { entries } = parseAgy(AGY_JSONL, null, { conversationId: AGY_CID });
+    assert.ok(!entries.some(e => e.kind === 'assistant' && (e as any).text === ''));
+    // Only the ONE PLANNER_RESPONSE with real content became an assistant entry.
+    assert.equal(entries.filter(e => e.kind === 'assistant').length, 1);
+  });
+
+  it('resumes from a positional watermark and only emits the tail', () => {
+    const full = parseAgy(AGY_JSONL, null, { conversationId: AGY_CID });
+    const { entries, foundWatermark } = parseAgy(AGY_JSONL, `${AGY_CID}#4`, { conversationId: AGY_CID });
+    assert.equal(foundWatermark, true);
+    assert.deepEqual(entries.map(e => e.kind), ['assistant']);
+    assert.ok(full.entries.length > entries.length);
+  });
+
+  it('a watermark from another conversation is not found (replays from the top)', () => {
+    const { foundWatermark, entries } = parseAgy(AGY_JSONL, 'other-conv#3', { conversationId: AGY_CID });
+    assert.equal(foundWatermark, false);
+    assert.equal(entries.length, 3);
+  });
+
+  it('a watermark past EOF replays instead of wedging', () => {
+    const { foundWatermark, entries } = parseAgy(AGY_JSONL, `${AGY_CID}#500`, { conversationId: AGY_CID });
+    assert.equal(foundWatermark, false);
+    assert.equal(entries.length, 3);
+  });
+
+  it('extracts the clean request text, dropping ADDITIONAL_METADATA/USER_SETTINGS_CHANGE noise', () => {
+    const line = JSON.stringify({
+      step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-01-01T00:00:00Z',
+      content: '<USER_REQUEST>\ndo the thing\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nModel changed\n</USER_SETTINGS_CHANGE>',
+    });
+    const { entries } = parseAgy(line + '\n', null, { conversationId: 'c1' });
+    assert.equal((entries[0] as any).prompt, 'do the thing');
+  });
+
+  it('no conversation id in context still parses; positional uuids degrade to a bare index', () => {
+    const { entries, lastUuid } = parseAgy(AGY_JSONL, null, {});
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'system', 'assistant']);
+    assert.equal(lastUuid, `#${agyLines.length - 1}`);
+  });
+
+  it('hostile inputs: empty/whitespace and corrupt JSON lines are ignored, not thrown', () => {
+    for (const content of ['', '\n\n', '   \n']) {
+      const r = parseAgy(content, null, { conversationId: AGY_CID });
+      assert.deepEqual(r.entries, []);
+      assert.equal(r.lastUuid, null);
+    }
+    const mixed = '{not json}\n' + JSON.stringify({ step_index: 0, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: 't', content: 'ok' }) + '\n';
+    const r = parseAgy(mixed, null, { conversationId: AGY_CID });
+    assert.equal(r.entries.length, 1);
+    assert.equal((r.entries[0] as any).text, 'ok');
+  });
+});
+
 describe('hook payload normalization (grok camelCase)', () => {
   it('maps camelCase (Grok) and snake_case (Claude/Codex) to one shape', async () => {
     const { normalizeHookInput } = await import('../hooks/capture-runner.js');
@@ -205,6 +306,14 @@ describe('hook payload normalization (grok camelCase)', () => {
     assert.deepEqual(
       normalizeHookInput({ hook_event_name: 'Stop', session_id: 's2', transcript_path: '/t2', cwd: '/c2' }),
       { session_id: 's2', transcript_path: '/t2', cwd: '/c2', hook_event_name: 'Stop' },
+    );
+  });
+
+  it('maps agy\'s conversationId to session_id', async () => {
+    const { normalizeHookInput } = await import('../hooks/capture-runner.js');
+    assert.deepEqual(
+      normalizeHookInput({ conversationId: 'conv-1', transcriptPath: '/t3' }),
+      { session_id: 'conv-1', transcript_path: '/t3', cwd: undefined, hook_event_name: undefined },
     );
   });
 

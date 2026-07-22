@@ -19,6 +19,11 @@ export interface TemplateVars {
   projectName: string;
   /** Optional buyer-facing description, used for <meta> tags. */
   description?: string;
+  /** Account + project slugs — when both are present, {{HEAD_BLOCK}} gains the
+   *  canonical URL, og:url, and absolute og:image the social crawlers need
+   *  (https://app.gipity.ai/{accountSlug}/{projectSlug}/). */
+  accountSlug?: string;
+  projectSlug?: string;
 }
 
 /** File extensions we substitute in. Binaries (images, audio, fonts) are
@@ -44,6 +49,7 @@ export const KNOWN_PLACEHOLDERS = [
   '{{JS_TITLE}}',
   '{{PROJECT_GUID}}',
   '{{DATABASE}}',
+  '{{HEAD_BLOCK}}',
   '{{DESCRIPTION_META}}',
   '{{OG_DESCRIPTION}}',
   '{{JSON_LD_BLOCK}}',
@@ -63,6 +69,81 @@ function jsEscape(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+/** Accent palette + hash, mirrored from the server's `services/app-brand.ts`
+ *  so the {{HEAD_BLOCK}} theme-color this path emits matches what a server
+ *  install of the same project would emit. Append-only; keep in sync. */
+const ACCENT_PALETTE = [
+  '#f59e0b', '#f97316', '#ef4444', '#ec4899', '#a855f7', '#6366f1',
+  '#3b82f6', '#0ea5e9', '#14b8a6', '#22c55e', '#84cc16', '#eab308',
+];
+
+function hashString(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Blend the accent into near-black — theme-color tint (mirrors app-brand.ts). */
+function darkTint(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const base = 0x101014;
+  const ch = (shift: number): string => {
+    const a = (n >> shift) & 0xff;
+    const b = (base >> shift) & 0xff;
+    return Math.round(b + (a - b) * 0.14).toString(16).padStart(2, '0');
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
+
+/** The shared head every template's index.html carries as {{HEAD_BLOCK}}.
+ *  Mirrors `buildHeadBlock` in platform `services/app-brand.ts` — same tags,
+ *  same order, same indent; keep the two in sync. */
+function buildHeadBlock(v: TemplateVars): string {
+  const t = escapeHtml(v.projectName);
+  const d = v.description ? escapeHtml(v.description) : '';
+  const url = v.accountSlug && v.projectSlug
+    ? `https://app.gipity.ai/${v.accountSlug}/${v.projectSlug}/`
+    : undefined;
+  const themeColor = darkTint(ACCENT_PALETTE[hashString(v.projectGuid || v.projectName) % ACCENT_PALETTE.length]);
+  const jsonLd = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'WebApplication',
+    name: v.projectName,
+    ...(v.description ? { description: v.description } : {}),
+    ...(url ? { url } : {}),
+  }, null, 2).replace(/<\//g, '<\\/');
+
+  const lines: string[] = [
+    `<title>${t}</title>`,
+    ...(d ? [`<meta name="description" content="${d}">`] : []),
+    ...(url ? [`<link rel="canonical" href="${url}">`] : []),
+    `<meta property="og:title" content="${t}">`,
+    `<meta property="og:type" content="website">`,
+    ...(d ? [`<meta property="og:description" content="${d}">`] : []),
+    ...(url ? [
+      `<meta property="og:url" content="${url}">`,
+      `<meta property="og:image" content="${url}images/og-image.png">`,
+      `<meta property="og:image:width" content="1200">`,
+      `<meta property="og:image:height" content="630">`,
+    ] : []),
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${t}">`,
+    ...(d ? [`<meta name="twitter:description" content="${d}">`] : []),
+    ...(url ? [`<meta name="twitter:image" content="${url}images/og-image.png">`] : []),
+    `<meta name="theme-color" content="${themeColor}">`,
+    `<link rel="icon" type="image/png" sizes="192x192" href="./images/favicon-192.png">`,
+    `<link rel="icon" type="image/png" sizes="512x512" href="./images/favicon-512.png">`,
+    `<link rel="icon" type="image/x-icon" href="./images/favicon.ico">`,
+    `<link rel="apple-touch-icon" href="./images/apple-touch-icon.png">`,
+    `<link rel="manifest" href="./manifest.webmanifest">`,
+    `<script type="application/ld+json">\n${jsonLd}\n  </script>`,
+  ];
+  return lines.map(l => `\n  ${l}`).join('');
+}
+
 /** Build the substitution map. Pure — easy to unit-test. */
 export function buildTemplateVars(v: TemplateVars): Record<string, string> {
   const safeTitle = escapeHtml(v.projectName);
@@ -80,6 +161,9 @@ export function buildTemplateVars(v: TemplateVars): Record<string, string> {
     '{{JS_TITLE}}': jsEscape(v.projectName),
     '{{PROJECT_GUID}}': v.projectGuid,
     '{{DATABASE}}': slug,
+    '{{HEAD_BLOCK}}': buildHeadBlock(v),
+    // Legacy per-tag placeholders — current templates carry only {{HEAD_BLOCK}},
+    // but older local template copies may still reference these.
     '{{DESCRIPTION_META}}': v.description ? `\n  <meta name="description" content="${safeDesc}">` : '',
     '{{OG_DESCRIPTION}}': v.description ? `\n  <meta property="og:description" content="${safeDesc}">` : '',
     '{{JSON_LD_BLOCK}}': `<script type="application/ld+json">\n${jsonLd}\n  </script>`,
