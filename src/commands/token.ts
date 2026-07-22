@@ -5,7 +5,12 @@ import { run, printList } from '../helpers/index.js';
 
 export const tokenCommand = new Command('token')
   .description('Manage API tokens')
-  .addHelpText('after', '\nLong-lived agent API tokens (gip_at_*) for headless agents and CI.');
+  .addHelpText('after', `
+Long-lived agent API tokens (gip_at_*) for headless agents and CI - they drive
+the gipity CLI as YOU.
+
+To let a script or cron write to one app instead, mint a project API key:
+gipity key create "my script" --role editor (sent as X-Api-Key).`);
 
 interface TokenInfo {
   short_guid: string;

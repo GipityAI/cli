@@ -11,6 +11,7 @@ import { getAuth, sessionExpired } from './auth.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { tokenCommand } from './commands/token.js';
+import { keyCommand } from './commands/key.js';
 import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { syncCommand } from './commands/sync.js';
@@ -144,7 +145,7 @@ program.enablePositionalOptions();
 // actually use them - orient, build, wire the backend, then everything else.
 const startGroup     = [statusCommand, initCommand, skillCommand, projectCommand];
 const buildGroup     = [addCommand, removeCommand, saveCommand, loadCommand, deployCommand, pageCommand, testCommand];
-const backendGroup   = [dbCommand, fnCommand, secretsCommand, logsCommand, jobCommand, workflowCommand];
+const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCommand, jobCommand, workflowCommand];
 const servicesGroup  = [serviceCommand, generateCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
 const gipGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, gmailCommand];
@@ -181,6 +182,7 @@ const SKILL_DOCS: Record<string, string> = {
   notify: 'app-notify',
   payments: 'app-payments',
   records: 'app-records',
+  key: 'app-auth',
   realtime: 'app-realtime',
   job: 'jobs',
   sandbox: 'sandbox-tools',

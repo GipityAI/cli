@@ -1,5 +1,6 @@
 import { Command } from 'commander';
-import { get, post, put, patch, del } from '../api.js';
+import { get, post, put, patch, del, publicRequest, mintAppToken } from '../api.js';
+import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { bold, muted } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
@@ -11,6 +12,37 @@ import { confirm } from '../utils.js';
 // /projects/<guid>/records mirror.)
 export const recordsCommand = new Command('records')
   .description('Manage app records (Gipity Records - validated CRUD with audit history)');
+
+const ANON_FLAG = '--anon';
+const ANON_HELP =
+  'Call as an anonymous visitor (the public path a signed-out user hits) instead of as your signed-in account';
+
+/** One HTTP surface for every records subcommand, so `--anon` is a persona
+ *  switch rather than a different code path. Anonymous calls mint the same
+ *  short-lived app token the browser SDK uses and send no owner credentials -
+ *  this is exactly what a signed-out visitor's request looks like, so a 401 here
+ *  is the true answer for an auth-gated table. The persona goes to stderr so
+ *  stdout stays parseable; without it, "verify the anonymous path" silently runs
+ *  as the owner and the public path never gets exercised. */
+async function recordsHttp(opts: { anon?: boolean }) {
+  const config = requireConfig();
+  if (!opts.anon) {
+    const who = getAuth()?.email;
+    console.error(muted(`Auth: calling as ${who ?? 'your signed-in account'} (the owner persona; use ${ANON_FLAG} for the public visitor path)`));
+    return { guid: config.projectGuid, get, post, put, patch, del };
+  }
+
+  console.error(muted('Auth: anonymous visitor (the public path a signed-out user hits)'));
+  const headers = await mintAppToken(config.projectGuid);
+  return {
+    guid: config.projectGuid,
+    get: <T>(path: string) => publicRequest<T>('GET', path, undefined, headers),
+    post: <T>(path: string, body?: unknown) => publicRequest<T>('POST', path, body, headers),
+    put: <T>(path: string, body?: unknown) => publicRequest<T>('PUT', path, body, headers),
+    patch: <T>(path: string, body?: unknown) => publicRequest<T>('PATCH', path, body, headers),
+    del: <T>(path: string, body?: unknown) => publicRequest<T>('DELETE', path, body, headers),
+  };
+}
 
 recordsCommand
   .command('list')
@@ -66,9 +98,10 @@ recordsCommand
   .option('--limit <n>', 'Max rows', '20')
   .option('--offset <n>', 'Offset', '0')
   .option('--fields <fields>', 'Comma-separated column names')
+  .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, opts) => run('Query', async () => {
-    const config = requireConfig();
+    const api = await recordsHttp(opts);
     const params = new URLSearchParams();
     if (opts.filter) params.set('filter', opts.filter);
     if (opts.sort) params.set('sort', opts.sort);
@@ -76,8 +109,8 @@ recordsCommand
     params.set('offset', opts.offset);
     if (opts.fields) params.set('fields', opts.fields);
 
-    const res = await get<{ data: any[]; meta: { total: number } }>(
-      `/api/${config.projectGuid}/records/${table}?${params}`,
+    const res = await api.get<{ data: any[]; meta: { total: number } }>(
+      `/api/${api.guid}/records/${table}?${params}`,
     );
 
     if (opts.json) {
@@ -95,25 +128,30 @@ recordsCommand
 recordsCommand
   .command('get <table> <id>')
   .description('Get a record')
+  .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, id: string, opts) => run('Get', async () => {
-    const config = requireConfig();
-    const res = await get<{ data: any }>(`/api/${config.projectGuid}/records/${table}/${id}`);
+    const api = await recordsHttp(opts);
+    const res = await api.get<{ data: any }>(`/api/${api.guid}/records/${table}/${id}`);
     console.log(opts.json ? JSON.stringify(res.data) : JSON.stringify(res.data, null, 2));
   }));
 
 recordsCommand
-  .command('history <table> <id>')
-  .description('Audit history for a record (who/what changed it, with English summaries)')
+  .command('history <table> [id]')
+  .description('Audit history (who/what changed it, with English summaries). Omit <id> for the whole table\'s feed.')
   .option('--limit <n>', 'Max events', '20')
+  .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
-  .action((table: string, id: string, opts) => run('History', async () => {
-    const config = requireConfig();
-    const res = await get<{ data: any[] }>(
-      `/api/${config.projectGuid}/records/${table}/${id}/history?limit=${encodeURIComponent(opts.limit)}`,
+  .action((table: string, id: string | undefined, opts) => run('History', async () => {
+    const api = await recordsHttp(opts);
+    // Table-wide feed when no id is given - the same endpoint an activity/history
+    // view reads, so verifying it needs no hand-built HTTP call.
+    const scope = id ? `${table}/${encodeURIComponent(id)}` : table;
+    const res = await api.get<{ data: any[] }>(
+      `/api/${api.guid}/records/${scope}/history?limit=${encodeURIComponent(opts.limit)}`,
     );
 
-    printList(res.data, opts, 'No history for this record.', e => {
+    printList(res.data, opts, id ? 'No history for this record.' : `No history for "${table}".`, e => {
       const summary = e.detail?.summary || `${e.action} ${e.entity_type} ${e.entity_id}`;
       return `${muted(e.created_at)}  ${bold(e.source || '-')}  ${summary}`;
     });
@@ -123,11 +161,12 @@ recordsCommand
   .command('create <table>')
   .description('Create a record')
   .requiredOption('--data <json>', 'JSON object with field values')
+  .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, opts) => run('Create', async () => {
-    const config = requireConfig();
+    const api = await recordsHttp(opts);
     const data = JSON.parse(opts.data);
-    const res = await post<{ data: any }>(`/api/${config.projectGuid}/records/${table}`, data);
+    const res = await api.post<{ data: any }>(`/api/${api.guid}/records/${table}`, data);
     printResult(`Created: ${JSON.stringify(res.data)}`, opts, res.data);
   }));
 
@@ -135,23 +174,26 @@ recordsCommand
   .command('update <table> <id>')
   .description('Update a record')
   .requiredOption('--data <json>', 'JSON object with fields to update')
+  .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, id: string, opts) => run('Update', async () => {
-    const config = requireConfig();
+    const api = await recordsHttp(opts);
     const data = JSON.parse(opts.data);
-    const res = await put<{ data: any }>(`/api/${config.projectGuid}/records/${table}/${id}`, data);
+    const res = await api.put<{ data: any }>(`/api/${api.guid}/records/${table}/${id}`, data);
     printResult(`Updated: ${JSON.stringify(res.data)}`, opts, res.data);
   }));
 
 recordsCommand
   .command('delete <table> <id>')
   .description('Delete a record')
-  .action((table: string, id: string) => run('Delete', async () => {
+  .option(ANON_FLAG, ANON_HELP)
+  .option('--json', 'Output as JSON')
+  .action((table: string, id: string, opts) => run('Delete', async () => {
     if (!await confirm(`Delete record ${id} from "${table}"?`)) {
-      console.log('Cancelled.');
+      printResult('Cancelled.', opts, { table, id, deleted: false, cancelled: true });
       return;
     }
-    const config = requireConfig();
-    await del(`/api/${config.projectGuid}/records/${table}/${id}`);
-    printResult('Deleted.', { json: false });
+    const api = await recordsHttp(opts);
+    const res = await api.del<{ data?: any }>(`/api/${api.guid}/records/${table}/${id}`);
+    printResult('Deleted.', opts, res?.data ?? { table, id, deleted: true });
   }));

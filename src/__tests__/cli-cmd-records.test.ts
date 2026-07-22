@@ -96,3 +96,55 @@ test('gipity records delete --yes calls DELETE', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Deleted/);
 });
+
+// Every records subcommand takes --json - a scripted probe sequence
+// (create → update → delete → history) must not break on one step that lacks it.
+test('gipity records delete --json emits parseable JSON, not a help dump', async () => {
+  mock.reset();
+  mock.on('DELETE /api/p_TestProj/records/incidents/42', { body: { data: { id: 42, deleted: true } } });
+  const r = await fresh(['--yes', 'records', 'delete', 'incidents', '42', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /unknown option/);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), { id: 42, deleted: true });
+});
+
+// Table-wide feed: `history <table>` with no id, the endpoint an activity view reads.
+test('gipity records history <table> with no id reads the table-wide feed', async () => {
+  mock.reset();
+  mock.on('GET /api/p_TestProj/records/incidents/history', { body: { data: [
+    { created_at: '2026-07-22T20:00:00Z', source: 'api', detail: { summary: 'created incident "Disk full"' } },
+  ] } });
+  const r = await fresh(['records', 'history', 'incidents']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /created incident "Disk full"/);
+});
+
+// --anon exercises the signed-out visitor path: an app token is minted and no
+// owner Authorization header is sent.
+test('gipity records query --anon mints an app token and sends no owner auth', async () => {
+  mock.reset();
+  let sawAuthHeader: unknown = 'unset';
+  mock.on('POST /api/token', { body: { data: { token: 'app_tok_123' } } });
+  mock.on('GET /api/p_TestProj/records/incidents', (req: any) => {
+    sawAuthHeader = req.headers.authorization ?? null;
+    assert.equal(req.headers['x-app-token'], 'app_tok_123');
+    return { body: { data: [{ id: 1, title: 'Public row' }], meta: { total: 1 } } };
+  });
+  const r = await fresh(['records', 'query', 'incidents', '--anon']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(sawAuthHeader, null, 'anonymous call must not carry the owner Bearer token');
+  assert.match(r.stdout, /Public row/);
+  assert.match(r.stderr, /anonymous visitor/);
+});
+
+test('gipity records create --anon posts through the public path', async () => {
+  mock.reset();
+  mock.on('POST /api/token', { body: { data: { token: 'app_tok_123' } } });
+  mock.on('POST /api/p_TestProj/records/incidents', (req: any) => {
+    assert.equal(req.headers.authorization, undefined);
+    return { status: 201, body: { data: { id: 7, title: 'From a visitor' } } };
+  });
+  const r = await fresh(['records', 'create', 'incidents', '--data', '{"title":"From a visitor"}', '--anon', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), { id: 7, title: 'From a visitor' });
+});

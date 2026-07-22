@@ -9,7 +9,7 @@ import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 import { timestampSlug, defaultFilename, augmentSandboxTimeout } from '../commands/page-screenshot.js';
 import {
   summarizeExpr, evalWorkBudgetMs, pollEvalResult, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
-  capScriptBudgetMs, budgetOverrunHint, isEmptyStateResult,
+  capScriptBudgetMs, budgetOverrunHint, navigationAbortHint, isEmptyStateResult,
   EVAL_SCRIPT_BUDGET_MS, EVAL_SCRIPT_BUDGET_CAMERA_MS, EVAL_SCRIPT_BUDGET_MAX_MS,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
@@ -312,6 +312,17 @@ test('budgetOverrunHint names --timeout, and stops recommending it at the max', 
   assert.match(atMax!, /--wait-for/);
   // Unrelated failures are never editorialized.
   assert.equal(budgetOverrunHint('404 Not Found', 30_000), null);
+});
+
+// The server's abort message says "split the check into two evals" - advice that
+// silently defeats a persistence check, since each call is a fresh browser profile.
+// The CLI must name --reload, the one primitive that actually verifies a restore.
+test('navigationAbortHint points a reload-aborted eval at --reload', () => {
+  const hint = navigationAbortHint('The page navigated or reloaded while your script was still running, so its result was lost.');
+  assert.match(hint!, /--reload/);
+  assert.match(hint!, /empty storage/);
+  // Unrelated failures are never editorialized.
+  assert.equal(navigationAbortHint('Your script was still running after its 30s in-page budget'), null);
 });
 
 test('gipity page eval appends the --timeout hint to a server budget overrun', async () => {
@@ -1824,7 +1835,7 @@ test('assertLocalAsset says so plainly when the file is nowhere, and passes an e
 // frame count, the verdict is the same and the suspects are the frame or the app.
 test('slowRenderMessage on a camera run reports frames seen and refuses to escalate', () => {
   for (const [fps, waitMs, frames] of [[0.8, 9000, /7 frames/], [5, 15_000, /75 frames/]] as const) {
-    const msg = slowRenderMessage(fps, { camera: true, waitMs });
+    const msg = slowRenderMessage(fps, { camera: true, waitMs })!;
     assert.match(msg, frames);                       // fps × wait — what the model actually saw
     assert.match(msg, /Do not escalate the wait/);
     assert.doesNotMatch(msg, /raise --wait/);        // the advice that burned the agent that filed this
@@ -1833,9 +1844,22 @@ test('slowRenderMessage on a camera run reports frames seen and refuses to escal
 });
 
 test('slowRenderMessage without a camera keeps the animation-clock advice', () => {
-  const msg = slowRenderMessage(2, { camera: false, waitMs: 500 });
+  const msg = slowRenderMessage(2, { camera: false, waitMs: 500 })!;
   assert.match(msg, /core\.advance/);
   assert.doesNotMatch(msg, /frames/);
+});
+
+// "Step the app's own loop deterministically instead" is a remediation for a
+// mistake a script that already calls core.advance() is not making — printing it
+// four times in a run taught the agent nothing and read as an unfixed problem.
+test('slowRenderMessage says nothing when the script already steps the loop itself', () => {
+  const stepping = "await core.whenReady(); core.advance(2); document.querySelectorAll('.block').length";
+  assert.equal(slowRenderMessage(2, { camera: false, waitMs: 500, script: stepping }), null);
+  assert.equal(slowRenderMessage(2, { camera: false, waitMs: 500, script: "(await import('./js/config.js')).advance(3)" }), null);
+  // A wall-clock script still gets the advice — that is who it is for.
+  assert.match(slowRenderMessage(2, { camera: false, waitMs: 500, script: 'await new Promise(r => setTimeout(r, 2000))' })!, /core\.advance/);
+  // A camera run has no loop to step, so its own message is never suppressed.
+  assert.match(slowRenderMessage(2, { camera: true, waitMs: 500, script: 'core.advance(2)' })!, /Do not escalate the wait/);
 });
 
 // When the client DOES give up, the message must not send the caller at --wait.

@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { get, post, del, publicPost } from '../api.js';
+import { get, post, del, publicPost, mintAppToken } from '../api.js';
 import { getAuth } from '../auth.js';
 import { requireConfig, resolveApiBase } from '../config.js';
 import { error as clrError, bold, muted, success, warning } from '../colors.js';
@@ -68,15 +68,10 @@ fnCommand
  *  auth-gated function — the server's message is surfaced as-is, with no
  *  "run: gipity login" misdirection. */
 async function callAnon(projectGuid: string, name: string, body: unknown): Promise<{ data: any }> {
-  let appToken: string | undefined;
-  try {
-    const minted = await publicPost<{ data: { token: string } }>('/api/token', { app: projectGuid });
-    appToken = minted.data.token;
-  } catch { /* public functions work without a token; auth-gated ones will 401 with the real reason */ }
   return publicPost<{ data: any }>(
     `/api/${projectGuid}/fn/${encodeURIComponent(name)}`,
     body,
-    appToken ? { 'X-App-Token': appToken } : undefined,
+    await mintAppToken(projectGuid),
   );
 }
 
