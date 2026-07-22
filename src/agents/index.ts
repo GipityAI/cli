@@ -7,6 +7,7 @@ import type { RemoteAgentAdapter } from './types.js';
 import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
 import { grokAdapter } from './grok.js';
+import { agyAdapter } from './agy.js';
 
 export type { RemoteAgentAdapter, HeadlessArgsOpts } from './types.js';
 
@@ -15,6 +16,7 @@ export const AGENT_ADAPTERS: RemoteAgentAdapter[] = [
   claudeCodeAdapter,
   codexAdapter,
   grokAdapter,
+  agyAdapter,
 ];
 
 export const AGENT_KEYS = AGENT_ADAPTERS.map(a => a.key);

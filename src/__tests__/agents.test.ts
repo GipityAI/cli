@@ -11,8 +11,8 @@ import assert from 'node:assert/strict';
 import { AGENT_ADAPTERS, AGENT_KEYS, getAdapter, getAdapterBySource } from '../agents/index.js';
 
 describe('agent adapter registry', () => {
-  it('exposes claude, codex, grok in picker order (claude first = default)', () => {
-    assert.deepEqual(AGENT_KEYS, ['claude', 'codex', 'grok']);
+  it('exposes claude, codex, grok, agy in picker order (claude first = default)', () => {
+    assert.deepEqual(AGENT_KEYS, ['claude', 'codex', 'grok', 'agy']);
   });
 
   it('maps CLI keys and server sources to the same adapters', () => {
@@ -20,6 +20,7 @@ describe('agent adapter registry', () => {
     assert.equal(getAdapterBySource('claude_code').key, 'claude');
     assert.equal(getAdapterBySource('codex').key, 'codex');
     assert.equal(getAdapterBySource('grok').key, 'grok');
+    assert.equal(getAdapterBySource('agy').key, 'agy');
   });
 
   it('throws loudly on unknown keys/sources (no silent Claude fallback)', () => {
@@ -113,5 +114,50 @@ describe('grok argv', () => {
   it('session id comes from ACP session/update params', () => {
     assert.equal(grok.sessionIdFromStreamEvent({ method: 'session/update', params: { sessionId: 's9' } }), 's9');
     assert.equal(grok.sessionIdFromStreamEvent({}), null);
+  });
+});
+
+describe('agy argv', () => {
+  const agy = getAdapter('agy');
+
+  it('fresh headless run passes --new-project (never bare cwd)', () => {
+    assert.deepEqual(
+      agy.buildHeadlessArgs({ message: 'do it', bypassApprovals: true }),
+      ['-p', 'do it', '--new-project', '--dangerously-skip-permissions'],
+    );
+  });
+
+  it('resume passes --conversation <id>, never --continue', () => {
+    const args = agy.buildHeadlessArgs({ message: 'more', resume: 'conv-1' });
+    assert.deepEqual(args, ['-p', 'more', '--conversation', 'conv-1']);
+  });
+
+  it('translates a known LLM_MODELS canonical id to agy\'s spaced display string', () => {
+    const args = agy.buildHeadlessArgs({ message: 'm', model: 'gemini-3.1-pro-preview', bypassApprovals: true });
+    assert.deepEqual(args, ['-p', 'm', '--new-project', '--model', 'Gemini 3.1 Pro (High)', '--dangerously-skip-permissions']);
+  });
+
+  it('passes an unrecognized model string straight through (agy\'s own format, or agy rejects it)', () => {
+    const args = agy.buildHeadlessArgs({ message: 'm', model: 'Gemini 3.1 Pro (High)' });
+    assert.deepEqual(args, ['-p', 'm', '--new-project', '--model', 'Gemini 3.1 Pro (High)']);
+  });
+
+  it('interactive argv mirrors the fresh/resume + model rules', () => {
+    assert.deepEqual(agy.buildInteractiveArgs({}), ['--new-project']);
+    assert.deepEqual(agy.buildInteractiveArgs({ resume: 'conv-2' }), ['--conversation', 'conv-2']);
+    assert.deepEqual(
+      agy.buildInteractiveArgs({ model: 'gemini-3.5-flash' }),
+      ['--new-project', '--model', 'Gemini 3.5 Flash (Medium)'],
+    );
+  });
+
+  it('has no JSON stream to read a session id from', () => {
+    assert.equal(agy.sessionIdFromStreamEvent({ conversationId: 'x' }), null);
+    assert.equal(agy.daemonStreamCapture, false);
+  });
+
+  it('hooks fire in both interactive and headless mode', () => {
+    assert.equal(agy.hooksSupportedOnPlatform('darwin'), true);
+    assert.equal(agy.hooksSupportedOnPlatform('linux'), true);
   });
 });
