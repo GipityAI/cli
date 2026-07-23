@@ -19,7 +19,10 @@ import { confirm, getAutoConfirm } from '../utils.js';
 import { bold, brand, dim, success, error as clrError, muted } from '../colors.js';
 import * as relayState from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
-import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, stripGipityHooks, grokInstallState, agentSkillsState, AGENTS_SKILLS_DIR } from '../setup.js';
+import {
+  GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, stripGipityHooks, grokInstallState,
+  agentSkillsState, AGENTS_SKILLS_DIR, agySkillsState, AGY_SKILLS_DIR,
+} from '../setup.js';
 
 /** Remove Gipity's entries from the user-scope Claude Code settings: the
  *  plugin enablement, the marketplace registration, and any legacy hook
@@ -210,6 +213,17 @@ export const uninstallCommand = new Command('uninstall')
         try { rmSync(join(AGENTS_SKILLS_DIR, name), { recursive: true, force: true }); } catch { /* best-effort */ }
       }
       console.log(`${success(`Removed ${agentSkills.skills.length} Gipity skills from ~/.agents/skills.`)}`);
+    }
+
+    // 4c. Remove the skills the CLI copied into Antigravity's own global
+    //     skill root (~/.gemini/config/skills - a different directory from
+    //     Codex's ~/.agents/skills, see setup.ts).
+    const agySkills = agySkillsState();
+    if (agySkills.skills.length) {
+      for (const name of agySkills.skills) {
+        try { rmSync(join(AGY_SKILLS_DIR, name), { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+      console.log(`${success(`Removed ${agySkills.skills.length} Gipity skills from ~/.gemini/config/skills.`)}`);
     }
 
     // 5. Wipe ~/.gipity/ (this also removes the agent-hooks scripts and the

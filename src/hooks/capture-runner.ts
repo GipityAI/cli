@@ -478,9 +478,10 @@ async function handleSessionEnd(convGuid: string, src: CaptureSource, hook: Hook
   if (hook.session_id) deleteSessionMap(hook.session_id);
 }
 
-// Codex has no SessionEnd hook, so its capture-state/session-map files are
-// never cleaned by handleSessionEnd. Sweep anything stale on the way through
-// - the files are tiny, so a generous TTL is fine; a live session's state is
+// Codex and agy have no SessionEnd-equivalent hook, so their capture-state/
+// session-map files are never cleaned by handleSessionEnd. Sweep anything
+// stale on the way through - the files are tiny, so a generous TTL is fine; a
+// live session's state is
 // rewritten on every flush and never gets this old.
 const STATE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -548,8 +549,8 @@ async function main(): Promise<void> {
     if (derived) hook.transcript_path = derived;
   }
 
-  // Opportunistic hygiene: Codex never fires session-end, so its state
-  // files are TTL-swept instead of deleted at end-of-session.
+  // Opportunistic hygiene: Codex and agy never fire session-end, so their
+  // state files are TTL-swept instead of deleted at end-of-session.
   sweepStaleState();
 
   const convGuid = await resolveConvGuid(hook, src.serverSource);

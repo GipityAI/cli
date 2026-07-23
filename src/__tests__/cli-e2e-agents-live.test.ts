@@ -79,7 +79,7 @@ function binaryOnPath(bin: string): boolean {
 }
 
 interface AgentSpec {
-  key: 'claude' | 'codex' | 'grok';
+  key: 'claude' | 'codex' | 'grok' | 'agy';
   binary: string;
   source: string;
   /** argv for a bare terminal run of `prompt` inside the project; null when
@@ -121,6 +121,16 @@ const AGENTS: AgentSpec[] = [
     terminalArgs: null,
     terminalViaBuild: true,
   },
+  {
+    key: 'agy',
+    binary: 'agy',
+    source: 'agy',
+    // Unlike Grok, agy fires hooks in headless -p too (verified live) - no
+    // launcher indirection needed. --new-project binds a fresh session to
+    // cwd (a bare launch silently mis-binds to agy's own config dir instead,
+    // confirmed live - see cli/src/agents/agy.ts).
+    terminalArgs: (prompt) => ['-p', prompt, '--new-project', '--dangerously-skip-permissions'],
+  },
 ];
 
 /** Claude-format hook entries invoking this checkout's runner. Used verbatim
@@ -135,6 +145,42 @@ function hookEntries(source: string): Record<string, unknown> {
   };
   if (source === 'claude-code') hooks['SessionEnd'] = group('session-end');
   return hooks;
+}
+
+/** agy needs an exact JSON reply on stdout for every hook (unlike the other
+ *  three agents, which tolerate empty output) - this tiny wrapper satisfies
+ *  that contract while calling straight into THIS CHECKOUT's runner, mirroring
+ *  how hookEntries() above bypasses the installed CLI for claude/codex/grok.
+ *  No PreToolUse here (deliberately not wired - see cli/src/setup.ts's
+ *  applyAgyHooks() comment: a PreToolUse "allow" would override agy's own
+ *  approval prompt for every tool, not just writes). Production ships the
+ *  PostToolUse/Stop equivalent as AGY_HOOKS_SCRIPT in cli/src/setup.ts. */
+function writeAgyWrapper(dir: string): string {
+  const path = join(dir, 'agy-e2e-wrapper.cjs');
+  writeFileSync(path, [
+    "const { spawnSync } = require('child_process');",
+    "let data = '';",
+    "process.stdin.setEncoding('utf-8');",
+    "process.stdin.on('data', (c) => { data += c; });",
+    "process.stdin.on('end', () => {",
+    "  const event = process.argv[2];",
+    `  spawnSync(${JSON.stringify(NODE)}, [${JSON.stringify(RUNNER)}, 'agy', event], { input: data, stdio: ['pipe', 'ignore', 'ignore'] });`,
+    "  process.stdout.write('{}');",
+    '});',
+  ].join('\n'));
+  return path;
+}
+
+/** agy's own hooks.json shape: a named-block object, tool-scoped events need a
+ *  `matcher`. See cli/src/setup.ts's applyAgyHooks() for the production version. */
+function agyHooksJson(wrapperPath: string): Record<string, unknown> {
+  const cmd = (event: string) => `"${NODE}" "${wrapperPath}" ${event}`;
+  return {
+    gipity: {
+      PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: cmd('post-tool-use'), timeout: 60 }] }],
+      Stop: [{ hooks: [{ type: 'command', command: cmd('stop'), timeout: 60 }] }],
+    },
+  };
 }
 
 describe('cli-e2e-agents-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, () => {
@@ -252,6 +298,14 @@ describe('cli-e2e-agents-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run
     // codex project hooks (this checkout's runner; overwrites init's version).
     mkdirSync(join(projectDir, '.codex'), { recursive: true });
     writeFileSync(join(projectDir, '.codex', 'hooks.json'), JSON.stringify({ hooks: hookEntries('codex') }, null, 2));
+
+    // agy project hooks (this checkout's runner via a small wrapper - agy
+    // requires an exact JSON reply per hook, unlike the other three agents).
+    if (binaryOnPath('agy')) {
+      const agyWrapper = writeAgyWrapper(projectDir);
+      mkdirSync(join(projectDir, '.agents'), { recursive: true });
+      writeFileSync(join(projectDir, '.agents', 'hooks.json'), JSON.stringify(agyHooksJson(agyWrapper), null, 2));
+    }
 
     // grok throwaway plugin (Claude-format hooks, absolute commands).
     if (binaryOnPath('grok')) {

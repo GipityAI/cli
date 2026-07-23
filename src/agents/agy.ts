@@ -75,8 +75,8 @@ export const agyAdapter: RemoteAgentAdapter = {
     return null;
   },
 
-  hooksSupportedOnPlatform() {
-    return true;
+  hooksSupportedOnPlatform(platform) {
+    return platform !== 'win32'; // agy's hooks.json wiring is POSIX-only, like Codex's
   },
 
   // No stream-json ingest mapper for agy: hook capture carries the full

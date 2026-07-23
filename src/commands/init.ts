@@ -34,7 +34,7 @@ function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
 
 export const initCommand = new Command('init')
   .description('Link this directory to a project')
-  .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on this machine (Claude Code, Codex, Grok).')
+  .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on this machine (Claude Code, Codex, Grok, Antigravity).')
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
   .option('--no-capture', 'Don\'t record Claude Code sessions in this directory to your Gipity project (sets captureHooks: false in .gipity.json)')
@@ -198,7 +198,7 @@ Working with an existing Gipity project:
 
       console.log(success(`Wrote primer files: ${primerSummary}.`));
       if (wantsClaude) {
-        console.log(success('Ready! Run your coding agent here (claude, codex, grok), or `gipity build` to launch one with a picker.'));
+        console.log(success('Ready! Run your coding agent here (claude, codex, grok, agy), or `gipity build` to launch one with a picker.'));
         // Recording happens by default (however Claude Code is launched), so
         // say so up front - consent should be explicit, not discovered later.
         if (opts.capture === false) {

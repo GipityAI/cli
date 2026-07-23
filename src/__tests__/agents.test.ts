@@ -156,8 +156,9 @@ describe('agy argv', () => {
     assert.equal(agy.daemonStreamCapture, false);
   });
 
-  it('hooks fire in both interactive and headless mode', () => {
+  it('hooks fire in both interactive and headless mode (POSIX only, like Codex)', () => {
     assert.equal(agy.hooksSupportedOnPlatform('darwin'), true);
     assert.equal(agy.hooksSupportedOnPlatform('linux'), true);
+    assert.equal(agy.hooksSupportedOnPlatform('win32'), false);
   });
 });

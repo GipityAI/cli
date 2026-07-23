@@ -1037,7 +1037,7 @@ async function pickAgent(lastUsed: string | undefined): Promise<string> {
     // agent installs it, or fails with the install hint at that point).
     const notes: string[] = [];
     if (a.key === lastUsed) notes.push('last used');
-    if (a.key === 'codex' && !a.hooksSupportedOnPlatform(process.platform)) {
+    if ((a.key === 'codex' || a.key === 'agy') && !a.hooksSupportedOnPlatform(process.platform)) {
       notes.push('session recording unavailable on Windows');
     }
     const note = notes.length ? `  ${muted(`(${notes.join(', ')})`)}` : '';

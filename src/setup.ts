@@ -34,6 +34,7 @@ export const PRIMER_FILES = {
   claude: 'CLAUDE.md',
   codex: 'AGENTS.md',
   grok: 'AGENTS.md', // Grok Build reads the AGENTS.md family (and CLAUDE.md) natively
+  agy: 'AGENTS.md', // Antigravity reads the same AGENTS.md/GEMINI.md rules family natively
   aider: 'AGENTS.md', // shares the Codex primer; aider is pointed at it via .aider.conf.yml
   gemini: 'GEMINI.md',
   copilot: '.github/copilot-instructions.md',
@@ -63,7 +64,7 @@ export const AIDER_CONF_FILE = '.aider.conf.yml';
 export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', '.gipityscratch/'];
 
 export const DEFAULT_SYNC_IGNORE = [
-  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.codex/', '.gitignore', AIDER_CONF_FILE,
+  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.codex/', '.agents/', '.gitignore', AIDER_CONF_FILE,
   // Home-directory junk: a project created inside a real home dir (or one that
   // shells out) sweeps in a cache dir + shell dotfiles that are never app
   // files. `.cache/` alone can be gigabytes (it was 2.4 GB on one project),
@@ -411,9 +412,17 @@ export const AGENT_HOOKS_DIR = join(homedir(), '.gipity', 'agent-hooks');
  *  removes precisely those. */
 export const AGENT_SKILLS_MANIFEST = join(homedir(), '.gipity', 'agent-skills.json');
 
-export function agentSkillsState(): { current: boolean; skills: string[] } {
+// Antigravity (agy) reads skills from its own global customization root,
+// ~/.gemini/config/skills/ (confirmed against agy's own customization-system
+// docs) - NOT the cross-agent ~/.agents/skills Codex/OpenClaw-family tools
+// share. Same manifest pattern, separate directory + file so upgrades and
+// uninstall touch exactly the skills each tool actually reads.
+export const AGY_SKILLS_DIR = join(homedir(), '.gemini', 'config', 'skills');
+export const AGY_SKILLS_MANIFEST = join(homedir(), '.gipity', 'agy-skills.json');
+
+function skillsManifestState(manifestPath: string): { current: boolean; skills: string[] } {
   try {
-    const m = JSON.parse(readFileSync(AGENT_SKILLS_MANIFEST, 'utf-8'));
+    const m = JSON.parse(readFileSync(manifestPath, 'utf-8'));
     return {
       current: typeof m?.version === 'string' && versionGte(m.version, GIPITY_PLUGIN_VERSION),
       skills: Array.isArray(m?.skills) ? m.skills : [],
@@ -423,14 +432,23 @@ export function agentSkillsState(): { current: boolean; skills: string[] } {
   }
 }
 
-/** Materialize the Gipity skills into ~/.agents/skills (the cross-agent skills
- *  dir Codex reads) and the plugin's hook scripts into ~/.gipity/agent-hooks.
- *  Source of truth is the same GipityAI/skills repo the Claude/Grok plugin
- *  installs clone - fetched with a shallow git clone into a temp dir.
- *  Best-effort: no git, no network, or a failed clone all leave things as they
- *  were; the next init retries. */
-export function ensureAgentSkillsInstalled(): void {
-  if (agentSkillsState().current) return;
+export function agentSkillsState(): { current: boolean; skills: string[] } {
+  return skillsManifestState(AGENT_SKILLS_MANIFEST);
+}
+
+export function agySkillsState(): { current: boolean; skills: string[] } {
+  return skillsManifestState(AGY_SKILLS_MANIFEST);
+}
+
+/** Shared core: clone GipityAI/skills, copy every skill dir with a SKILL.md
+ *  into `skillsDir`, stage the plugin's hook scripts into ~/.gipity/agent-hooks
+ *  (shared infra - launch.sh/capture.cjs/sync-push.cjs are agent-agnostic, so
+ *  every caller re-stages them harmlessly), and record what was installed in
+ *  `manifestPath`. Source of truth is the same GipityAI/skills repo the
+ *  Claude/Grok plugin installs clone - fetched with a shallow git clone into a
+ *  temp dir. Best-effort: no git, no network, or a failed clone all leave
+ *  things as they were; the next init retries. */
+function installSkillsAndHooks(skillsDir: string, manifestPath: string, harnessLabel: string): void {
   if (!binaryOnPath('git')) return;
   const tmp = mkdtempSync(join(tmpdir(), 'gipity-skills-'));
   try {
@@ -453,8 +471,8 @@ export function ensureAgentSkillsInstalled(): void {
     for (const entry of readdirSync(skillsSrc, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       if (!existsSync(join(skillsSrc, entry.name, 'SKILL.md'))) continue;
-      mkdirSync(AGENTS_SKILLS_DIR, { recursive: true });
-      cpSync(join(skillsSrc, entry.name), join(AGENTS_SKILLS_DIR, entry.name), {
+      mkdirSync(skillsDir, { recursive: true });
+      cpSync(join(skillsSrc, entry.name), join(skillsDir, entry.name), {
         recursive: true,
         force: true,
       });
@@ -466,11 +484,24 @@ export function ensureAgentSkillsInstalled(): void {
       cpSync(join(repo, 'hooks', 'scripts', script), join(AGENT_HOOKS_DIR, script), { force: true });
     }
 
-    writeFileSync(AGENT_SKILLS_MANIFEST, JSON.stringify({ version, skills: names }, null, 2) + '\n');
-    console.log(`Installed ${names.length} Gipity skills for Codex (~/.agents/skills).`);
+    writeFileSync(manifestPath, JSON.stringify({ version, skills: names }, null, 2) + '\n');
+    console.log(`Installed ${names.length} Gipity skills for ${harnessLabel} (${skillsDir}).`);
   } catch { /* best-effort - never break setup */ } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+export function ensureAgentSkillsInstalled(): void {
+  if (agentSkillsState().current) return;
+  installSkillsAndHooks(AGENTS_SKILLS_DIR, AGENT_SKILLS_MANIFEST, 'Codex');
+}
+
+/** Materialize the Gipity skills into Antigravity's global skill root. Mirrors
+ *  ensureAgentSkillsInstalled() but targets agy's own directory - see the
+ *  AGY_SKILLS_DIR comment above for why it differs from Codex's. */
+export function ensureAgySkillsInstalled(): void {
+  if (agySkillsState().current) return;
+  installSkillsAndHooks(AGY_SKILLS_DIR, AGY_SKILLS_MANIFEST, 'Antigravity');
 }
 
 /** Pure core of the .codex/hooks.json merge: given the file's current content
@@ -547,6 +578,162 @@ export function setupCodexIntegration(): void {
   if (!binaryOnPath('codex')) return;
   ensureAgentSkillsInstalled();
   setupCodexHooks();
+}
+
+// --- Google Antigravity (agy) --------------------------------------------
+// agy's hook system is a real departure from the Claude-format hooks Codex
+// and Grok reuse: project hooks live in `.agents/hooks.json` as a NAMED-block
+// object (not a flat `hooks` key), tool-scoped events (PreToolUse/PostToolUse)
+// require a `matcher` regex, and every hook command must print a JSON object
+// on stdout.
+//
+// Deliberately NOT wired: PreToolUse. Gipity only needs to OBSERVE tool calls
+// (capture) and react after a write lands (sync-push) - it has no reason to
+// gate them. A PreToolUse hook that answers `{"decision":"allow"}` genuinely
+// overrides agy's own approval prompt (confirmed against agy's own hooks
+// contract: `"allow"` means "automatically allow the tool execution"), so
+// registering one would auto-approve every tool agy runs - including shell
+// commands - in every Gipity-linked project, in BOTH headless and interactive
+// sessions. Confirmed live that headless `-p` writes succeed with no
+// PreToolUse hook at all, with or without `--dangerously-skip-permissions` -
+// so there is no capture/sync reason to have one, and Claude/Codex don't
+// silently touch agent approval either. PostToolUse/Stop route through a
+// small wrapper script (AGY_HOOKS_SCRIPT below) that does the real work
+// (sync-push + session capture) and then unconditionally prints `{}` - not
+// decision-gated, so degrading silently on a node-resolution failure is the
+// same acceptable risk every other harness's hooks already carry.
+
+/** Written verbatim into ~/.gipity/agent-hooks/agy-hooks.cjs by setupAgyHooks().
+ *  Unlike Codex's hook scripts (cloned from the GipityAI/skills repo), this
+ *  file is authored by the CLI itself - agy is not part of that repo's plugin
+ *  ecosystem, just a consumer of the same shared sync-push.cjs/capture.cjs.
+ *
+ *  post-tool-use: reads agy's PostToolUse payload (which - confirmed live -
+ *  carries `toolCall` directly, unlike agy's own docs suggest) and, for a
+ *  file-write tool, synthesizes a Claude-Code-shaped `{tool_input:{file_path}}`
+ *  payload for the UNMODIFIED sync-push.cjs (which only knows Claude/Grok's
+ *  field names) - then always forwards the raw payload to capture.cjs for
+ *  session mirroring (its normalizeHookInput already reads agy's camelCase
+ *  conversationId/transcriptPath fields).
+ *  stop: forwards the raw payload to capture.cjs for a final flush.
+ *  Either way, stdout is always `{}` - agy isn't gating on this response. */
+const AGY_HOOKS_SCRIPT = `#!/usr/bin/env node
+'use strict';
+const { spawnSync } = require('child_process');
+const { join } = require('path');
+
+const WRITE_TOOLS = new Set(['write_to_file', 'replace_file_content']);
+
+function readStdin() {
+  return new Promise((res) => {
+    let data = '';
+    process.stdin.setEncoding('utf-8');
+    process.stdin.on('data', (c) => { data += c; });
+    process.stdin.on('end', () => res(data));
+    process.stdin.on('error', () => res(data));
+  });
+}
+
+async function main() {
+  const event = process.argv[2];
+  const raw = await readStdin();
+  let payload = {};
+  try { payload = JSON.parse(raw); } catch { /* keep {} */ }
+
+  try {
+    if (event === 'post-tool-use') {
+      const toolCall = payload.toolCall;
+      const filePath = toolCall && toolCall.args && toolCall.args.TargetFile;
+      if (toolCall && WRITE_TOOLS.has(toolCall.name) && typeof filePath === 'string' && filePath) {
+        spawnSync(process.execPath, [join(__dirname, 'sync-push.cjs')], {
+          input: JSON.stringify({ tool_input: { file_path: filePath } }),
+          stdio: ['pipe', 'ignore', 'ignore'],
+          windowsHide: true,
+        });
+      }
+      spawnSync(process.execPath, [join(__dirname, 'capture.cjs'), 'agy', 'post-tool-use'], {
+        input: raw,
+        stdio: ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+      });
+    } else if (event === 'stop') {
+      spawnSync(process.execPath, [join(__dirname, 'capture.cjs'), 'agy', 'stop'], {
+        input: raw,
+        stdio: ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+      });
+    }
+  } catch { /* never let a side effect break the response below */ }
+
+  process.stdout.write('{}');
+}
+
+main();
+`;
+
+/** Pure core of the .agents/hooks.json merge for Antigravity (agy). Given the
+ *  file's current content (`null` when absent), return the new content, or
+ *  `null` when no change is needed. Our whole contribution lives under one
+ *  named key ('gipity'), so a re-run replaces it wholesale (simpler than
+ *  Codex's per-entry merge, and fine here since nothing else writes into this
+ *  key) while any other named hook block - the user's own, or another tool's -
+ *  is preserved untouched. Exported for unit testing. */
+export function applyAgyHooks(existing: string | null): string | null {
+  const wrapper = join(AGENT_HOOKS_DIR, 'agy-hooks.cjs');
+  const launcher = join(AGENT_HOOKS_DIR, 'launch.sh');
+  const wrapCmd = (event: string): string => `sh "${launcher}" "${wrapper}" ${event}`;
+
+  const block = {
+    PostToolUse: [
+      { matcher: '.*', hooks: [{ type: 'command', command: wrapCmd('post-tool-use'), timeout: 30 }] },
+    ],
+    Stop: [
+      { hooks: [{ type: 'command', command: wrapCmd('stop'), timeout: 60 }] },
+    ],
+  };
+
+  let settings: Record<string, any> = {};
+  if (existing !== null) {
+    try {
+      settings = JSON.parse(existing);
+    } catch {
+      return null; // user file we can't parse - leave it alone
+    }
+  }
+  if (JSON.stringify(settings.gipity ?? null) === JSON.stringify(block)) return null; // already current
+  settings.gipity = block;
+  return JSON.stringify(settings, null, 2) + '\n';
+}
+
+/** Write the project-level Antigravity hooks (.agents/hooks.json) and stage
+ *  the wrapper script it invokes. POSIX only, same constraint as Codex's
+ *  hooks (the commands run through a POSIX sh launcher). */
+export function setupAgyHooks(): void {
+  if (process.platform === 'win32') return;
+  const cwd = resolve(process.cwd());
+  if (cwd === resolve(homedir())) return; // never treat $HOME as a project
+  mkdirSync(AGENT_HOOKS_DIR, { recursive: true });
+  writeFileSync(join(AGENT_HOOKS_DIR, 'agy-hooks.cjs'), AGY_HOOKS_SCRIPT);
+
+  const path = join(cwd, '.agents', 'hooks.json');
+  const existing = existsSync(path) ? readFileSync(path, 'utf-8') : null;
+  const next = applyAgyHooks(existing);
+  if (next === null) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, next);
+  console.log(existing === null
+    ? 'Wrote Antigravity sync + session-capture hooks (.agents/hooks.json).'
+    : 'Updated Antigravity hooks (.agents/hooks.json).');
+}
+
+/** Full Antigravity integration: skills at its own global root + project sync
+ *  hooks. Gated on the agy binary so machines without it get only the
+ *  AGENTS.md primer. Unlike Codex, agy needs no one-time hook-approval nudge -
+ *  confirmed live that project hooks fire without any manual trust step. */
+export function setupAgyIntegration(): void {
+  if (!binaryOnPath('agy')) return;
+  ensureAgySkillsInstalled();
+  setupAgyHooks();
 }
 
 export function setupClaudeHooks(): void {
@@ -774,6 +961,7 @@ export const SUPPORTED_TOOLS: Array<{ key: string; label: string; setup: () => v
   { key: 'claude',  label: 'Claude Code (CLAUDE.md + Gipity plugin)',              setup: setupClaudeMd,  integrate: setupClaudeHooks },
   { key: 'codex',   label: 'OpenAI Codex (AGENTS.md + skills + sync hooks)',       setup: setupAgentsMd,  integrate: setupCodexIntegration },
   { key: 'grok',    label: 'Grok Build (AGENTS.md + Gipity plugin)',               setup: setupAgentsMd,  integrate: ensureGrokPluginInstalled },
+  { key: 'agy',     label: 'Antigravity (AGENTS.md + skills + sync hooks)',        setup: setupAgentsMd,  integrate: setupAgyIntegration },
   { key: 'aider',   label: 'Aider (AGENTS.md + .aider.conf.yml)',                  setup: setupAiderMd, optIn: true },
   { key: 'gemini',  label: 'Gemini CLI (GEMINI.md)',                               setup: setupGeminiMd },
   { key: 'copilot', label: 'GitHub Copilot (.github/copilot-instructions.md)',     setup: setupCopilotMd },
