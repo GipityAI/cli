@@ -687,8 +687,13 @@ export function applyAgyHooks(existing: string | null): string | null {
     PostToolUse: [
       { matcher: '.*', hooks: [{ type: 'command', command: wrapCmd('post-tool-use'), timeout: 30 }] },
     ],
+    // Stop (like PreInvocation/PostInvocation) is FLAT in agy's schema - a
+    // list of handler objects directly, NOT wrapped in a {matcher, hooks}
+    // group like PreToolUse/PostToolUse. Confirmed live: the wrapped shape
+    // silently invalidates the WHOLE named block (PostToolUse stopped firing
+    // too, not just Stop) - agy gives no parse error, it just never fires.
     Stop: [
-      { hooks: [{ type: 'command', command: wrapCmd('stop'), timeout: 60 }] },
+      { type: 'command', command: wrapCmd('stop'), timeout: 60 },
     ],
   };
 

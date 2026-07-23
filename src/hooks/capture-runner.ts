@@ -134,6 +134,12 @@ interface StateFile {
   // Wall-clock of the last successful flush. Used to throttle the
   // high-frequency PostToolUse trigger (see POST_TOOL_FLUSH_MS).
   last_flush_ms?: number;
+  // Whether the 'attach' entry (binds remote_session_id server-side, which
+  // is what makes resume work) has been sent for this session. Sent once,
+  // from whichever event fires first - agy has no SessionStart-equivalent
+  // event, so it can't rely on a specific event name the way Claude/Codex
+  // do (see ensureAttached).
+  attached?: boolean;
 }
 
 // PostToolUse fires after every tool call. We flush on it so a session that is
@@ -161,6 +167,7 @@ function readState(convGuid: string): StateFile | null {
     return {
       last_uuid: typeof parsed.last_uuid === 'string' ? parsed.last_uuid : null,
       last_flush_ms: typeof parsed.last_flush_ms === 'number' ? parsed.last_flush_ms : undefined,
+      attached: typeof parsed.attached === 'boolean' ? parsed.attached : undefined,
     };
   } catch {
     return null;
@@ -398,10 +405,20 @@ async function readWholeFile(path: string): Promise<string> {
   });
 }
 
-async function handleSessionStart(convGuid: string, hook: HookInput): Promise<void> {
+/** Bind the session_id to this conversation server-side (remote_session_id -
+ *  what makes resume work), once per conversation. Called for EVERY event,
+ *  not just SessionStart: Claude/Codex fire a real SessionStart hook, but
+ *  agy's event set has no equivalent (PreToolUse/PostToolUse/PreInvocation/
+ *  PostInvocation/Stop only) - and the dispatch path (GIPITY_CONVERSATION_GUID
+ *  env var) never touches resolveFromServer's own attach either, since it
+ *  short-circuits before that call. Idempotent both here (the `attached`
+ *  state flag) and server-side (attachRemoteSessionId only assigns when
+ *  remote_session_id IS NULL), so calling it redundantly for agents that DO
+ *  have a SessionStart event is harmless. */
+async function ensureAttached(convGuid: string, hook: HookInput): Promise<void> {
   if (!hook.session_id) return;
-  const existing = readState(convGuid);
-  if (!existing) writeState(convGuid, { last_uuid: null });
+  const state = readState(convGuid);
+  if (state?.attached) return;
 
   const entries: IngestEntry[] = [{
     kind: 'attach',
@@ -410,7 +427,8 @@ async function handleSessionStart(convGuid: string, hook: HookInput): Promise<vo
     source: 'startup',
     source_uuid: `${hook.session_id}-attach`,
   }];
-  await postEntries(convGuid, entries);
+  const ok = await postEntries(convGuid, entries);
+  if (ok) writeState(convGuid, { ...(state ?? { last_uuid: null }), attached: true });
 }
 
 async function handleStopFamily(
@@ -556,11 +574,12 @@ async function main(): Promise<void> {
   const convGuid = await resolveConvGuid(hook, src.serverSource);
   if (!convGuid) return; // not a Gipity-bound session - nothing to capture
 
+  await ensureAttached(convGuid, hook);
+
   try {
     switch (event) {
       case 'session-start':
-        await handleSessionStart(convGuid, hook);
-        break;
+        break; // ensureAttached above already covers what this event used to do
       case 'stop':
         await handleStopFamily(convGuid, src, hook, false);
         break;

@@ -268,6 +268,57 @@ describe('capture-runner self-arm (spawned end-to-end)', () => {
     }
   });
 
+  it('a dispatch-style run (env-bound conv, no SessionStart-equivalent event) still attaches the session id', async () => {
+    // Regression guard: agy's event set has no SessionStart/session-start
+    // equivalent (PreToolUse/PostToolUse/PreInvocation/PostInvocation/Stop
+    // only), and GIPITY_CONVERSATION_GUID (the dispatch-daemon binding) short-
+    // circuits resolveConvGuid before it ever reaches resolveFromServer's own
+    // attach either - so without ensureAttached firing on every event, a
+    // dispatched agy session's remote_session_id (what makes resume work)
+    // would never get bound. Uses 'post-tool-use' with no transcript_path so
+    // handleStopFamily itself is a no-op - isolates just the attach.
+    const { startMockServer } = await import('./helpers/mock-server.js');
+    const mock = await startMockServer();
+    try {
+      writeDevice(); // main() gates on a paired device before anything else, even env-bound convs
+
+      mock.on('POST /remote-sessions/c_dispatch01/ingest', {
+        status: 201,
+        body: { data: { counts: { attach: 1 } } },
+      });
+
+      const runner = new URL('../hooks/capture-runner.js', import.meta.url).pathname;
+      const { spawn } = await import('node:child_process');
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        GIPITY_API_BASE: mock.apiBase,
+        GIPITY_CONVERSATION_GUID: 'c_dispatch01',
+      };
+      delete env.GIPITY_CAPTURE;
+
+      const sid = 'agy-no-session-start-1234';
+      const exit = await new Promise<number>((resolvePromise) => {
+        const child = spawn(process.execPath, [runner, 'agy', 'post-tool-use'], {
+          cwd: projectDir,
+          env,
+          stdio: ['pipe', 'ignore', 'ignore'],
+        });
+        child.on('exit', (code) => resolvePromise(code ?? -1));
+        child.stdin.end(JSON.stringify({ session_id: sid, cwd: projectDir }));
+      });
+      assert.equal(exit, 0, 'runner must exit 0');
+
+      const reqs = mock.requests();
+      const ingestReq = reqs.find(r => r.url === '/remote-sessions/c_dispatch01/ingest');
+      assert.ok(ingestReq, 'runner attached the session id even without a SessionStart-equivalent event');
+      const entries = (ingestReq!.body as any).entries;
+      assert.equal(entries[0].kind, 'attach');
+      assert.equal(entries[0].session_id, sid);
+    } finally {
+      await mock.stop();
+    }
+  });
+
   it('GIPITY_CAPTURE=off stands the runner down entirely (daemon dispatch path)', async () => {
     const { startMockServer } = await import('./helpers/mock-server.js');
     const mock = await startMockServer();

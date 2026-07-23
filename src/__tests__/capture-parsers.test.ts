@@ -226,19 +226,72 @@ const agyLines = [
 const AGY_JSONL = agyLines.map(l => JSON.stringify(l)).join('\n') + '\n';
 
 describe('agy transcript parser', () => {
-  it('maps a real transcript to prompt/system/assistant entries, skipping internal bookkeeping', () => {
+  it('maps a real transcript to prompt/tool_use/tool_result/assistant entries, skipping internal bookkeeping', () => {
     const { entries, lastUuid, foundWatermark } = parseAgy(AGY_JSONL, null, { conversationId: AGY_CID });
     assert.equal(foundWatermark, true);
-    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'system', 'assistant']);
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'tool_use', 'tool_result', 'assistant']);
 
-    const [prompt, action, reply] = entries as any[];
+    const [prompt, toolUse, toolResult, reply] = entries as any[];
     assert.equal(prompt.prompt, 'Create a file called hello.txt in the current directory containing the text hi. Then stop.');
-    assert.match(action.content, /Created file file:\/\/\/tmp\/agy-hook-probe\/hello\.txt/);
+    assert.equal(toolUse.tool_name, 'write_to_file');
+    assert.equal(toolUse.tool_input.TargetFile, '/tmp/agy-hook-probe/hello.txt');
+    assert.equal(toolResult.tool_use_id, toolUse.tool_use_id);
+    assert.match(toolResult.content, /Created file file:\/\/\/tmp\/agy-hook-probe\/hello\.txt/);
     assert.match(reply.text, /content "hi" as requested/);
     // Watermark is positional on the last processed LINE, not step_index
     // (lines 5/6 carry swapped step_index values in the real file).
     assert.equal(lastUuid, `${AGY_CID}#${agyLines.length - 1}`);
     assert.ok(entries.every(e => typeof (e as any).ts === 'string'));
+  });
+
+  it('a tool-result narrative type other than CODE_ACTION (e.g. RUN_COMMAND) still pairs correctly', () => {
+    // agy has no single generic "tool result" type - it's per tool category
+    // (confirmed live: CODE_ACTION for file writes, RUN_COMMAND for the shell
+    // tool). The parser must not hardcode an exhaustive type allowlist.
+    const lines = [
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-01-01T00:00:00Z',
+        content: '<USER_REQUEST>\nrun echo hi\n</USER_REQUEST>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-01-01T00:00:01Z',
+        tool_calls: [{ name: 'run_command', args: { CommandLine: 'echo hi' } }] },
+      { step_index: 2, source: 'MODEL', type: 'RUN_COMMAND', created_at: '2026-01-01T00:00:02Z',
+        content: 'The command completed successfully.\nOutput:\nhi\n' },
+      { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-01-01T00:00:02Z', content: 'done' },
+    ];
+    const jsonl = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
+    const { entries } = parseAgy(jsonl, null, { conversationId: 'rc1' });
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'tool_use', 'tool_result', 'assistant']);
+    const toolUse = entries[1] as any;
+    const toolResult = entries[2] as any;
+    assert.equal(toolUse.tool_name, 'run_command');
+    assert.equal(toolResult.tool_use_id, toolUse.tool_use_id);
+    assert.match(toolResult.content, /Output:\nhi/);
+  });
+
+  it('a bookkeeping line between a tool call and its result does not break the pairing', () => {
+    const lines = [
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-01-01T00:00:00Z',
+        content: '<USER_REQUEST>\nwrite a file\n</USER_REQUEST>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: '2026-01-01T00:00:01Z',
+        tool_calls: [{ name: 'write_to_file', args: { TargetFile: '/tmp/x.txt' } }] },
+      { step_index: 2, source: 'SYSTEM', type: 'EPHEMERAL_MESSAGE', created_at: '2026-01-01T00:00:01Z',
+        content: 'reminder noise' },
+      { step_index: 3, source: 'MODEL', type: 'CODE_ACTION', created_at: '2026-01-01T00:00:02Z',
+        content: 'Created file /tmp/x.txt' },
+    ];
+    const jsonl = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
+    const { entries } = parseAgy(jsonl, null, { conversationId: 'bk1' });
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'tool_use', 'tool_result']);
+    assert.equal((entries[2] as any).tool_use_id, (entries[1] as any).tool_use_id);
+  });
+
+  it('a CODE_ACTION with no preceding tool call falls back to a system entry, not a dropped line', () => {
+    const line = JSON.stringify({
+      step_index: 0, source: 'MODEL', type: 'CODE_ACTION', created_at: '2026-01-01T00:00:00Z',
+      content: 'orphan narrative',
+    });
+    const { entries } = parseAgy(line + '\n', null, { conversationId: 'o1' });
+    assert.deepEqual(entries.map(e => e.kind), ['system']);
+    assert.equal((entries[0] as any).content, 'orphan narrative');
   });
 
   it('a thinking-only PLANNER_RESPONSE (no content, about to call a tool) is skipped, not surfaced empty', () => {
@@ -259,13 +312,13 @@ describe('agy transcript parser', () => {
   it('a watermark from another conversation is not found (replays from the top)', () => {
     const { foundWatermark, entries } = parseAgy(AGY_JSONL, 'other-conv#3', { conversationId: AGY_CID });
     assert.equal(foundWatermark, false);
-    assert.equal(entries.length, 3);
+    assert.equal(entries.length, 4);
   });
 
   it('a watermark past EOF replays instead of wedging', () => {
     const { foundWatermark, entries } = parseAgy(AGY_JSONL, `${AGY_CID}#500`, { conversationId: AGY_CID });
     assert.equal(foundWatermark, false);
-    assert.equal(entries.length, 3);
+    assert.equal(entries.length, 4);
   });
 
   it('extracts the clean request text, dropping ADDITIONAL_METADATA/USER_SETTINGS_CHANGE noise', () => {
@@ -279,7 +332,7 @@ describe('agy transcript parser', () => {
 
   it('no conversation id in context still parses; positional uuids degrade to a bare index', () => {
     const { entries, lastUuid } = parseAgy(AGY_JSONL, null, {});
-    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'system', 'assistant']);
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'tool_use', 'tool_result', 'assistant']);
     assert.equal(lastUuid, `#${agyLines.length - 1}`);
   });
 

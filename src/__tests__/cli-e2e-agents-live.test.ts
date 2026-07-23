@@ -164,7 +164,13 @@ function writeAgyWrapper(dir: string): string {
     "process.stdin.on('data', (c) => { data += c; });",
     "process.stdin.on('end', () => {",
     "  const event = process.argv[2];",
-    `  spawnSync(${JSON.stringify(NODE)}, [${JSON.stringify(RUNNER)}, 'agy', event], { input: data, stdio: ['pipe', 'ignore', 'ignore'] });`,
+    // GIPITY_CAPTURE=off is set (by this suite) around the agy launch to
+    // suppress the PRODUCTION 'gipity' hooks.json block - see the comment on
+    // agyHooksJson() for why that block also fires (stale installed CLI,
+    // divergent parser). This wrapper IS the code under test, so it must run
+    // regardless of that env var - clear it before spawning the runner.
+    "  const env = { ...process.env }; delete env.GIPITY_CAPTURE;",
+    `  spawnSync(${JSON.stringify(NODE)}, [${JSON.stringify(RUNNER)}, 'agy', event], { input: data, env, stdio: ['pipe', 'ignore', 'ignore'] });`,
     "  process.stdout.write('{}');",
     '});',
   ].join('\n'));
@@ -172,13 +178,50 @@ function writeAgyWrapper(dir: string): string {
 }
 
 /** agy's own hooks.json shape: a named-block object, tool-scoped events need a
- *  `matcher`. See cli/src/setup.ts's applyAgyHooks() for the production version. */
+ *  `matcher`. See cli/src/setup.ts's applyAgyHooks() for the production version.
+ *
+ * Deliberately NOT keyed "gipity" (unlike claude/codex's hookEntries(), which
+ * share their respective production key/namespace): the dispatch-style test
+ * below runs the REAL `gipity build`, which calls setupProjectTools() ->
+ * setupAgyHooks() on every invocation for an already-linked project (confirmed
+ * live) - and applyAgyHooks() wholesale-replaces the "gipity" key (by design -
+ * see its own comment). Codex/grok survive that same re-invocation because
+ * their production merge is per-command additive into a SHARED key/array, so
+ * the test's differently-commanded entries are never removed, just added
+ * alongside. agy's merge is wholesale-replace-by-key, so a same-keyed test
+ * entry would be destroyed outright and replaced with production's, which
+ * points at the installed CLI's bundled runner - stale relative to this
+ * checkout until republished. Using a distinct key sidesteps the clobber the
+ * same way codex/grok's distinct command achieves it: confirmed live that agy
+ * fires Stop hooks from multiple independent top-level named blocks in the
+ * same hooks.json, so both this checkout's wiring and production's fire side
+ * by side without either clobbering the other's file entry.
+ *
+ * They do NOT, however, fire *harmlessly* side by side the way claude/codex's
+ * dupes do (published parser == checkout parser there, so a race is a no-op
+ * dedup either way). Here the two runners share one capture-state watermark
+ * file (keyed by convGuid, under homedir()), so whichever flushes Stop first
+ * wins the watermark - and the stale installed runner's pre-fix agy parser
+ * (wrong Stop shape, no tool_use/tool_result extraction) produces zero tool
+ * rows for a run_command session. If it wins the race, the good runner's own
+ * flush sees an already-advanced watermark and the test starves waiting for a
+ * tool row that will never arrive (confirmed live - intermittent failures
+ * only ever showed up once a prior `gipity build` call had written the
+ * production key into this same file). Fix: every agy spawn below sets
+ * GIPITY_CAPTURE=off (which capture.cjs and this checkout's own runner both
+ * honor as "stand down"), suppressing the stale production block outright;
+ * writeAgyWrapper()'s generated script explicitly clears that var before
+ * invoking the checkout runner it wraps, so the one runner under test always
+ * captures regardless. Not a production concern - a real installed CLI only
+ * ever has the one "gipity" key, never a second competing block. */
 function agyHooksJson(wrapperPath: string): Record<string, unknown> {
   const cmd = (event: string) => `"${NODE}" "${wrapperPath}" ${event}`;
   return {
-    gipity: {
+    'gipity-e2e-agy': {
       PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: cmd('post-tool-use'), timeout: 60 }] }],
-      Stop: [{ hooks: [{ type: 'command', command: cmd('stop'), timeout: 60 }] }],
+      // Flat, not {hooks:[...]}-wrapped - see applyAgyHooks()'s comment in
+      // cli/src/setup.ts for why (a wrapped Stop silently kills the whole block).
+      Stop: [{ type: 'command', command: cmd('stop'), timeout: 60 }],
     },
   };
 }
@@ -355,7 +398,10 @@ describe('cli-e2e-agents-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run
             env: { ...process.env, GIPITY_DIR: gipityDir, GIPITY_API_BASE: API_BASE, NO_COLOR: '1', DISABLE_AUTOUPDATER: '1' },
             encoding: 'utf-8', timeout: 300_000,
           })
-        : runAgent(agent.binary, agent.terminalArgs!(prompt, { settingsFile: claudeSettingsFile }));
+        // agy: suppress the stale production hooks.json block (see
+        // agyHooksJson()'s comment) so only this checkout's wrapper captures.
+        : runAgent(agent.binary, agent.terminalArgs!(prompt, { settingsFile: claudeSettingsFile }),
+            agent.key === 'agy' ? { GIPITY_CAPTURE: 'off' } : {});
       assert.equal(r.status, 0, `${agent.binary} exited ${r.status}: ${(r.stderr || r.stdout || '').slice(-800)}`);
 
       // Hooks fire during/after the run; Stop flushes on clean exit. Give the
@@ -400,6 +446,12 @@ describe('cli-e2e-agents-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run
         env: {
           ...process.env, GIPITY_DIR: gipityDir, GIPITY_API_BASE: API_BASE,
           GIPITY_CONVERSATION_GUID: convGuid, NO_COLOR: '1', DISABLE_AUTOUPDATER: '1',
+          // agy: suppress the stale production hooks.json block - see
+          // agyHooksJson()'s comment. build.ts's generic adapter path spreads
+          // its own process.env into the agy child verbatim, so this reaches
+          // the hook subprocesses agy spawns; writeAgyWrapper() clears it
+          // again before invoking the checkout runner it wraps.
+          ...(agent.key === 'agy' ? { GIPITY_CAPTURE: 'off' } : {}),
         },
         encoding: 'utf-8',
         timeout: 300_000,

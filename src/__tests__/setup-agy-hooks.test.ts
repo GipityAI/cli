@@ -28,9 +28,14 @@ test('fresh file gets PostToolUse/Stop (wrapper) groups, and NO PreToolUse', () 
   assert.ok(postCmd.includes('agy-hooks.cjs'));
   assert.ok(postCmd.endsWith('post-tool-use'));
 
+  // Stop is FLAT in agy's schema - a handler object directly, NOT wrapped in
+  // {matcher, hooks} like PreToolUse/PostToolUse. Confirmed live: a wrapped
+  // Stop entry silently invalidates the WHOLE named block - PostToolUse
+  // stops firing too, with no error from agy. Regression-guard both shapes.
   assert.equal(block.Stop.length, 1);
-  assert.equal(block.Stop[0].matcher, undefined); // Stop has no matcher in agy's schema
-  const stopCmd = block.Stop[0].hooks[0].command;
+  assert.equal(block.Stop[0].matcher, undefined);
+  assert.equal(block.Stop[0].hooks, undefined, 'Stop must not be {hooks:[...]}-wrapped');
+  const stopCmd = block.Stop[0].command;
   assert.ok(stopCmd.includes(AGENT_HOOKS_DIR));
   assert.ok(stopCmd.endsWith('stop'));
 });
