@@ -92,22 +92,30 @@ recordsCommand
 
 recordsCommand
   .command('query <table>')
-  .description('List records')
-  .option('--filter <filter>', 'Filter string (e.g., "status:eq:active")')
+  .description('List records (full-text search, filter, sort, recycle bin)')
+  .option('-q, --q <text>', 'Full-text search across the table\'s text columns (needs `--searchable true` on the table)')
+  .option('--filter <filter>', 'AND filter string (e.g., "status:eq:active")')
+  .option('--any <filter>', 'OR filter group, same grammar as --filter (e.g., "owner:eq:me,shared:eq:true")')
   .option('--sort <sort>', 'Sort string (e.g., "created_at:desc")')
   .option('--limit <n>', 'Max rows', '20')
   .option('--offset <n>', 'Offset', '0')
   .option('--fields <fields>', 'Comma-separated column names')
+  .option('--include-deleted', 'Include soft-deleted rows (owner/editor)')
+  .option('--only-deleted', 'Only soft-deleted rows - the recycle bin (owner/editor)')
   .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, opts) => run('Query', async () => {
     const api = await recordsHttp(opts);
     const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
     if (opts.filter) params.set('filter', opts.filter);
+    if (opts.any) params.set('any', opts.any);
     if (opts.sort) params.set('sort', opts.sort);
     params.set('limit', opts.limit);
     params.set('offset', opts.offset);
     if (opts.fields) params.set('fields', opts.fields);
+    if (opts.includeDeleted) params.set('include_deleted', '1');
+    if (opts.onlyDeleted) params.set('only_deleted', '1');
 
     const res = await api.get<{ data: any[]; meta: { total: number } }>(
       `/api/${api.guid}/records/${table}?${params}`,
@@ -183,17 +191,43 @@ recordsCommand
     printResult(`Updated: ${JSON.stringify(res.data)}`, opts, res.data);
   }));
 
+// A table that declares `soft_delete_column` only STAMPS the row on delete - it
+// stays queryable via `query --only-deleted` and keeps its audit history. That's
+// right for user data and wrong for a probe row you just minted to test the
+// wiring, so `--purge` (the server's ?purge=1) is the one call that really
+// removes it. The plain success line says which of the two happened and names
+// the escape hatch, so nobody has to go spelunking through gipity.js to find it.
 recordsCommand
   .command('delete <table> <id>')
-  .description('Delete a record')
+  .description('Delete a record (soft-delete when the table declares one; --purge removes it for good)')
+  .option('--purge', 'Hard-delete: remove the row AND erase its audit history (owner/editor). Use it to scrub probe rows.')
   .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, id: string, opts) => run('Delete', async () => {
-    if (!await confirm(`Delete record ${id} from "${table}"?`)) {
+    const what = opts.purge ? `Purge record ${id} from "${table}" (also erases its history)?` : `Delete record ${id} from "${table}"?`;
+    if (!await confirm(what)) {
       printResult('Cancelled.', opts, { table, id, deleted: false, cancelled: true });
       return;
     }
     const api = await recordsHttp(opts);
-    const res = await api.del<{ data?: any }>(`/api/${api.guid}/records/${table}/${id}`);
-    printResult('Deleted.', opts, res?.data ?? { table, id, deleted: true });
+    const res = await api.del<{ data?: any }>(
+      `/api/${api.guid}/records/${table}/${id}${opts.purge ? '?purge=1' : ''}`,
+    );
+    const data = res?.data ?? { table, id, deleted: true, purged: !!opts.purge };
+    printResult(
+      data.purged
+        ? 'Purged - the row and its audit history are gone.'
+        : `Deleted. If "${table}" declares a soft-delete column the row is only stamped deleted (see it with \`gipity records query ${table} --only-deleted\`, bring it back with \`gipity records restore ${table} ${id}\`, remove it for good with \`--purge\`).`,
+      opts, data,
+    );
+  }));
+
+recordsCommand
+  .command('restore <table> <id>')
+  .description('Un-delete a soft-deleted record (owner/editor)')
+  .option('--json', 'Output as JSON')
+  .action((table: string, id: string, opts) => run('Restore', async () => {
+    const api = await recordsHttp(opts);
+    const res = await api.post<{ data?: any }>(`/api/${api.guid}/records/${table}/${id}/restore`);
+    printResult('Restored.', opts, res?.data ?? { table, id, restored: true });
   }));

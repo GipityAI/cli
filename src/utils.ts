@@ -116,19 +116,29 @@ function rerunWithYes(): string {
  *  - `opts.skip` (or the global `--yes` flag) auto-returns `true`.
  *  - Renders a `[Y/n]:` or `[y/N]:` hint automatically - callers should NOT
  *    append their own y/N suffix (or a trailing `?`/`:`) to `question`.
- *  - In non-TTY environments without `--yes`, returns `false` and prints a hint. */
+ *  - In non-TTY environments without `--yes`, this EXITS the process with code 1
+ *    (it never returns) - see the comment in the body for why. Pass
+ *    `{ headless: 'no' }` for prompts that merely OFFER something optional,
+ *    where declining is a normal successful outcome. */
 export async function confirm(
   question: string,
-  opts: { default?: 'yes' | 'no'; skip?: boolean } = {},
+  opts: { default?: 'yes' | 'no'; skip?: boolean; headless?: 'no' } = {},
 ): Promise<boolean> {
   const defaultYes = opts.default === 'yes';
   if (opts.skip ?? _autoConfirm) return true;
   if (!process.stdin.isTTY) {
-    // Headless/agent context: no one can answer the prompt. Don't just say
-    // "use --yes" - echo the exact command to re-run so the fix is copy-paste,
-    // not a second guessing trip.
+    // Headless/agent context: no one can answer the prompt. For an optional
+    // offer, declining and carrying on is the right answer (`headless: 'no'`).
+    // For everything else the command did NOT do what it was asked to do, so
+    // exit non-zero: an agent that pipes or suppresses output
+    // (`gipity records delete games 1 --purge >/dev/null 2>&1`) otherwise sees
+    // a clean exit 0 and believes the delete happened, then burns turns
+    // discovering it silently cancelled. The exit status is the only signal
+    // that survives redirection. The message echoes the exact command to
+    // re-run so the fix is copy-paste, not a second guessing trip.
+    if (opts.headless === 'no') return false;
     console.error(`Confirmation required (non-interactive). Re-run with --yes:\n  ${rerunWithYes()}`);
-    return false;
+    process.exit(1);
   }
   const hint = defaultYes ? dim('[Y/n]') : dim('[y/N]');
   process.stdout.write(`${question} ${hint}: `);

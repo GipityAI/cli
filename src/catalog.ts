@@ -23,9 +23,9 @@ export const STARTERS: CatalogEntry[] = [
 /** Visible blank-wiring templates. */
 export const BLANK: CatalogEntry[] = [
   { key: 'web-simple', hint: 'static frontend-only site - pages, dashboards, simple games' },
-  { key: 'web-fullstack', hint: 'backend API + database wiring - frontend, functions, migrations; deploys green' },
+  { key: 'web-fullstack', hint: 'backend API + database wiring - frontend, functions, migrations; deploys green empty' },
   { key: '3d-engine', hint: '3D multiplayer wiring - Three.js + Rapier + Gipity Realtime' },
-  { key: 'api', hint: 'pure API backend, no frontend - one example function + test' },
+  { key: 'api', hint: 'pure API backend, no frontend - functions + tests, deploys green' },
 ];
 
 /** Hidden templates - installable by exact key, omitted from listings. */

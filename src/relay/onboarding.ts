@@ -96,7 +96,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   const promptText = opts.mode === 'run-now'
     ? '  Set up remote control on this computer'
     : '  Enable remote control';
-  const enable = await confirm(promptText, { default: 'yes' });
+  const enable = await confirm(promptText, { default: 'yes', headless: 'no' });
   if (!enable) {
     state.setRelayEnabled(false);
     console.log(`  ${muted('Skipped. Turn on later with')} ${brand('gipity connect')}${muted('.')}`);
@@ -136,7 +136,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   console.log('');
 
   // Offer OS-level autostart (launchd / systemd --user / Task Scheduler).
-  const autostartOs = await confirm('  Also start at OS login', { default: 'yes' });
+  const autostartOs = await confirm('  Also start at OS login', { default: 'yes', headless: 'no' });
   if (autostartOs) {
     try {
       const res = installAutostart();
@@ -168,7 +168,7 @@ export async function runRelaySetup(opts: RelaySetupOpts): Promise<boolean> {
   // on|off` flips it later.)
   if (state.getDiagnosticsConsent() === undefined) {
     console.log('');
-    const diag = await confirm('  Share anonymous diagnostics info', { default: 'yes' });
+    const diag = await confirm('  Share anonymous diagnostics info', { default: 'yes', headless: 'no' });
     state.setDiagnosticsConsent(diag);
   }
 
