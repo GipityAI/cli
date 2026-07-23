@@ -37,6 +37,34 @@ function catalogText(): string {
   ].join('\n\n');
 }
 
+/** Pack names onto as few lines as possible. A scaffold prints 16-40 paths;
+ *  one per line pushed the success line and the notes past the ~30 lines an
+ *  agent keeps when it defensively pipes the install through `tail`. */
+function packNames(names: string[], width = 96): string[] {
+  const lines: string[] = [];
+  let cur = '';
+  for (const n of names) {
+    if (cur && cur.length + 1 + n.length > width) { lines.push(cur); cur = ''; }
+    cur = cur ? `${cur} ${n}` : n;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+// The files a freshly scaffolded app is meant to be read in order of, most
+// orienting first. Every template file carries header comments describing the
+// contract it establishes (the injected SDK, apiBase stamping, theme tokens,
+// the permissions block), but nothing said WHICH files those are - so agents
+// re-opened the whole scaffold to find out. Only paths the install actually
+// wrote are printed, so this never points at a file that isn't there.
+const ORIENTATION_FILES = [
+  'README.md',
+  'gipity.yaml',
+  'src/index.html',
+  'src/js/main.js',
+  'src/css/styles.css',
+];
+
 interface AddResponse {
   kind: 'template' | 'kit';
   files: string[];
@@ -222,8 +250,8 @@ export const addCommand = new Command('add')
     if (!opts.json && !process.stdout.isTTY) {
       const isKit = KITS.some(k => k.key === name);
       console.error(muted(isKit
-        ? 'Installing kit (server-side install pipeline)...'
-        : 'Installing (server writes files + generates favicons; first add for a title can take ~10s)...'));
+        ? 'Installing kit (server-side install pipeline, ~1-2s)...'
+        : 'Installing (server writes files + generates favicons, ~5-10s)...'));
     }
     const doAdd = () => post<{ data: AddResponse }>(`/projects/${config.projectGuid}/add`, body);
     const res = opts.json
@@ -244,7 +272,16 @@ export const addCommand = new Command('add')
     } else {
       console.log(success(`Scaffolded "${data.title}" (${data.type}) - ${data.files.length} files:`));
     }
-    for (const f of data.files) console.log(`${f}`);
+    for (const line of packNames(data.files)) console.log(line);
+    // Point at the files that teach this app's conventions, so the next step is
+    // one targeted read instead of re-opening the whole scaffold to find them.
+    const startHere = data.kind === 'kit'
+      ? data.files.filter(f => /(^|\/)README\.md$/.test(f))
+      : ORIENTATION_FILES.filter(f => data.files.includes(f));
+    if (startHere.length) {
+      console.log('');
+      console.log(muted(`Start here - their header comments carry the conventions you build inside: ${startHere.join('  ')}`));
+    }
     if (data.notes?.length) {
       console.log('');
       for (const n of data.notes) console.log(n);
@@ -258,11 +295,13 @@ export const addCommand = new Command('add')
       console.warn(warning(`Re-run \`gipity add ${data.kit ?? name}${opts.force ? ' --force' : ''}\` to retry the dropped files.`));
     }
     // After scaffolding an app, point at kits as the next step - they add
-    // features (multiplayer, etc.) into the app you just created.
+    // features (multiplayer, etc.) into the app you just created. Keys only:
+    // one wrapped line keeps the whole install report short enough to read
+    // without truncating, and `gipity add --list` has the per-kit blurbs.
     if (data.kind !== 'kit' && KITS.length > 0) {
       console.log('');
-      console.log(muted('Add features with kits (gipity add <kit>):'));
-      for (const k of KITS) console.log(muted(`  ${k.key}  - ${k.hint}`));
+      console.log(muted('Add features with kits (gipity add <kit>, gipity add --list for what each does):'));
+      for (const line of packNames(KITS.map(k => k.key))) console.log(muted(`  ${line}`));
     }
     if (syncResult.applied > 0) {
       console.log(`\nPulled ${syncResult.applied} files to local.`);
