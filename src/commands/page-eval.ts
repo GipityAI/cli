@@ -309,6 +309,32 @@ export function budgetOverrunHint(reason: string, usedBudgetMs: number): string 
     `or gate on a ready signal instead: --wait-for '<selector>' --wait-timeout ${MAX_WAIT_MS}.`;
 }
 
+/** The server aborts a script whose page navigated out from under it, and tells
+ *  the caller to "split the check into two evals". For the case that actually
+ *  produces this (seed state, reload, assert the state came back), that advice
+ *  sends the caller down the wrong road: two evals are two independent page
+ *  sessions, so the second one has to re-seed before it can read anything, and
+ *  the thing being verified (a real reload restoring real persisted state) is
+ *  never exercised. `--reload` is the primitive for it: one page load, reloaded
+ *  IN PLACE with storage preserved, second expression against the post-reload
+ *  DOM. Name it here, at the exact moment the caller hand-rolled it. */
+export function navigationAbortHint(reason: string): string | null {
+  if (!/navigated or reloaded/i.test(reason)) return null;
+  return `If you were verifying that state SURVIVES a reload, that is what --reload is for (one command, one page): ` +
+    `gipity page eval "<url>" '<seed/assert expr>' --reload '<assert-restored expr>'. ` +
+    `It reloads the page in place (localStorage/sessionStorage/cookies preserved) and reports the second result ` +
+    `separately. Splitting into two 'page eval' calls does NOT do this: each call is its own browser session, so ` +
+    `the second one starts from empty storage and never exercises the restore path.`;
+}
+
+/** True when the submitted script already drives the app's clock itself
+ *  (`core.advance(seconds)` on the 3D templates, the imported `advance(seconds)`
+ *  on the 2D one). Such a script does not care what the renderer paints at, so
+ *  the slow-render warning below has nothing to tell it. Exported for tests. */
+export function stepsDeterministically(script: string): boolean {
+  return /\badvance\s*\(/.test(script);
+}
+
 /** The headless browser paints slowly, and what that MEANS depends on what the
  *  page is doing — so the one-size warning was actively misleading on a --camera
  *  run. A vision app has no loop to step: its pipeline is driven by camera
@@ -324,7 +350,8 @@ export function budgetOverrunHint(reason: string, usedBudgetMs: number): string 
  *  So this says so, and names the two real suspects (the frame, the app) plus the
  *  deterministic way to wait (--wait-for) instead of inviting a wall-clock
  *  escalation that is guaranteed to be wasted. Exported for tests. */
-export function slowRenderMessage(fps: number, o: { camera: boolean; waitMs: number }): string {
+export function slowRenderMessage(fps: number, o: { camera: boolean; waitMs: number; script?: string }): string | null {
+  if (!o.camera && stepsDeterministically(o.script ?? '')) return null;
   if (o.camera) {
     const frames = Math.max(1, Math.round(fps * (o.waitMs / 1000)));
     return `${warning('⚠ Slow render:')} page painted at ${fps} fps, so the app's vision pipeline ran on roughly `
@@ -450,7 +477,7 @@ export const pageEvalCommand = new Command('eval')
   )
   .option(
     '--reload <expr>',
-    'After the first eval, reload the page IN PLACE (localStorage/sessionStorage/cookies preserved) and evaluate this second expression against the post-reload DOM. One command verifies persisted state survives a reload: seed/assert state with <expr>, then assert the restored UI here.',
+    'After the first eval, reload the page IN PLACE (localStorage/sessionStorage/cookies preserved) and evaluate this second expression against the post-reload DOM. One command verifies persisted state survives a reload ("remember it when I come back"): seed/assert state with <expr>, then assert the restored UI here. This is the ONLY way to check that - reloading inside the body aborts the eval (the result is lost with the old page), and two separate `page eval` calls are two fresh browser profiles, so the second starts from empty storage.',
   )
   .option('--reload-file <path>', 'Read the post-reload expression from a file instead of inline --reload (mutually exclusive)')
   .option(
@@ -677,7 +704,10 @@ export const pageEvalCommand = new Command('eval')
         // raises it — and the flag is what the caller needs next. Name it, with
         // the value THIS run used, so the retry is an edit rather than a guess.
         const msg = (err as Error)?.message ?? '';
-        const hint = budgetOverrunHint(msg, scriptBudgetMs);
+        const hint = budgetOverrunHint(msg, scriptBudgetMs)
+          // A script aborted by its own reload is nearly always a persistence
+          // check hand-rolled without --reload; point at the flag that does it.
+          ?? (reloadExpr === undefined ? navigationAbortHint(msg) : null);
         if (!hint) throw err;
         throw new Error(`${msg}\n${hint}`);
       }
@@ -723,8 +753,16 @@ export const pageEvalCommand = new Command('eval')
       // page's rAF loop is its clock, and engines cap the per-frame delta, so
       // `setTimeout(2000)` may advance only a fraction of a second of app time.
       // Without this line the eval returns a plausible-looking false negative.
+      // A script that already steps the loop itself is immune to all of that, so
+      // slowRenderMessage returns null for it rather than prescribing the fix it
+      // is already applying.
       if (d.slowRender) {
-        console.log(slowRenderMessage(d.slowRender.fps, { camera: !!camera, waitMs }));
+        const slow = slowRenderMessage(d.slowRender.fps, {
+          camera: !!camera,
+          waitMs,
+          script: [expr, ...steps, reloadExpr ?? ''].join('\n'),
+        });
+        if (slow) console.log(slow);
       }
       // Identity line on EVERY run: without it an agent can't distinguish
       // "signed-in eval" from "--auth silently no-op'd against the anonymous

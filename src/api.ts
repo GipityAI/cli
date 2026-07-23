@@ -429,12 +429,17 @@ export async function getAccountSlug(): Promise<string> {
 /** Unauthenticated request (for login/verify, and anonymous-visitor calls like
  *  `fn call --anon`). extraHeaders lets callers attach non-auth headers such as
  *  X-App-Token; no Authorization header is ever sent. */
-export async function publicPost<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+export async function publicRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   const url = `${baseUrl()}${path}`;
   const res = await fetch(url, {
-    method: 'POST',
+    method,
     headers: { ...clientHeaders(), 'Content-Type': 'application/json', ...extraHeaders },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -444,4 +449,21 @@ export async function publicPost<T>(path: string, body: unknown, extraHeaders?: 
   }
 
   return res.json() as Promise<T>;
+}
+
+export function publicPost<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  return publicRequest<T>('POST', path, body, extraHeaders);
+}
+
+/** Mint the short-lived public app token the browser SDK uses, so a CLI call can
+ *  exercise the exact path a signed-out visitor hits. Best-effort: fully public
+ *  surfaces work with no token at all, and an auth-gated one should 401 with the
+ *  server's real reason rather than a CLI-invented one. */
+export async function mintAppToken(projectGuid: string): Promise<Record<string, string> | undefined> {
+  try {
+    const minted = await publicPost<{ data: { token: string } }>('/api/token', { app: projectGuid });
+    return { 'X-App-Token': minted.data.token };
+  } catch {
+    return undefined;
+  }
 }
