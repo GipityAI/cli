@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { getConfig, requireConfig } from '../config.js';
 import { success, error as clrError, muted, bold } from '../colors.js';
@@ -80,6 +80,49 @@ function formatRunLine(r: RunData): string {
   return `${muted(r.short_guid)}  ${statusColor(r.status)}  ${dur}  ${runTokens(r)} tokens  ${muted(fmtTime(r.started_at))}`;
 }
 
+type JsonStringInfo = { ok: true; value: unknown } | { ok: false } | null;
+
+/** Classify a step-output value that is a *string* holding JSON: parsed, or
+ *  looks-like-JSON-but-doesn't-parse (a truncated / cut-off llm response — the
+ *  step reports `completed` and the next step then can't read a field out of
+ *  it). `null` means "not a JSON string at all". */
+function jsonStringInfo(v: unknown): JsonStringInfo {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (!t.startsWith('{') && !t.startsWith('[')) return null;
+  try {
+    const parsed = JSON.parse(t);
+    return typeof parsed === 'object' && parsed !== null ? { ok: true, value: parsed } : null;
+  } catch { return { ok: false }; }
+}
+
+function labelFor(info: Exclude<JsonStringInfo, null>): string {
+  return info.ok ? '(JSON string)' : clrError('(truncated/invalid JSON string)');
+}
+
+/** Render one step's output for humans.
+ *
+ *  Step outputs routinely carry a JSON *string* under a key — an `llm` step's
+ *  `result` is the common case. Dumped through a plain JSON.stringify that
+ *  arrives as one enormous backslash-escaped line: unreadable, and it hides the
+ *  single fact you need most, that the NEXT step sees a string, not an object
+ *  (so `{{step.summary}}` resolves to nothing). Label such keys
+ *  `"key" (JSON string)` and print the decoded value indented under it, so both
+ *  the content and the string-vs-object handoff are obvious at a glance. */
+function renderStepOutput(output: unknown): string {
+  if (output && typeof output === 'object' && !Array.isArray(output)) {
+    return Object.entries(output as Record<string, unknown>).map(([k, v]) => {
+      const info = jsonStringInfo(v);
+      if (!info) return `${JSON.stringify(k)}: ${JSON.stringify(v, null, 2)}`;
+      const body = info.ok ? JSON.stringify(info.value, null, 2) : JSON.stringify(v);
+      return `${JSON.stringify(k)} ${labelFor(info)}: ${body}`;
+    }).join('\n');
+  }
+  const info = jsonStringInfo(output);
+  if (info?.ok) return JSON.stringify(info.value, null, 2);
+  return JSON.stringify(output, null, 2);
+}
+
 /** Print each step's status, tokens, model, error and output. A run line alone
  *  says a run finished, not what it did — without the steps you can't tell a
  *  workflow that wrote a row from one that silently skipped every step. */
@@ -96,7 +139,7 @@ function printStepRuns(steps: StepRunData[], emptyNote: string): void {
     console.log(`  ${s.step_order}. ${name}${statusColor(s.status)}  ${s.tokens_used ?? 0} tokens${model}`);
     if (s.error_message) console.log(`     ${clrError(s.error_message)}`);
     if (s.output_json !== null && s.output_json !== undefined) {
-      console.log(JSON.stringify(s.output_json, null, 2).split('\n').map(l => `     ${l}`).join('\n'));
+      console.log(renderStepOutput(s.output_json).split('\n').map(l => `     ${l}`).join('\n'));
     }
   }
 }
@@ -204,10 +247,18 @@ workflowCommand
 
 workflowCommand
   .command('run <name>')
-  .description('Trigger a workflow (add --wait to block until it finishes)')
+  .description("Run a workflow: waits for it to finish and prints each step's status and output (--no-wait to fire and forget)")
   .option('--json', 'Output as JSON')
-  .option('--wait', 'Block until the triggered run reaches a terminal state, then print it')
-  .option('--timeout <s>', 'Max seconds to wait with --wait', '120')
+  // Waiting is the default: a bare trigger tells you nothing about what the
+  // workflow did, so every caller followed it with a poll-and-drill-in loop.
+  // `--no-wait` is the escape hatch for fire-and-forget.
+  .option('--no-wait', 'Trigger and return immediately instead of waiting for the run')
+  // Waiting is already the default, but `--wait` reads naturally and older
+  // docs/muscle memory reach for it — accept it silently rather than erroring.
+  .addOption(new Option('--wait', 'Wait for the run (already the default)').hideHelp())
+  // LLM steps routinely take a couple of minutes; a 120s default timed out on
+  // healthy runs and taught callers to always pass --timeout.
+  .option('--timeout <s>', 'Max seconds to wait for the run to finish', '300')
   .action((name: string, _opts, cmd) => run('Run', async () => {
     const opts = mergedOpts(cmd) as { json?: boolean; wait?: boolean; timeout?: string };
     const wf = await resolveWorkflow(name);
@@ -227,7 +278,7 @@ workflowCommand
 
     await post(`/workflows/${wf.short_guid}/run`, {});
 
-    const r = await waitForRun(wf.short_guid, prevGuid, Number(opts.timeout) || 120);
+    const r = await waitForRun(wf.short_guid, prevGuid, Number(opts.timeout) || 300);
     if (opts.json) {
       console.log(JSON.stringify(r));
     } else {

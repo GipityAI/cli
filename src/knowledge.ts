@@ -118,7 +118,7 @@ Run \`gipity --help\` for the full list. Use \`--help\` on any command for detai
 
 Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** - read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
 
-Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.fn.call\`/\`callAs\` at a throwaway copy of your database (your \`migrations/\` + \`seeds/\`), reset (truncate + reseed) before every run - so test rows never reach the deployed app and you don't write teardown. Functions see \`ctx.isTest === true\` during a run (use it to skip your own rate limiting); the platform also suppresses \`notify()\` push so a suite can't spam subscribers. Reference data tests need goes in seed files; a runtime-written settings table that isn't seeded goes under \`test.preserve\` in \`gipity.yaml\`. Build per-file fixtures in \`setup(fn)\` → \`ctx.fixtures\`, and namespace unique values with \`ctx.testId\`.
+Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.fn.call\`/\`callAs\` at a throwaway copy of your database (your \`migrations/\` + \`seeds/\`), one per test FILE, reset (truncate + reseed) before the file runs - so files can't interfere, test rows never reach the deployed app, and you don't write teardown. Functions see \`ctx.isTest === true\` during a run (use it to skip your own rate limiting); the platform also suppresses \`notify()\` push so a suite can't spam subscribers. Reference data tests need goes in seed files; a runtime-written settings table that isn't seeded goes under \`test.preserve\` in \`gipity.yaml\`. Build per-file fixtures in \`setup(fn)\` → \`ctx.fixtures\`.
 
 ## Hit friction on the platform? Report it in real time
 
@@ -189,7 +189,7 @@ App development skills:
 - \`app-development\` - functions, database, and API
 - \`app-import\` - import apps from GitHub/.gip bundles (incl. Vercel/Replit/Lovable porting) and export any project as a portable .gip - app_import tool, gipity save/load
 - \`app-records\` - Gipity Records: declared tables → validated CRUD, provenance, workflows, auto UI
-- \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the isolated test DB)
+- \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the per-file test DB)
 - \`deploy\` - the deploy pipeline & gipity.yaml manifest
 - \`jobs\` - long-running CPU + GPU compute jobs (Python / Node / bash)
 - \`realtime-scheduled-app\` - recipe: realtime presence/messages + DB function + scheduled poster, end-to-end

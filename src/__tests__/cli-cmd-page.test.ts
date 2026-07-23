@@ -1115,6 +1115,37 @@ test('gipity page screenshot accepts an exact device name', async () => {
   assert.equal((req!.body as ShotBody).viewports![0].device, 'Pixel 9');
 });
 
+// `--device desktop,mobile -o shot.png` used to hard-fail ("--output can only be
+// used with a single viewport"), forcing two separate captures of the same page.
+// With more than one viewport `-o` is a stem, so one run writes every shot.
+test('gipity page screenshot -o writes one file per device when several are asked for', async () => {
+  mock.reset();
+  const two = [
+    { viewport: { width: 1920, height: 1080, deviceScaleFactor: 1 }, width: 1920, height: 1080, screenshotSizeBytes: 4, phase: 'initial-load' },
+    { viewport: { width: 393, height: 852, deviceScaleFactor: 3, device: 'iPhone 15' }, width: 1179, height: 2556, screenshotSizeBytes: 4, phase: 'initial-load' },
+  ];
+  const pack = tarPack.pack();
+  const chunks: Buffer[] = [];
+  const tar: Buffer = await new Promise((resolve) => {
+    pack.on('data', (c: Buffer) => chunks.push(c));
+    pack.on('end', () => resolve(Buffer.concat(chunks)));
+    pack.entry({ name: 'meta.json' }, JSON.stringify({
+      full: false, finalUrl: 'https://example.com/', title: 'Example', status: 200, performance: null,
+      screenshots: two,
+    }));
+    pack.entry({ name: 'a.png' }, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    pack.entry({ name: 'b.png' }, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    pack.finalize();
+  });
+  mock.on('POST /tools/browser/screenshot', { raw: tar, contentType: 'application/x-tar' });
+  const r = await run(['page', 'screenshot', 'https://example.com', '--device', 'desktop,mobile', '-o', join(home, 'shot.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(home, 'shot-desktop.png')), 'expected shot-desktop.png');
+  assert.ok(existsSync(join(home, 'shot-mobile.png')), 'expected shot-mobile.png');
+  assert.match(r.stdout, /shot-desktop\.png/);
+  assert.match(r.stdout, /shot-mobile\.png/);
+});
+
 test('gipity page screenshot rejects an unknown --device with the known names', async () => {
   mock.reset();
   await mockScreenshot();

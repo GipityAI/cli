@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { mkdirSync, writeFileSync } from 'fs';
-import { dirname, join, resolve as resolvePath } from 'path';
+import { dirname, extname, join, resolve as resolvePath } from 'path';
 import { postForTarEntries } from '../api.js';
 import { getConfig, getProjectRoot } from '../config.js';
 import { getAuth } from '../auth.js';
@@ -215,6 +215,21 @@ function resolveDevice(name: string): Viewport {
   throw new Error(`Unknown --device preset: "${name}" (known: ${available})`);
 }
 
+/** Slug used to tell one viewport's `-o` file from another's: the device name the
+ *  caller typed (`desktop`, `Pixel 9` → `pixel-9`) or the raw dimensions. */
+function viewportSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'shot';
+}
+
+/** Expand an `--output` path into one path per viewport by treating it as a stem:
+ *  `tmp/shot.png` + `mobile` → `tmp/shot-mobile.png`. Keeps the caller's extension
+ *  (defaulting to .png) so a multi-device capture writes every file it took. */
+function stemPath(output: string, suffix: string): string {
+  const ext = extname(output) || '.png';
+  const base = ext && output.endsWith(ext) ? output.slice(0, -ext.length) : output;
+  return `${base}-${suffix}${ext}`;
+}
+
 function splitCsv(values: string[] | undefined): string[] {
   if (!values || values.length === 0) return [];
   return values.flatMap((v) => v.split(',').map((s) => s.trim()).filter(Boolean));
@@ -290,7 +305,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--action <js>','Run JS in the page before capturing - e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./...\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
   .option('--file <path>', 'Read the pre-capture script from a file instead of inline --action (mutually exclusive), or --file - to read it from stdin (pipe a heredoc: --file - <<\'EOF\' ... EOF) with no tmp file. For a multi-step driver - click through a flow, wait for it to render - then capture. Same async-function-body semantics as --action; same --file flag as page eval.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
-  .option('-o, --output <file>', 'Output path (single viewport only; default .gipity/screenshots/ss-<host>-<timestamp>.png)')
+  .option('-o, --output <file>', 'Output path (default .gipity/screenshots/ss-<host>-<timestamp>.png). With several viewports it is a stem: -o tmp/shot.png --device desktop,mobile writes tmp/shot-desktop.png and tmp/shot-mobile.png.')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern — to capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
   .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture — so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
@@ -411,10 +426,12 @@ export const pageScreenshotCommand = new Command('screenshot')
       ...deviceNames.map(resolveDevice),
       ...viewportStrs.map(parseViewportString),
     ];
-
-    if (opts.output && customViewports.length > 1) {
-      throw new Error('--output can only be used with a single viewport');
-    }
+    // Parallel to customViewports: what each capture is called when `--output` has
+    // to name more than one file.
+    const viewportLabels: string[] = [
+      ...deviceNames.map(viewportSlug),
+      ...viewportStrs.map(viewportSlug),
+    ];
 
     // Server defaults to 1280×720 when viewports is omitted - don't send it in
     // the no-flag case so the filename stays unsuffixed (no viewport segment).
@@ -507,9 +524,19 @@ export const pageScreenshotCommand = new Command('screenshot')
 
     const dir = defaultScreenshotDir();
     const savedFiles: string[] = [];
+    // With more than one viewport, `--output` is a stem: every capture gets its own
+    // file (shot.png → shot-desktop.png, shot-mobile.png) instead of overwriting.
+    const usedStems = new Set<string>();
+    const outputPath = (i: number) => {
+      if (pngs.length === 1) return opts.output as string;
+      let suffix = viewportLabels[i] ?? dimSuffix(meta.screenshots[i].viewport);
+      while (usedStems.has(suffix)) suffix += `-${i + 1}`;
+      usedStems.add(suffix);
+      return stemPath(opts.output as string, suffix);
+    };
     for (let i = 0; i < pngs.length; i++) {
       const target = opts.output
-        ? opts.output
+        ? outputPath(i)
         : join(dir, names[i] ?? shotName(meta.screenshots[i].viewport));
       // Create the target's parent dir so a `-o` path under a not-yet-existing
       // directory (e.g. .gipity/screenshots/home.png) writes cleanly instead of

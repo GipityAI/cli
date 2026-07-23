@@ -61,11 +61,13 @@ test('gipity init warns and aborts when it would nest inside an existing project
   const sub = join(parent, 'child');
   mkdirSync(sub);
 
-  // No --yes: the nesting confirmation is declined in the non-TTY child.
+  // No --yes: the nesting confirmation can't be answered in the non-TTY child,
+  // so the command fails loudly (non-zero) and names the exact re-run.
   const r = await runCliAsync(['--api-base', mock.apiBase, 'init'], { env: { HOME: home }, cwd: sub });
   assert.notEqual(r.status, 0, 'should abort without confirmation');
   assert.match(r.stdout, /already a Gipity project/);
-  assert.match(r.stdout, /Aborted/);
+  assert.match(r.stderr, /Confirmation required \(non-interactive\)/);
+  assert.match(r.stderr, /gipity .*init --yes/);
   assert.equal(existsSync(join(sub, '.gipity.json')), false, 'an aborted init must not write a config');
 });
 

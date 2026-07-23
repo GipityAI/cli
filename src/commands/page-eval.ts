@@ -5,6 +5,7 @@ import { brand, bold, muted, warning, success } from '../colors.js';
 import { run, parseDuration } from '../helpers/index.js';
 import { getAuth } from '../auth.js';
 import { resolveProjectContext } from '../config.js';
+import { createCheckpoint, restoreCheckpoint, resolveDatabase } from '../db-checkpoint.js';
 import { uploadPublicFixture, uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 export interface EvalResult {
@@ -493,6 +494,7 @@ export const pageEvalCommand = new Command('eval')
     `How long the script itself may run IN the page. Bare number = MILLISECONDS (so 90s = 90000, NOT 90); or pass an explicit unit that means the same on both this and \`sandbox run --timeout\` — --timeout 90s. Its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; floor 1000, max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
   )
   .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
+  .option('--restore-db', "Snapshot the app database before the script runs and roll it back after, so a write-path check (click Approve, submit the form, edit a row) leaves the real data untouched. Use this whenever the eval WRITES - it is the undo for driving the deployed app against real project data. Same snapshot/undo standalone: gipity db checkpoint / gipity db restore.")
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
     // A JS-intent flag guess (captured as a hidden decoy below): redirect to the
@@ -650,7 +652,23 @@ export const pageEvalCommand = new Command('eval')
     // Validate the camera file locally first: a wrong file type should cost one
     // instant error, not an upload plus an opaque browser-side failure.
     if (opts.camera) assertCameraFile(opts.camera);
+    // Set when --restore-db took a checkpoint; the finally below rolls the app
+    // database back to it, so a write-path smoke test leaves no residue in the
+    // real data the user is about to look at.
+    let restoreDb: { projectGuid: string; database: string } | undefined;
     try {
+      if (opts.restoreDb) {
+        const { config } = await resolveProjectContext({});
+        projectGuid = config.projectGuid;
+        const database = await resolveDatabase(config.projectGuid);
+        if (!database) {
+          console.error(muted('--restore-db: this project has no database - nothing to roll back.'));
+        } else {
+          const cp = await createCheckpoint(config.projectGuid, database);
+          console.error(muted(`Checkpointed ${cp.tables.length} table(s), ${cp.rows} row(s) in '${database}' - rolled back when this eval finishes.`));
+          restoreDb = { projectGuid: config.projectGuid, database };
+        }
+      }
       if (fixturePaths.length || opts.camera) {
         const { config } = await resolveProjectContext({});
         projectGuid = config.projectGuid;
@@ -795,6 +813,14 @@ export const pageEvalCommand = new Command('eval')
         if (d.reloadTruncated) console.log(muted('(reload result truncated to fit context - narrow the expression for the full value)'));
       }
     } finally {
+      if (restoreDb) {
+        try {
+          const r = await restoreCheckpoint(restoreDb.projectGuid, restoreDb.database);
+          console.error(muted(`Rolled ${r.tables.length} table(s) back to the checkpoint (${r.rows} row(s)) - nothing this eval wrote survives.`));
+        } catch (err) {
+          console.error(warning(`⚠ Could not roll back the database - the checkpoint is still there, retry with: gipity db restore (${(err as Error).message})`));
+        }
+      }
       for (const h of [...hosted, ...(camera ? [camera] : [])]) {
         try {
           await deleteFixture(projectGuid!, h.guid);
