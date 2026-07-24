@@ -29,7 +29,7 @@ All code execution happens on Gipity's hosted platform.
 | `gipity records [query\|schema]` | Query and manage Records API tables |
 | `gipity domain [list\|add\|remove]` | Manage custom domains |
 | `gipity credits` | Check balance and usage |
-| `gipity skill [list\|search\|install]` | Manage agent skills |
+| `gipity skill [list\|read]` | Task docs. `read <name>...` takes several docs at once; `--toc`, `--section <slug>`, `--grep <term>` read one part instead of piping through `head` |
 | `gipity chat [list\|rename\|archive\|delete]` | Manage chats (or `gipity chat "<msg>"` to send) |
 | `gipity gmail [send\|reply\|search\|read]` | Send/read via the user's own Gmail |
 | `gipity rbac [list\|grant\|revoke]` | Manage RBAC policies |

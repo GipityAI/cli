@@ -33,6 +33,27 @@ test('gipity add web-simple posts and prints files', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity add scaffolds compactly and points at the files that carry the conventions', async () => {
+  mock.reset();
+  const files = [
+    'README.md', 'docs/README.md', 'gipity.yaml', 'src/css/gipity-theme.css', 'src/css/styles.css',
+    'src/index.html', 'src/js/config.js', 'src/js/main.js', 'src/js/settings.js',
+  ];
+  mock.on('POST /projects/p_TestProj/add', { body: { data: {
+    kind: 'template', files, title: 'my-app', type: 'web-fullstack',
+  } } });
+  mock.on('GET /projects/p_TestProj/files/tree', { body: { data: [] } });
+  const r = await fresh(['add', 'web-fullstack']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Start here.*README\.md.*gipity\.yaml.*src\/index\.html/);
+  // Every path still reported, but packed - not one line each, and the kit
+  // catalog no longer spends a line per kit.
+  const lines = r.stdout.split('\n').filter(Boolean);
+  assert.ok(lines.length < 12, `install report too long:\n${r.stdout}`);
+  for (const f of files) assert.ok(r.stdout.includes(f), `missing ${f}`);
+  assert.match(r.stdout, /realtime/);  // kits still discoverable
+});
+
 test('gipity add realtime installs a kit', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/add', { body: { data: {
