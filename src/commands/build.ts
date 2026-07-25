@@ -1023,18 +1023,26 @@ async function runLaunch(
 }
 
 // ─── Agent picker ─────────────────────────────────────────────────────────
-// Same pick-a-number-or-hit-enter format as the project picker. The
-// enter-enter path must stay the visibly obvious one: the default agent is
-// the last-used one (else Claude). We deliberately don't ask about the model
-// - the agent's own default is always right and a curated list only rots.
+// Same pick-a-number-or-hit-enter format as the project picker. Only agents
+// actually found on PATH are numbered choices; the rest are named in a
+// footnote as supported-but-not-detected, not offered as pickable slots.
+// The enter-enter path must stay the visibly obvious one: the default agent
+// is the last-used one (else the first detected agent). We deliberately
+// don't ask about the model - the agent's own default is always right and a
+// curated list only rots.
 
 async function pickAgent(lastUsed: string | undefined): Promise<string> {
-  const defaultKey = lastUsed && AGENT_KEYS.includes(lastUsed) ? lastUsed : 'claude';
-  const defaultIdx = AGENT_ADAPTERS.findIndex(a => a.key === defaultKey) + 1;
+  const detected = AGENT_ADAPTERS.filter(a => binaryOnPath(a.binary));
+  // Nothing detected (fresh machine, nothing installed yet): fall back to
+  // the full list so there's still something to pick - selecting one drives
+  // the existing auto-install/install-hint path below.
+  const listed = detected.length ? detected : AGENT_ADAPTERS;
+  const undetected = AGENT_ADAPTERS.filter(a => !listed.includes(a));
+
+  const defaultKey = lastUsed && listed.some(a => a.key === lastUsed) ? lastUsed : listed[0].key;
+  const defaultIdx = listed.findIndex(a => a.key === defaultKey) + 1;
   console.log(`  ${bold('Which coding agent?')}\n`);
-  AGENT_ADAPTERS.forEach((a, i) => {
-    // Keep the list clean: no install-state notes (picking an uninstalled
-    // agent installs it, or fails with the install hint at that point).
+  listed.forEach((a, i) => {
     const notes: string[] = [];
     if (a.key === lastUsed) notes.push('last used');
     if ((a.key === 'codex' || a.key === 'agy') && !a.hooksSupportedOnPlatform(process.platform)) {
@@ -1043,10 +1051,16 @@ async function pickAgent(lastUsed: string | undefined): Promise<string> {
     const note = notes.length ? `  ${muted(`(${notes.join(', ')})`)}` : '';
     console.log(`    ${bold(`${i + 1}.`)} ${a.displayName} ${muted(`(${a.providerName})`)}${note}`);
   });
+  if (undetected.length) {
+    const names = undetected.map(a => a.displayName).join(', ');
+    console.log(`  ${muted(`Also supported (not detected on this machine): ${names} - use --agent <name>`)}`);
+  } else if (!detected.length) {
+    console.log(`  ${muted('None detected on this machine - picking one installs it.')}`);
+  }
   console.log('');
-  const choice = await pickOne('Choose', AGENT_ADAPTERS.length, defaultIdx);
+  const choice = await pickOne('Choose', listed.length, defaultIdx);
   console.log('');
-  return AGENT_ADAPTERS[choice - 1].key;
+  return listed[choice - 1].key;
 }
 
 // ─── Non-Claude agent launch (Codex, Grok) ────────────────────────────────

@@ -166,33 +166,43 @@ export async function confirm(
 
 /**
  * Single-keypress picker for 1–9 options.
- * Returns the 1-based index chosen, or `defaultIdx` on Enter.
+ * Returns the 1-based index chosen, or `defaultIdx` on Enter. A key that
+ * matches neither is ignored - it does not advance, does not fall back to
+ * the default, and the prompt just keeps waiting for a valid one.
  */
 export function pickOne(
   label: string,
   max: number,
   defaultIdx = 1,
 ): Promise<number> {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     process.stdout.write(`  ${bold(label)} (1-${max}) [${bold(String(defaultIdx))}]: `);
     const { stdin } = process;
     const wasRaw = stdin.isRaw ?? false;
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.resume();
-    stdin.once('data', (key: Buffer) => {
+    const cleanup = () => {
       if (stdin.isTTY) stdin.setRawMode(wasRaw);
       stdin.pause();
+      stdin.off('data', onData);
+      stdin.off('end', onEnd);
+    };
+    const onData = (key: Buffer) => {
       const ch = key.toString();
       // Ctrl-C
-      if (ch === '\x03') { console.log(''); process.exit(0); }
+      if (ch === '\x03') { cleanup(); console.log(''); process.exit(0); }
       // Enter → default
-      if (ch === '\r' || ch === '\n') { console.log(String(defaultIdx)); return resolve(defaultIdx); }
+      if (ch === '\r' || ch === '\n') { cleanup(); console.log(String(defaultIdx)); return resolve(defaultIdx); }
       const n = parseInt(ch, 10);
-      if (n >= 1 && n <= max) { console.log(String(n)); return resolve(n); }
-      // Invalid key → default
-      console.log(String(defaultIdx));
-      resolve(defaultIdx);
-    });
+      if (n >= 1 && n <= max) { cleanup(); console.log(String(n)); return resolve(n); }
+      // Invalid key → ignore, keep waiting for a real one.
+    };
+    // Piped/non-TTY stdin that closes without ever sending a valid choice
+    // (EOF) - waiting forever would hang the process, so bail out loudly
+    // instead of guessing.
+    const onEnd = () => { cleanup(); reject(new Error('input ended before a choice was made')); };
+    stdin.on('data', onData);
+    stdin.on('end', onEnd);
   });
 }
 
