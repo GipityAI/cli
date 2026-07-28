@@ -11,6 +11,7 @@ import {
   summarizeExpr, evalWorkBudgetMs, pollEvalResult, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
   capScriptBudgetMs, budgetOverrunHint, navigationAbortHint, isEmptyStateResult,
   EVAL_SCRIPT_BUDGET_MS, EVAL_SCRIPT_BUDGET_CAMERA_MS, EVAL_SCRIPT_BUDGET_MAX_MS,
+  EVAL_SCRIPT_BUDGET_MIN_MS,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
 
@@ -291,6 +292,27 @@ test('gipity page eval rejects a sub-floor --timeout as seconds typed as ms', as
   }
   // No request should have been sent for any of the rejected calls.
   assert.equal(mock.requests().length, 0);
+});
+
+// That guard is aimed at a BARE number, where the unit is a guess. A suffixed
+// value states it: `--timeout 400ms` is a deliberate 400ms, and running it through
+// the guard produced the one answer that is certainly wrong for that caller -
+// "pass --timeout 400s", a 400x jump they never asked for. Floor it instead.
+test('gipity page eval floors an explicit sub-floor --timeout instead of rejecting it', async () => {
+  // Every suffixed shape, including the fractional ones parseDuration accepts:
+  // 0.4s is the same 400ms, and 1.5ms rounds to 2 - all three floor, none throw.
+  for (const t of ['400ms', '0.4s', '1.5ms']) {
+    mock.reset();
+    mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-t3', status: 'queued' } } });
+    mock.on('GET /tools/browser/eval/job-t3', { body: { data: {
+      status: 'done', url: 'https://example.com', result: '1', truncated: false,
+    } } });
+    const r = await run(['page', 'eval', 'https://example.com', '1', '--timeout', t]);
+    assert.equal(r.status, 0, `--timeout ${t}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /MILLISECONDS/);
+    const req = mock.requests().find(q => q.url === '/tools/browser/eval');
+    assert.equal((req!.body as { timeoutMs?: number }).timeoutMs, EVAL_SCRIPT_BUDGET_MIN_MS, `--timeout ${t}`);
+  }
 });
 
 test('capScriptBudgetMs defaults roomier under synthetic media and clamps over the max', () => {
