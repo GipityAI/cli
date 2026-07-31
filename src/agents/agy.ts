@@ -28,6 +28,8 @@
  * session-id-pinning/transcript-replay fallback is needed here.
  */
 import type { RemoteAgentAdapter } from './types.js';
+import { parseTranscript as parseAgyTranscript } from '../capture/sources/agy.js';
+import { agySkillsState, ensureAgySkillsInstalled, setupAgyHooks, removeAgySkills } from '../setup.js';
 
 /** LLM_MODELS canonical id -> agy's own spaced --model display string, for the
  *  subset of the Gemini catalog agy actually offers. Anything not listed here
@@ -51,6 +53,7 @@ function projectArgs(resume?: string): string[] {
 export const agyAdapter: RemoteAgentAdapter = {
   key: 'agy',
   source: 'agy',
+  harness: 'agy',
   displayName: 'Antigravity',
   providerName: 'Google',
   binary: 'agy',
@@ -85,4 +88,35 @@ export const agyAdapter: RemoteAgentAdapter = {
   daemonStreamCapture: false,
 
   installHint: 'see https://antigravity.google (Google account sign-in required)',
+
+  detectEnv() {
+    // Antigravity injects ANTIGRAVITY_CONVERSATION_ID into every hook/tool
+    // subprocess it spawns (confirmed live). Check this exact var, not an
+    // 'ANTIGRAVITY_' prefix scan - the Antigravity IDE's own integrated
+    // terminal ambiently sets other ANTIGRAVITY_*-prefixed vars (e.g.
+    // ANTIGRAVITY_CLI_ALIAS) in every shell it spawns, which would
+    // false-positive for any user with the IDE open, even outside a real
+    // agy session/hook.
+    if (!process.env.ANTIGRAVITY_CONVERSATION_ID) return null;
+    return { harness: 'agy', harnessSession: process.env.ANTIGRAVITY_CONVERSATION_ID };
+  },
+
+  capture: {
+    hookKey: 'agy',
+    // agy hook payloads always carry transcriptPath directly (no derivation
+    // needed, unlike Grok) - the agy-specific hook wrapper normalizes it into
+    // this HookInput's transcript_path before invoking this runner.
+    parse: (content, afterUuid, hook) =>
+      parseAgyTranscript(content, afterUuid, { conversationId: hook.session_id }),
+  },
+
+  setup: {
+    state: () => agySkillsState(),
+    install: ensureAgySkillsInstalled,
+    writeProjectHooks: setupAgyHooks,
+    uninstall: () => {
+      const n = removeAgySkills();
+      return n ? `Removed ${n} Gipity skills from ~/.gemini/config/skills.` : null;
+    },
+  },
 };

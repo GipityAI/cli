@@ -61,73 +61,24 @@ import { getDevice } from '../relay/state.js';
 import { deviceFetch } from '../relay/device-http.js';
 import { ImageBlockRewriter } from '../relay/media-upload.js';
 import { getConfig } from '../config.js';
-import {
-  parseTranscript as parseClaudeTranscript,
-  type IngestEntry,
-} from '../capture/sources/claude-code.js';
-import { parseTranscript as parseCodexTranscript } from '../capture/sources/codex.js';
-import { parseTranscript as parseGrokTranscript } from '../capture/sources/grok.js';
-import { parseTranscript as parseAgyTranscript } from '../capture/sources/agy.js';
+import type { IngestEntry } from '../capture/sources/claude-code.js';
+import { AGENT_ADAPTERS } from '../agents/index.js';
+import type { CaptureHookInput, CaptureParseResult, RemoteAgentAdapter } from '../agents/index.js';
 
 const CAPTURE_DIR = join(homedir(), '.gipity', 'capture-state');
 const INGEST_BATCH_MAX = 100; // server caps at 200; stay comfortably under
 
-interface HookInput {
-  session_id?: string;
-  transcript_path?: string;
-  cwd?: string;
-  hook_event_name?: string;
+type HookInput = CaptureHookInput;
+type ParseResult = CaptureParseResult;
+
+/** Find the agent adapter whose capture wiring owns this hook-argv source
+ *  spelling (what the hook scripts pass - NOT the server's `source` value;
+ *  those differ for Claude: 'claude-code' vs 'claude_code'). Adding an agent
+ *  = one file under cli/src/agents/ with a `capture` field; no separate
+ *  registry to keep in sync. */
+function findCaptureAdapter(hookKey: string): RemoteAgentAdapter | undefined {
+  return AGENT_ADAPTERS.find((a) => a.capture.hookKey === hookKey);
 }
-
-type ParseResult = { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean };
-
-/** Per-agent capture behavior. Keyed by the hook argv source (what the hook
- *  scripts pass), NOT the server's source value - those differ for Claude
- *  ('claude-code' vs 'claude_code'). Adding an agent = one entry here plus a
- *  parser file under cli/src/capture/sources/. */
-interface CaptureSource {
-  /** The conversation `source` value the server stores. */
-  serverSource: string;
-  displayName: string;
-  parse(content: string, afterUuid: string | null, hook: HookInput): ParseResult;
-  /** Where the transcript lives when the hook payload doesn't say. */
-  resolveTranscriptPath?(hook: HookInput): string | null;
-}
-
-export const CAPTURE_SOURCES: Record<string, CaptureSource> = {
-  'claude-code': {
-    serverSource: 'claude_code',
-    displayName: 'Claude Code',
-    parse: (content, afterUuid) => parseClaudeTranscript(content, afterUuid),
-  },
-  codex: {
-    serverSource: 'codex',
-    displayName: 'Codex',
-    // Codex hook payloads always carry transcript_path (the rollout file).
-    parse: (content, afterUuid) => parseCodexTranscript(content, afterUuid),
-  },
-  grok: {
-    serverSource: 'grok',
-    displayName: 'Grok',
-    parse: (content, afterUuid, hook) =>
-      parseGrokTranscript(content, afterUuid, { sessionId: hook.session_id }),
-    // Grok's session dir is derivable: ~/.grok/sessions/<urlencoded-cwd>/<sid>/
-    resolveTranscriptPath: (hook) => {
-      if (!hook.session_id) return null;
-      const cwd = hook.cwd ?? process.cwd();
-      return join(homedir(), '.grok', 'sessions', encodeURIComponent(cwd), hook.session_id, 'chat_history.jsonl');
-    },
-  },
-  agy: {
-    serverSource: 'agy',
-    displayName: 'Antigravity',
-    // agy hook payloads always carry transcriptPath directly (no derivation
-    // needed, unlike Grok) - the agy-specific hook wrapper normalizes it into
-    // this HookInput's transcript_path before invoking this runner.
-    parse: (content, afterUuid, hook) =>
-      parseAgyTranscript(content, afterUuid, { conversationId: hook.session_id }),
-  },
-};
 
 interface StateFile {
   last_uuid: string | null;
@@ -432,7 +383,7 @@ async function ensureAttached(convGuid: string, hook: HookInput): Promise<void> 
 }
 
 async function handleStopFamily(
-  convGuid: string, src: CaptureSource, hook: HookInput, isSubagent: boolean, minIntervalMs = 0,
+  convGuid: string, src: RemoteAgentAdapter, hook: HookInput, isSubagent: boolean, minIntervalMs = 0,
 ): Promise<void> {
   void isSubagent;
   if (!hook.transcript_path || !existsSync(hook.transcript_path)) return;
@@ -451,11 +402,11 @@ async function handleStopFamily(
     const state = readState(convGuid) ?? { last_uuid: null };
     const content = await readWholeFile(hook.transcript_path);
 
-    let result = src.parse(content, state.last_uuid, hook);
+    let result = src.capture.parse(content, state.last_uuid, hook);
     if (!result.foundWatermark && state.last_uuid !== null) {
       // Transcript rotated (/clear or compact) - watermark isn't present.
       // Replay from top; server dedupes via the source_uuid unique index.
-      result = src.parse(content, null, hook);
+      result = src.capture.parse(content, null, hook);
     }
 
     // Base64 image blocks (Read-of-image tool results) upload to VFS and
@@ -476,7 +427,7 @@ async function handleStopFamily(
   }
 }
 
-async function handleSessionEnd(convGuid: string, src: CaptureSource, hook: HookInput): Promise<void> {
+async function handleSessionEnd(convGuid: string, src: RemoteAgentAdapter, hook: HookInput): Promise<void> {
   // Flush any tail lines one last time - SessionEnd fires after the final
   // Stop, so there's usually nothing new, but a race between Stop and
   // SessionEnd could leave lines behind.
@@ -551,7 +502,7 @@ async function main(): Promise<void> {
 
   const [source, event] = process.argv.slice(2);
   if (!source || !event) return;
-  const src = CAPTURE_SOURCES[source];
+  const src = findCaptureAdapter(source);
   if (!src) return; // unknown agent - silent no-op
 
   const stdin = await readStdin();
@@ -562,8 +513,8 @@ async function main(): Promise<void> {
 
   // Agents whose hook payloads omit the transcript path (Grok) get it
   // derived from the session id + cwd.
-  if (!hook.transcript_path && src.resolveTranscriptPath) {
-    const derived = src.resolveTranscriptPath(hook);
+  if (!hook.transcript_path && src.capture.resolveTranscriptPath) {
+    const derived = src.capture.resolveTranscriptPath(hook);
     if (derived) hook.transcript_path = derived;
   }
 
@@ -571,7 +522,7 @@ async function main(): Promise<void> {
   // state files are TTL-swept instead of deleted at end-of-session.
   sweepStaleState();
 
-  const convGuid = await resolveConvGuid(hook, src.serverSource);
+  const convGuid = await resolveConvGuid(hook, src.source);
   if (!convGuid) return; // not a Gipity-bound session - nothing to capture
 
   await ensureAttached(convGuid, hook);

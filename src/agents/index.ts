@@ -9,7 +9,7 @@ import { codexAdapter } from './codex.js';
 import { grokAdapter } from './grok.js';
 import { agyAdapter } from './agy.js';
 
-export type { RemoteAgentAdapter, HeadlessArgsOpts } from './types.js';
+export type { RemoteAgentAdapter, HeadlessArgsOpts, CaptureHookInput, CaptureParseResult } from './types.js';
 
 /** Picker/help order: Claude first (the default), then the others. */
 export const AGENT_ADAPTERS: RemoteAgentAdapter[] = [

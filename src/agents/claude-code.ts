@@ -7,10 +7,15 @@
  */
 import type { RemoteAgentAdapter } from './types.js';
 import { ensureClaudeInstalled, CLAUDE_PACKAGE } from '../claude-setup.js';
+import { parseTranscript as parseClaudeTranscript } from '../capture/sources/claude-code.js';
+import {
+  userScopeInstallState, ensureGipityPluginInstalled, setupClaudeHooks, removeGipityPluginConfig,
+} from '../setup.js';
 
 export const claudeCodeAdapter: RemoteAgentAdapter = {
   key: 'claude',
   source: 'claude_code',
+  harness: 'claude-code',
   displayName: 'Claude Code',
   providerName: 'Anthropic',
   binary: 'claude',
@@ -52,4 +57,26 @@ export const claudeCodeAdapter: RemoteAgentAdapter = {
     return ensureClaudeInstalled().installed;
   },
   installHint: `npm install -g ${CLAUDE_PACKAGE}`,
+
+  detectEnv() {
+    // Most reliable: CLAUDECODE=1 plus a versioned exec path.
+    if (process.env.CLAUDECODE === '1' || process.env.CLAUDE_CODE_ENTRYPOINT) {
+      const version = process.env.CLAUDE_CODE_EXECPATH?.match(/versions\/([^/\\]+)/)?.[1];
+      return { harness: 'claude-code', harnessVersion: version, harnessSession: process.env.CLAUDE_CODE_SESSION_ID };
+    }
+    return null;
+  },
+
+  capture: {
+    hookKey: 'claude-code',
+    parse: (content, afterUuid) => parseClaudeTranscript(content, afterUuid),
+  },
+
+  setup: {
+    state: () => userScopeInstallState(),
+    install: ensureGipityPluginInstalled,
+    writeProjectHooks: setupClaudeHooks,
+    uninstall: () =>
+      removeGipityPluginConfig() ? 'Gipity Claude Code plugin disabled (hooks removed).' : null,
+  },
 };

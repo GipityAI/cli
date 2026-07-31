@@ -5,6 +5,7 @@ import { getAccountSlug } from '../api.js';
 import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
 import { getAuth } from '../auth.js';
 import { slugify, setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from '../setup.js';
+import { AGENT_ADAPTERS } from '../agents/index.js';
 import { success, error as clrError, info, muted, bold } from '../colors.js';
 import { confirm } from '../utils.js';
 import {
@@ -34,7 +35,7 @@ function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
 
 export const initCommand = new Command('init')
   .description('Link this directory to a project')
-  .addHelpText('after', '\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on this machine (Claude Code, Codex, Grok, Antigravity).')
+  .addHelpText('after', `\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on this machine (${AGENT_ADAPTERS.map(a => a.displayName).join(', ')}).`)
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
   .option('--no-capture', 'Don\'t record Claude Code sessions in this directory to your Gipity project (sets captureHooks: false in .gipity.json)')
@@ -198,7 +199,7 @@ Working with an existing Gipity project:
 
       console.log(success(`Wrote primer files: ${primerSummary}.`));
       if (wantsClaude) {
-        console.log(success('Ready! Run your coding agent here (claude, codex, grok, agy), or `gipity build` to launch one with a picker.'));
+        console.log(success(`Ready! Run your coding agent here (${AGENT_ADAPTERS.map(a => a.key).join(', ')}), or \`gipity build\` to launch one with a picker.`));
         // Recording happens by default (however Claude Code is launched), so
         // say so up front - consent should be explicit, not discovered later.
         if (opts.capture === false) {

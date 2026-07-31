@@ -1045,7 +1045,7 @@ async function pickAgent(lastUsed: string | undefined): Promise<string> {
   listed.forEach((a, i) => {
     const notes: string[] = [];
     if (a.key === lastUsed) notes.push('last used');
-    if ((a.key === 'codex' || a.key === 'agy') && !a.hooksSupportedOnPlatform(process.platform)) {
+    if (!a.hooksSupportedOnPlatform(process.platform)) {
       notes.push('session recording unavailable on Windows');
     }
     const note = notes.length ? `  ${muted(`(${notes.join(', ')})`)}` : '';

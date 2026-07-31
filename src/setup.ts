@@ -295,6 +295,32 @@ export function userScopePluginCurrent(): boolean {
   return userScopeInstallState().current;
 }
 
+/** Remove Gipity's entries from the user-scope Claude Code settings: the
+ *  plugin enablement, the marketplace registration, and any legacy hook
+ *  blocks older CLI versions wrote there. Surgical - everything else in the
+ *  file (the user's own permissions, hooks, other plugins) is untouched.
+ *  Used by `gipity uninstall` via the claude adapter's `setup.uninstall`. */
+export function removeGipityPluginConfig(): boolean {
+  const settingsPath = join(homedir(), '.claude', 'settings.json');
+  if (!existsSync(settingsPath)) return false;
+  let settings: Record<string, any>;
+  try { settings = JSON.parse(readFileSync(settingsPath, 'utf-8')); } catch { return false; }
+
+  let changed = stripGipityHooks(settings);
+  if (settings.enabledPlugins && GIPITY_PLUGIN_ID in settings.enabledPlugins) {
+    delete settings.enabledPlugins[GIPITY_PLUGIN_ID];
+    if (Object.keys(settings.enabledPlugins).length === 0) delete settings.enabledPlugins;
+    changed = true;
+  }
+  if (settings.extraKnownMarketplaces?.[GIPITY_MARKETPLACE_NAME]) {
+    delete settings.extraKnownMarketplaces[GIPITY_MARKETPLACE_NAME];
+    if (Object.keys(settings.extraKnownMarketplaces).length === 0) delete settings.extraKnownMarketplaces;
+    changed = true;
+  }
+  if (changed) writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  return changed;
+}
+
 export function binaryOnPath(bin: string): boolean {
   const probe = spawnSyncCommand(process.platform === 'win32' ? 'where' : 'which', [bin], {
     encoding: 'utf-8',
@@ -394,6 +420,17 @@ export function ensureGrokPluginInstalled(): void {
   }
 }
 
+/** Uninstall the Gipity plugin from Grok Build, if present. Used by
+ *  `gipity uninstall` via the grok adapter's `setup.uninstall`. */
+export function removeGrokPlugin(): boolean {
+  if (!grokInstallState().exists) return false;
+  spawnSyncCommand(resolveCommand('grok'), ['plugin', 'uninstall', 'gipity', '--confirm'], {
+    stdio: 'ignore',
+    timeout: 60_000,
+  });
+  return true;
+}
+
 // --- OpenAI Codex ------------------------------------------------------------
 // Codex has no Claude-plugin compatibility, but it reads the same SKILL.md
 // skill format from the cross-agent `~/.agents/skills` directory (also read by
@@ -438,6 +475,29 @@ export function agentSkillsState(): { current: boolean; skills: string[] } {
 
 export function agySkillsState(): { current: boolean; skills: string[] } {
   return skillsManifestState(AGY_SKILLS_MANIFEST);
+}
+
+/** Remove exactly the skill dirs a manifest recorded (never someone else's
+ *  skills) from `skillsDir`. Returns the count removed. Shared core for the
+ *  Codex/agy adapters' `setup.uninstall`. */
+function removeManifestSkills(skillsDir: string, manifestPath: string): number {
+  const { skills } = skillsManifestState(manifestPath);
+  for (const name of skills) {
+    try { rmSync(join(skillsDir, name), { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+  return skills.length;
+}
+
+/** Remove the Gipity skills copied into Codex's cross-agent ~/.agents/skills.
+ *  Used by `gipity uninstall` via the codex adapter's `setup.uninstall`. */
+export function removeAgentSkills(): number {
+  return removeManifestSkills(AGENTS_SKILLS_DIR, AGENT_SKILLS_MANIFEST);
+}
+
+/** Remove the Gipity skills copied into Antigravity's own global skill root.
+ *  Used by `gipity uninstall` via the agy adapter's `setup.uninstall`. */
+export function removeAgySkills(): number {
+  return removeManifestSkills(AGY_SKILLS_DIR, AGY_SKILLS_MANIFEST);
 }
 
 /** Shared core: clone GipityAI/skills, copy every skill dir with a SKILL.md
@@ -491,16 +551,23 @@ function installSkillsAndHooks(skillsDir: string, manifestPath: string, harnessL
   }
 }
 
+/** Self-gating like ensureGipityPluginInstalled()/ensureGrokPluginInstalled():
+ *  skips instantly when the codex binary is absent, so it's safe to call
+ *  directly (e.g. via the codex adapter's `setup.install`) without a
+ *  binaryOnPath() check at the call site. */
 export function ensureAgentSkillsInstalled(): void {
   if (agentSkillsState().current) return;
+  if (!binaryOnPath('codex')) return;
   installSkillsAndHooks(AGENTS_SKILLS_DIR, AGENT_SKILLS_MANIFEST, 'Codex');
 }
 
 /** Materialize the Gipity skills into Antigravity's global skill root. Mirrors
  *  ensureAgentSkillsInstalled() but targets agy's own directory - see the
- *  AGY_SKILLS_DIR comment above for why it differs from Codex's. */
+ *  AGY_SKILLS_DIR comment above for why it differs from Codex's. Self-gating
+ *  on the agy binary for the same reason. */
 export function ensureAgySkillsInstalled(): void {
   if (agySkillsState().current) return;
+  if (!binaryOnPath('agy')) return;
   installSkillsAndHooks(AGY_SKILLS_DIR, AGY_SKILLS_MANIFEST, 'Antigravity');
 }
 

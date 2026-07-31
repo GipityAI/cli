@@ -23,6 +23,7 @@ import { join } from 'path';
 import type { ChildProcess } from 'child_process';
 import { resolveCommand, spawnCommand } from '../platform.js';
 import { cliVersion } from '../client-context.js';
+import { AGENT_ADAPTERS } from '../agents/index.js';
 
 export interface RelayDiagnostics {
   collected_at?: string;
@@ -35,7 +36,9 @@ export interface RelayDiagnostics {
   uptime_s?: number;
   disk?: { total?: number; free?: number };
   gpu?: string | null;
-  agents?: { claude_code?: string; codex?: string; grok?: string; agy?: string; cursor?: string };
+  /** Keyed by the conversation `source` value ('claude_code', 'codex', …)
+   *  plus the non-agent 'cursor' extra. */
+  agents?: Record<string, string>;
   projects_local?: number;
 }
 
@@ -143,15 +146,19 @@ function localProjectCount(): number | undefined {
 export async function collectDiagnostics(): Promise<RelayDiagnostics> {
   const cores = (() => { try { return cpus(); } catch { return []; } })();
   // Run the subprocess probes concurrently (each already bounded + best-effort)
-  // so the whole snapshot costs one timeout, not the sum of four.
-  const [claude, codex, grok, agy, cursor, gpu] = await Promise.all([
-    probeVersion('claude'), probeVersion('codex'), probeVersion('grok'), probeVersion('agy'), probeVersion('cursor'), detectGpu(),
+  // so the whole snapshot costs one timeout, not the sum of four. `cursor` is
+  // a non-agent extra (no adapter - it's not a coding agent Gipity dispatches
+  // to), probed alongside the registry-driven agent binaries.
+  const [versions, cursor, gpu] = await Promise.all([
+    Promise.all(AGENT_ADAPTERS.map((a) => probeVersion(a.binary))),
+    probeVersion('cursor'),
+    detectGpu(),
   ]);
   const agents: RelayDiagnostics['agents'] = {};
-  if (claude) agents.claude_code = claude;
-  if (codex) agents.codex = codex;
-  if (grok) agents.grok = grok;
-  if (agy) agents.agy = agy;
+  AGENT_ADAPTERS.forEach((a, i) => {
+    const v = versions[i];
+    if (v) agents[a.source] = v;
+  });
   if (cursor) agents.cursor = cursor;
 
   return {

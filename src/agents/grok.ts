@@ -9,11 +9,17 @@
  * under GROK_HOOK_EVENT). Like Codex, relay dispatches keep hook capture ON;
  * the daemon doesn't parse Grok's stream into ingest entries.
  */
+import { homedir } from 'os';
+import { join } from 'path';
 import type { RemoteAgentAdapter } from './types.js';
+import { hasEnvPrefix } from './types.js';
+import { parseTranscript as parseGrokTranscript } from '../capture/sources/grok.js';
+import { grokInstallState, ensureGrokPluginInstalled, removeGrokPlugin } from '../setup.js';
 
 export const grokAdapter: RemoteAgentAdapter = {
   key: 'grok',
   source: 'grok',
+  harness: 'grok',
   displayName: 'Grok',
   providerName: 'xAI',
   binary: 'grok',
@@ -58,4 +64,27 @@ export const grokAdapter: RemoteAgentAdapter = {
   },
 
   installHint: 'curl -fsSL https://grok.x.ai/install.sh | sh   (or see docs.x.ai/grok-build)',
+
+  detectEnv() {
+    if (!hasEnvPrefix('GROK_')) return null;
+    return { harness: 'grok', harnessSession: process.env.GROK_SESSION_ID };
+  },
+
+  capture: {
+    hookKey: 'grok',
+    parse: (content, afterUuid, hook) =>
+      parseGrokTranscript(content, afterUuid, { sessionId: hook.session_id }),
+    // Grok's session dir is derivable: ~/.grok/sessions/<urlencoded-cwd>/<sid>/
+    resolveTranscriptPath: (hook) => {
+      if (!hook.session_id) return null;
+      const cwd = hook.cwd ?? process.cwd();
+      return join(homedir(), '.grok', 'sessions', encodeURIComponent(cwd), hook.session_id, 'chat_history.jsonl');
+    },
+  },
+
+  setup: {
+    state: () => grokInstallState(),
+    install: ensureGrokPluginInstalled,
+    uninstall: () => (removeGrokPlugin() ? 'Gipity plugin removed from Grok.' : null),
+  },
 };

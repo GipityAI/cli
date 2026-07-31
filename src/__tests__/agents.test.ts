@@ -34,6 +34,16 @@ describe('agent adapter registry', () => {
       assert.ok(a.displayName && a.providerName, a.key);
     }
   });
+
+  it('capture.hookKey matches harness for every adapter', () => {
+    // hook scripts pass the hook-argv spelling as capture-runner.js's <source>
+    // arg; client-context.ts reports the same spelling as `harness`. Nothing
+    // enforces these stay equal except this test - an independent hookKey
+    // could silently drift from harness and kill capture for that agent.
+    for (const a of AGENT_ADAPTERS) {
+      assert.equal(a.capture.hookKey, a.harness, a.key);
+    }
+  });
 });
 
 describe('claude argv snapshots (relay wire behavior)', () => {

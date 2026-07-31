@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { AGENT_ADAPTERS } from './agents/index.js';
+import { hasEnvPrefix } from './agents/types.js';
 
 /**
  * Best-effort descriptor of what's running the CLI: a human at a terminal vs. an
@@ -34,32 +36,27 @@ export function cliVersion(): string {
   }
 }
 
-function hasEnvPrefix(prefix: string): boolean {
-  return Object.keys(process.env).some((k) => k.startsWith(prefix));
-}
-
 function isCi(): boolean {
   const ci = (process.env.CI ?? '').toLowerCase();
   return ci === '1' || ci === 'true' || !!process.env.GITHUB_ACTIONS;
 }
 
-/** Identify the coding harness from its env footprint. Order = specificity. Exported for tests. */
+/** Identify the coding harness from its env footprint. Order = specificity:
+ *  each agent adapter's detectEnv() is tried in registry order (claude,
+ *  codex, grok, agy today), then the non-agent harnesses below - tools with
+ *  no adapter (no execution surface, no capture) because they're either not
+ *  a coding agent (cursor, ci) or not yet integrated (aider, gemini).
+ *  Exported for tests. */
 export function detectHarness(): Pick<ClientContext, 'harness' | 'harnessVersion' | 'harnessSession'> {
-  // Claude Code is the most reliable: CLAUDECODE=1 plus a versioned exec path.
-  if (process.env.CLAUDECODE === '1' || process.env.CLAUDE_CODE_ENTRYPOINT) {
-    const version = process.env.CLAUDE_CODE_EXECPATH?.match(/versions\/([^/\\]+)/)?.[1];
-    return { harness: 'claude-code', harnessVersion: version, harnessSession: process.env.CLAUDE_CODE_SESSION_ID };
-  }
-  if (hasEnvPrefix('CODEX_')) return { harness: 'codex' };
-  if (hasEnvPrefix('GROK_')) return { harness: 'grok', harnessSession: process.env.GROK_SESSION_ID };
-  // Antigravity (agy) injects ANTIGRAVITY_CONVERSATION_ID into every hook/tool
-  // subprocess it spawns (confirmed live). Check this exact var, not an
-  // 'ANTIGRAVITY_' prefix scan - the Antigravity IDE's own integrated terminal
-  // ambiently sets other ANTIGRAVITY_*-prefixed vars (e.g. ANTIGRAVITY_CLI_ALIAS)
-  // in every shell it spawns, which would false-positive for any user with the
-  // IDE open, even outside a real agy session/hook.
-  if (process.env.ANTIGRAVITY_CONVERSATION_ID) {
-    return { harness: 'agy', harnessSession: process.env.ANTIGRAVITY_CONVERSATION_ID };
+  for (const agent of AGENT_ADAPTERS) {
+    const match = agent.detectEnv?.();
+    if (match) {
+      return {
+        harness: match.harness as ClientContext['harness'],
+        harnessVersion: match.harnessVersion,
+        harnessSession: match.harnessSession,
+      };
+    }
   }
   if (process.env.CURSOR_TRACE_ID || hasEnvPrefix('CURSOR_') || (process.env.TERM_PROGRAM ?? '').toLowerCase().includes('cursor')) {
     return { harness: 'cursor' };

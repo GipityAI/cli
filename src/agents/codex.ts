@@ -12,10 +12,14 @@
  * ~/GipityProjects dirs aren't git repos.
  */
 import type { RemoteAgentAdapter } from './types.js';
+import { hasEnvPrefix } from './types.js';
+import { parseTranscript as parseCodexTranscript } from '../capture/sources/codex.js';
+import { agentSkillsState, ensureAgentSkillsInstalled, setupCodexHooks, removeAgentSkills } from '../setup.js';
 
 export const codexAdapter: RemoteAgentAdapter = {
   key: 'codex',
   source: 'codex',
+  harness: 'codex',
   displayName: 'Codex',
   providerName: 'OpenAI',
   binary: 'codex',
@@ -65,4 +69,24 @@ export const codexAdapter: RemoteAgentAdapter = {
     'Codex runs project hooks only after a one-time approval: run /hooks inside Codex and approve the Gipity entries, or session recording stays off.',
 
   installHint: 'npm install -g @openai/codex',
+
+  detectEnv() {
+    return hasEnvPrefix('CODEX_') ? { harness: 'codex' } : null;
+  },
+
+  capture: {
+    hookKey: 'codex',
+    // Codex hook payloads always carry transcript_path (the rollout file).
+    parse: (content, afterUuid) => parseCodexTranscript(content, afterUuid),
+  },
+
+  setup: {
+    state: () => agentSkillsState(),
+    install: ensureAgentSkillsInstalled,
+    writeProjectHooks: setupCodexHooks,
+    uninstall: () => {
+      const n = removeAgentSkills();
+      return n ? `Removed ${n} Gipity skills from ~/.agents/skills.` : null;
+    },
+  },
 };
