@@ -10,7 +10,7 @@ export const updateCommand = new Command('update')
     console.log('');
     if (result.updated) {
       console.log(success(`Updated ${result.from} → ${result.to}`));
-      console.log(dim('The new version takes effect on your next gipity command.'));
+      console.log(dim(`Installed. This command ran on ${result.from}; everything from here on uses ${result.to}.`));
     } else if (result.reason === 'up-to-date') {
       console.log(success('Already on the latest version.'));
     } else {
