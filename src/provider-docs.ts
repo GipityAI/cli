@@ -6,7 +6,7 @@
  * Run `just sync-docs` to refresh from platform.
  */
 
-export const GEMINI_LLM_MODELS_DOC = `gemini-3.5-flash (Gemini 3.5 Flash, $1.5/$9 per 1M tok, 1049K ctx), gemini-3.1-pro-preview (Gemini 3.1 Pro, $2/$12 per 1M tok, 1049K ctx), gemini-3.1-flash-lite (Gemini 3.1 Flash-Lite, $0.25/$1.5 per 1M tok, 1049K ctx), gemini-3-flash-preview (Gemini 3 Flash, $0.5/$3 per 1M tok, 1049K ctx), gemini-2.5-pro (Gemini 2.5 Pro, $1.25/$10 per 1M tok, 1049K ctx), gemini-2.5-flash (Gemini 2.5 Flash, $0.3/$2.5 per 1M tok, 1049K ctx), gemini-2.5-flash-lite (Gemini 2.5 Flash-Lite, $0.1/$0.4 per 1M tok, 1049K ctx)`;
+export const GEMINI_LLM_MODELS_DOC = `gemini-3.6-flash (Gemini 3.6 Flash, $1.5/$7.5 per 1M tok, 1049K ctx), gemini-3.5-flash (Gemini 3.5 Flash, $1.5/$9 per 1M tok, 1049K ctx), gemini-3.1-pro-preview (Gemini 3.1 Pro, $2/$12 per 1M tok, 1049K ctx), gemini-3.1-flash-lite (Gemini 3.1 Flash-Lite, $0.25/$1.5 per 1M tok, 1049K ctx), gemini-3-flash-preview (Gemini 3 Flash, $0.5/$3 per 1M tok, 1049K ctx), gemini-2.5-pro (Gemini 2.5 Pro, $1.25/$10 per 1M tok, 1049K ctx), gemini-2.5-flash (Gemini 2.5 Flash, $0.3/$2.5 per 1M tok, 1049K ctx), gemini-2.5-flash-lite (Gemini 2.5 Flash-Lite, $0.1/$0.4 per 1M tok, 1049K ctx)`;
 
 export const GEMINI_TTS_VOICES = [
   'Zephyr',
