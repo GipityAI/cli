@@ -13,6 +13,7 @@
  */
 import type { RemoteAgentAdapter } from './types.js';
 import { hasEnvPrefix } from './types.js';
+import { planForInstall, whichFirst } from './self-update.js';
 import { parseTranscript as parseCodexTranscript } from '../capture/sources/codex.js';
 import { agentSkillsState, ensureAgentSkillsInstalled, setupCodexHooks, removeAgentSkills } from '../setup.js';
 
@@ -69,6 +70,12 @@ export const codexAdapter: RemoteAgentAdapter = {
     'Codex runs project hooks only after a one-time approval: run /hooks inside Codex and approve the Gipity entries, or session recording stays off.',
 
   installHint: 'npm install -g @openai/codex',
+
+  updatePlan() {
+    // npm-global installs only; brew/other channels stay manual (no
+    // self-updater fallback - see agents/self-update.ts's same-channel rule).
+    return planForInstall(whichFirst('codex'), '@openai/codex', null);
+  },
 
   detectEnv() {
     return hasEnvPrefix('CODEX_') ? { harness: 'codex' } : null;

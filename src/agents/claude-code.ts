@@ -6,6 +6,7 @@
  * break web-CLI `/cc` for everyone.
  */
 import type { RemoteAgentAdapter } from './types.js';
+import { planForInstall, whichFirst } from './self-update.js';
 import { ensureClaudeInstalled, CLAUDE_PACKAGE } from '../claude-setup.js';
 import { parseTranscript as parseClaudeTranscript } from '../capture/sources/claude-code.js';
 import {
@@ -57,6 +58,14 @@ export const claudeCodeAdapter: RemoteAgentAdapter = {
     return ensureClaudeInstalled().installed;
   },
   installHint: `npm install -g ${CLAUDE_PACKAGE}`,
+
+  updatePlan() {
+    // Same-channel rule (see agents/self-update.ts): npm-global installs
+    // (what ensureClaudeInstalled sets up) update via npm; anything else gets
+    // Anthropic's own `claude update` - the native installer's self-updater,
+    // which is a harmless error on installs it doesn't manage.
+    return planForInstall(whichFirst('claude'), CLAUDE_PACKAGE, ['claude', 'update']);
+  },
 
   detectEnv() {
     // Most reliable: CLAUDECODE=1 plus a versioned exec path.

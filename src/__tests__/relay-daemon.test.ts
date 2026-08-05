@@ -36,6 +36,7 @@ let heartbeats = 0;
 // Most recent heartbeat body that carried a diagnostics snapshot (the daily
 // refresh tick). Bare 60s pings send `{}` and leave this untouched.
 let lastDiagnosticsBody: any = null;
+let diagnosticsCount = 0;
 const acks: Array<{ guid: string; status: string; error?: string | null }> = [];
 let nextStatusOverride: number | null = null;
 let heartbeatStatusOverride: number | null = null;
@@ -50,6 +51,7 @@ function resetMock(): void {
   pending = [];
   heartbeats = 0;
   lastDiagnosticsBody = null;
+  diagnosticsCount = 0;
   acks.length = 0;
   nextStatusOverride = null;
   heartbeatStatusOverride = null;
@@ -68,7 +70,7 @@ before(async () => {
     if (req.method === 'POST' && url === '/remote-devices/heartbeat') {
       heartbeats++;
       const hb = await readJson(req).catch(() => ({}));
-      if (hb && hb.diagnostics) lastDiagnosticsBody = hb;
+      if (hb && hb.diagnostics) { lastDiagnosticsBody = hb; diagnosticsCount++; }
       if (heartbeatStatusOverride != null) {
         res.statusCode = heartbeatStatusOverride;
         return res.end(JSON.stringify({ error: { code: 'X', message: 'override' } }));
@@ -431,6 +433,58 @@ describe('daemon: web-attached files trigger a pre-run sync', () => {
     // The agent spawn must be FIRST - any sync (the post-dispatch push-back)
     // comes after it.
     assert.ok(lines[0].startsWith('ARGS::build --agent claude -p'), `expected claude first: ${lines.join(' | ')}`);
+  });
+});
+
+describe('daemon: agent auto-updates (stubbed agent, real daemon path)', () => {
+  it('runs the daily pass on the first tick, upgrades the stub, logs it, and re-sends diagnostics', async () => {
+    resetMock();
+    const { home } = freshHome();
+
+    // A fake agent binary: `--version` reads a state file, `update` bumps it.
+    const versionFile = join(home, 'stub-version.txt');
+    writeFileSync(versionFile, '1.0.0\n');
+    const stub = join(home, 'stub-agent.sh');
+    writeFileSync(stub, `#!/bin/sh\nif [ "$1" = "update" ]; then echo "2.0.0" > "${versionFile}"; echo updated; exit 0; fi\ncat "${versionFile}"\n`, { mode: 0o755 });
+
+    const r = await runCliAsync(
+      ['--api-base', apiBase, 'relay', 'run'],
+      {
+        // The spawn helper sets DISABLE_AUTOUPDATER=1 by default, which is the
+        // agent-updates kill-switch too; the explicit `on` below then beats
+        // the helper's ambient CI=1 guard.
+        enableUpdater: true,
+        env: {
+          HOME: home,
+          GIPITY_RELAY_CLAUDE_CMD: 'true',
+          GIPITY_RELAY_HEARTBEAT_MS: '150',
+          GIPITY_RELAY_POLL_TIMEOUT_MS: '300',
+          // Wider than the usual 4s: this run has to fit TWO diagnostics
+          // collections (startup + post-update refresh), and each one runs
+          // subprocess/GPU probes that can take seconds on a loaded machine.
+          GIPITY_RELAY_MAX_RUN_MS: '9000',
+          GIPITY_RELAY_AGENT_UPDATES: 'on',
+          GIPITY_RELAY_AGENT_UPDATE_STUB: stub,
+        },
+        cwd: home,
+        timeout: 15_000,
+      },
+    );
+
+    // The pass actually ran the stub's update command...
+    assert.equal(readFileSync(versionFile, 'utf-8').trim(), '2.0.0');
+    // ...the daemon logged the upgrade with before → after versions...
+    assert.match(r.stderr, /agent updated: stub_agent 1\.0\.0 -> 2\.0\.0/);
+    // ...and invalidated + re-sent the diagnostics snapshot so the server
+    // sees fresh versions right away (startup snapshot + post-update refresh).
+    assert.ok(diagnosticsCount >= 2, `expected >=2 diagnostics snapshots, got ${diagnosticsCount}`);
+  });
+
+  it('stays fully quiet under the default test/CI guards (no opt-in env)', async () => {
+    resetMock();
+    const { home } = freshHome();
+    const r = await runDaemon(home, 'true');
+    assert.doesNotMatch(r.stderr, /agent update/);
   });
 });
 

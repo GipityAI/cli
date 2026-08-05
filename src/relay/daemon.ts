@@ -49,6 +49,7 @@ import { ensureRelayAgentToken } from './agent-token.js';
 import { redactEntries, redactString, normalizeSecrets } from './redact.js';
 import { getMachineId } from './machine-id.js';
 import { collectDiagnostics } from './diagnostics.js';
+import { runAgentUpdates, agentUpdateInProgress } from './agent-updates.js';
 import { SessionPool, PoolFullError, type QueryFactory, type SessionStateKind } from './session-pool.js';
 import { getConfig } from '../config.js';
 import { getAccountSlug } from '../api.js';
@@ -369,15 +370,53 @@ async function heartbeatLoop(ctx: Ctx): Promise<number> {
   // DIAGNOSTICS_INTERVAL_MS after, but only if the user consented. Between
   // refreshes the heartbeat is a bare liveness ping.
   let lastDiagnosticsAt = 0;
+  // Agent auto-updates: same daily cadence, fire-and-forget so a slow npm
+  // install never delays the liveness ping. Stamped only when a pass actually
+  // ran - a tick deferred for in-flight dispatches retries on the next 60s
+  // beat instead of waiting another day. After a real upgrade the loop is
+  // asked for a fresh diagnostics snapshot + poked, so the server sees the
+  // new version on the next ping instead of tomorrow. The ask is a sticky
+  // flag (NOT a lastDiagnosticsAt reset): the pass often finishes while the
+  // startup diagnostics collection is still in flight, and that collection
+  // stamping lastDiagnosticsAt on completion would silently swallow a reset.
+  let lastAgentUpdateAt = 0;
+  let agentUpdatePass: Promise<void> | null = null;
+  let diagnosticsRefreshNeeded = false;
   while (!ctx.abort.signal.aborted) {
     try {
+      if (!agentUpdatePass && state.agentUpdatesEnabled() && Date.now() - lastAgentUpdateAt >= DIAGNOSTICS_INTERVAL_MS) {
+        if (getRunningDispatchGuids().length > 0) {
+          log('debug', 'agent updates deferred - dispatches in flight');
+        } else {
+          agentUpdatePass = runAgentUpdates({
+            log,
+            busy: () => getRunningDispatchGuids().length > 0,
+            signal: ctx.abort.signal,
+          }).then((results) => {
+            lastAgentUpdateAt = Date.now();
+            if (results.some(r => r.status === 'updated')) {
+              diagnosticsRefreshNeeded = true;
+              pokeHeartbeat();
+            }
+          }).catch((err: any) => {
+            lastAgentUpdateAt = Date.now();
+            log('warn', 'agent update pass failed', { err: err?.message });
+          }).finally(() => { agentUpdatePass = null; });
+        }
+      }
       let body: Record<string, unknown> = {};
-      if (state.diagnosticsConsented() && Date.now() - lastDiagnosticsAt >= DIAGNOSTICS_INTERVAL_MS) {
+      if (state.diagnosticsConsented() && (diagnosticsRefreshNeeded || Date.now() - lastDiagnosticsAt >= DIAGNOSTICS_INTERVAL_MS)) {
+        // Consume the refresh ask BEFORE collecting: an update pass that
+        // completes while this collection is in flight sets it again, and it
+        // must survive into the next beat (this collection's probes started
+        // too early to see the new binary).
+        diagnosticsRefreshNeeded = false;
         try {
           body = { diagnostics: await collectDiagnostics() };
           lastDiagnosticsAt = Date.now();
         } catch (err: any) {
           // Never let a diagnostics probe failure block the liveness ping.
+          diagnosticsRefreshNeeded = true; // don't lose a consumed ask
           log('debug', 'diagnostics collection failed', { err: err?.message });
         }
       }
@@ -546,6 +585,15 @@ async function dispatchLoop(ctx: Ctx, opts: DaemonOptions): Promise<number> {
     }
 
     await waitForSlot();
+    if (ctx.abort.signal.aborted) break;
+
+    // Hold off claiming while the daily agent update is swapping binaries -
+    // spawning `claude` mid-`npm install -g` could hit a half-written
+    // install. The dispatch stays queued server-side and is claimed the
+    // moment the pass finishes (bounded by its hard timeout).
+    while (agentUpdateInProgress() && !ctx.abort.signal.aborted) {
+      await sleep(1000, ctx.abort.signal);
+    }
     if (ctx.abort.signal.aborted) break;
 
     try {

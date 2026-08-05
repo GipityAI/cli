@@ -174,6 +174,30 @@ test('gipity relay status --json reports daemon_running', async () => {
   assert.equal(parsed.daemon_running, false);
 });
 
+test('gipity relay updates toggles and persists the auto-update preference', async () => {
+  const home = pairedHome();
+
+  // Status view (test env has CI=1, so the effective state shows the override).
+  let r = await run(['relay', 'updates'], home);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Agent auto-updates: .*on \(default/);
+  assert.match(r.stdout, /overridden off/);
+
+  r = await run(['relay', 'updates', 'off'], home);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Agent auto-updates off/);
+  let state = JSON.parse(readFileSync(join(home, '.gipity', 'relay.json'), 'utf-8'));
+  assert.equal(state.agent_updates, false);
+
+  r = await run(['relay', 'updates', 'on'], home);
+  assert.equal(r.status, 0, r.stderr);
+  state = JSON.parse(readFileSync(join(home, '.gipity', 'relay.json'), 'utf-8'));
+  assert.equal(state.agent_updates, true);
+
+  r = await run(['relay', 'updates', 'sideways'], home);
+  assert.equal(r.status, 1);
+});
+
 test('gipity relay log prints last lines when log file exists', async () => {
   const home = pairedHome();
   // The daemon log path is under ~/.gipity/. Pre-seed it.

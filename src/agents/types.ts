@@ -70,6 +70,20 @@ export interface AgentSetup {
   writeProjectHooks?(): void;
 }
 
+/** How to bring this agent's installed binary to the latest release,
+ *  unattended. Produced by an adapter's `updatePlan()`; consumed by the
+ *  relay daemon's daily maintenance tick (relay/agent-updates.ts). */
+export interface AgentUpdatePlan {
+  /** Argv (spawned without a shell) that updates the install in place. */
+  argv: string[];
+  /** Human-readable mechanism label for log lines ('npm', 'claude update'). */
+  label: string;
+  /** npm package name when `argv` is an npm-global install. Lets the runner
+   *  pre-check the registry and skip the spawn entirely when already
+   *  current (npm re-installs even at the same version). */
+  pkg?: string;
+}
+
 /** True if any env var name starts with `prefix`. Shared by agent env
  *  detection (Codex, Grok) and the passive-harness checks in
  *  client-context.ts (aider). */
@@ -145,6 +159,11 @@ export interface RemoteAgentAdapter {
   /** Best-effort auto-install when the binary is missing. Returns true when
    *  the binary is usable afterwards. Absent = we can only print a hint. */
   ensureInstalled?(): boolean;
+  /** How to update the installed binary to latest, unattended - or null when
+   *  the current install type has no safe unattended path (GUI installs,
+   *  unrecognized package managers). Absent = never auto-updated. Consumed
+   *  by the relay daemon's daily maintenance tick (relay/agent-updates.ts). */
+  updatePlan?(): AgentUpdatePlan | null;
   /** Copy-paste install hint when auto-install is unavailable or failed. */
   installHint: string;
 

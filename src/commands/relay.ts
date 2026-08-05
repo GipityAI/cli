@@ -254,6 +254,38 @@ relayCommand
       : `${success('Diagnostics sharing off.')} ${muted('No host/version data will be sent.')}`);
   });
 
+// ─── gipity relay updates [on|off] ─────────────────────────────────────
+
+relayCommand
+  .command('updates [state]')
+  .description('View or set daily auto-update of installed coding agents (on|off)')
+  .action((arg?: string) => {
+    if (arg === undefined) {
+      const stored = state.getAgentUpdatesPref();
+      const effective = state.agentUpdatesEnabled();
+      const label = stored === undefined ? 'on (default, not yet chosen)' : stored ? 'on' : 'off';
+      console.log(`Agent auto-updates: ${effective ? success(label) : muted(label)}`);
+      if (!effective && stored !== false) {
+        console.log(muted('  (overridden off by DISABLE_AUTOUPDATER / GIPITY_RELAY_AGENT_UPDATES / CI)'));
+      }
+      console.log(muted('  Once a day, while idle, the relay brings its coding agents (Claude Code, Codex) to the latest release.'));
+      console.log(muted('  Upgrades appear in `gipity relay log` and in the device diagnostics on the web.'));
+      console.log(muted('  Set with `gipity relay updates on` / `gipity relay updates off`.'));
+      return;
+    }
+    const on = /^(on|true|yes|1|enable)$/i.test(arg);
+    const off = /^(off|false|no|0|disable)$/i.test(arg);
+    if (!on && !off) {
+      console.log(clrError("Expected 'on' or 'off'."));
+      process.exitCode = 1;
+      return;
+    }
+    state.setAgentUpdatesPref(on);
+    console.log(on
+      ? `${success('Agent auto-updates on.')} ${muted("Runs on the relay daemon's next daily maintenance tick.")}`
+      : `${success('Agent auto-updates off.')} ${muted('Installed agents only change when you update them yourself.')}`);
+  });
+
 // ─── gipity relay rename <name> ────────────────────────────────────────
 
 relayCommand

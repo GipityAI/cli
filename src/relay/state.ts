@@ -41,6 +41,11 @@ export interface RelayState {
    *  `false` = opted out. Default-on; user can decline at setup or later via
    *  `gipity relay diagnostics off`. See {@link diagnosticsConsented}. */
   diagnostics_consent?: boolean;
+  /** Tri-state preference for the daemon's daily auto-update of installed
+   *  coding agents (Claude Code, Codex): `undefined` = default (on), explicit
+   *  `true`/`false` via `gipity relay updates on|off`. See
+   *  {@link agentUpdatesEnabled}. */
+  agent_updates?: boolean;
   /** Long-lived gip_at_* agent API token the daemon exports (as GIPITY_TOKEN)
    *  to spawned children (`gipity sync`, `gipity claude -p`). Children then
    *  authenticate statelessly instead of racing sibling processes on the
@@ -74,6 +79,7 @@ export function loadState(): RelayState {
       relay_enabled: typeof raw.relay_enabled === 'boolean' ? raw.relay_enabled : undefined,
       onboard_shown: Boolean(raw.onboard_shown),
       diagnostics_consent: typeof raw.diagnostics_consent === 'boolean' ? raw.diagnostics_consent : undefined,
+      agent_updates: typeof raw.agent_updates === 'boolean' ? raw.agent_updates : undefined,
       agent_token: typeof raw.agent_token === 'string' ? raw.agent_token : null,
       agent_token_guid: typeof raw.agent_token_guid === 'string' ? raw.agent_token_guid : null,
     };
@@ -183,6 +189,35 @@ export function diagnosticsConsented(): boolean {
   const env = process.env.GIPITY_NO_DIAGNOSTICS ?? process.env.DO_NOT_TRACK;
   if (env && env !== '0' && env.toLowerCase() !== 'false') return false;
   return loadState().diagnostics_consent !== false;
+}
+
+// ─── Agent auto-updates (tri-state, default-on) ────────────────────────
+
+/** Stored preference: `undefined` = default (on); `true`/`false` = explicit. */
+export function getAgentUpdatesPref(): boolean | undefined {
+  return loadState().agent_updates;
+}
+
+export function setAgentUpdatesPref(on: boolean): void {
+  mutate(s => { s.agent_updates = on; });
+}
+
+/** Effective switch for the daemon's daily agent auto-update pass. Default-on
+ *  unless the user opted out (`gipity relay updates off`), the CLI-updater
+ *  kill-switch is set (DISABLE_AUTOUPDATER=1 - one switch stops ALL
+ *  unattended installs on the machine), an explicit env override is present
+ *  (GIPITY_RELAY_AGENT_UPDATES=off), or we're in a CI/test run (never spawn
+ *  a real `npm install -g` from a test-driven daemon). */
+export function agentUpdatesEnabled(): boolean {
+  if (process.env.DISABLE_AUTOUPDATER === '1') return false;
+  const env = (process.env.GIPITY_RELAY_AGENT_UPDATES || '').toLowerCase();
+  if (['0', 'off', 'false', 'no'].includes(env)) return false;
+  // An explicit opt-in beats the ambient CI/test guard below - that's how the
+  // daemon integration test drives a real pass (against the stubbed update
+  // command; see agent-updates.ts GIPITY_RELAY_AGENT_UPDATE_STUB).
+  if (['1', 'on', 'true', 'yes'].includes(env)) return true;
+  if (process.env.CI || process.env.NODE_ENV === 'test') return false;
+  return loadState().agent_updates !== false;
 }
 
 // ─── Daemon PID file (lives at ~/.gipity/relay.pid) ────────────────────
