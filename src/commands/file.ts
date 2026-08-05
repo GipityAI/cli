@@ -50,9 +50,13 @@ fileCommand
 
 fileCommand
   .command('url <path>')
-  .description('Durable public URL for a project file - no deploy needed. Reachable by browsers, GPU jobs, and external services the moment the file syncs; ideal for throwaway test fixtures (delete the file to revoke the link).')
+  .description('Durable public URL for a project file - no deploy needed')
   .option('--download', 'URL forces a download (Content-Disposition: attachment)')
   .option('--json', 'Output as JSON')
+  .addHelpText('after', `
+Reachable by browsers, GPU jobs, and external services the moment the file
+syncs; ideal for throwaway test fixtures (delete the file to revoke the link).
+`)
   .action((path: string, opts) => run('Url', async () => {
     const { config } = await resolveProjectContext();
     const qs = new URLSearchParams({ path });

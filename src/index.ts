@@ -187,6 +187,7 @@ const SKILL_DOCS: Record<string, string> = {
   key: 'app-auth',
   realtime: 'app-realtime',
   job: 'jobs',
+  upload: 'jobs',
   sandbox: 'sandbox-tools',
   gmail: 'google-services',
   email: 'email',

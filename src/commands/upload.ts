@@ -28,21 +28,18 @@ interface CompleteResponse {
 // (Uploading into the project tree with `gipity push` does NOT give a public URL
 // until you deploy; this does.)
 export const uploadCommand = new Command('upload')
-  .description(`Upload a local file and print a durable, worker-reachable URL for it.
-
-The URL works immediately - no \`gipity deploy\` - and any job or function can
-fetch it. Use it to hand a GPU/CPU job a real input file when testing end-to-end:
-
-  gipity upload song.mp3
-  gipity job submit split-stems --data '{"audio_url":"<printed url>"}'
-
-By default the file is PUBLIC: a plain \`media.gipity.ai\` CDN url that resolves
-from anywhere, so a cloud worker can always fetch it. Pass --private for a
-token-signed serve url instead (reachable only by holders of the url).`)
+  .description('Upload a file and print a durable public URL (works immediately, no deploy)')
   .argument('<file>', 'Local file to upload')
   .option('--private', 'Store as a private token-signed serve URL instead of a public CDN url')
   .option('--content-type <mime>', 'Override the content type (default: detected from the file extension)')
   .option('--json', 'Output as JSON')
+  .addHelpText('after', `
+Public by default (a media.gipity.ai CDN url any job or function can fetch);
+--private mints a token-signed serve url instead. Example:
+
+  gipity upload song.mp3
+  gipity job submit split-stems --data '{"audio_url":"<printed url>"}'
+`)
   .action((file: string, opts) => run('Upload', async () => {
     const { config } = await resolveProjectContext();
 

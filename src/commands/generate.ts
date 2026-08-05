@@ -175,19 +175,14 @@ function readInputImages(paths: string[]): { data: string; mime_type: string }[]
 // ── IMAGE ──────────────────────────────────────────────────────────────
 
 const imageCommand = new Command('image')
-  .description(`Generate an image from a text prompt, or EDIT existing images with --input.
-
+  .description('Generate an image from a text prompt, or edit existing images with --input')
+  .addHelpText('after', `
 Models: ${IMAGE_MODELS_DOC}
 
 Editing (--input): pass one or more source images and the prompt becomes an edit
 instruction applied to them - "make it night time", "add a hat", "remove the car
 in the background", or compose several inputs together. Editing routes to Gemini
-automatically. This is the first-party way to exercise the image-edit flow from
-the CLI; the CLI reads the file bytes itself, so there is no base64/argv fiddling.
-
-Gemini-specific options:
-  --aspect-ratio   Control output shape: ${IMAGE_GEMINI_ASPECT_RATIOS}
-  --image-size     Control resolution: ${IMAGE_GEMINI_SIZES} (default: 1K)
+automatically; the CLI reads the file bytes itself, so there is no base64/argv fiddling.
 
 Examples:
   gipity generate image "a cat wearing a top hat"
@@ -195,7 +190,8 @@ Examples:
   gipity generate image "put the person in the first photo into the second scene" --input person.png --input scene.png
   gipity generate image "landscape sunset" --provider gemini --aspect-ratio 16:9 --image-size 2K
   gipity generate image "product photo" --provider openai --model gpt-image-2 --size 1536x1024 --quality high
-  gipity generate image "abstract art" --provider bfl --model flux-2-pro -o art.png`)
+  gipity generate image "abstract art" --provider bfl --model flux-2-pro -o art.png
+`)
   .argument('<prompt>', 'Text description of the image, or (with --input) the edit instruction to apply')
   .option('--input <file>', 'Source image to edit/compose (repeatable). With --input the prompt is an edit instruction; routes to Gemini.', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--provider <provider>', 'Image provider: openai, bfl, or gemini (default: bfl)')
@@ -255,13 +251,9 @@ Examples:
 // ── VIDEO ──────────────────────────────────────────────────────────────
 
 const videoCommand = new Command('video')
-  .description(`Generate a short video (up to 8 seconds) from a text prompt using Google Veo.
-
+  .description('Generate a short video (up to 8 seconds) from a text prompt using Google Veo')
+  .addHelpText('after', `
 Models: ${VIDEO_MODELS_DOC}
-
-Options:
-  --aspect   16:9 (landscape, default), 9:16 (portrait/vertical), 1:1 (square)
-  --resolution   720p (default), 1080p, 4k
 
 Tips:
   - Describe the scene, camera movement, lighting, and any dialogue
@@ -271,7 +263,8 @@ Tips:
 Examples:
   gipity generate video "a bird flying over a mountain lake at sunset"
   gipity generate video "close-up of coffee being poured" --model veo-3.1-fast-generate-preview
-  gipity generate video "vertical dance video" --aspect 9:16 --resolution 1080p -o dance.mp4`)
+  gipity generate video "vertical dance video" --aspect 9:16 --resolution 1080p -o dance.mp4
+`)
   .argument('<prompt>', 'Description of the video scene, action, camera movement, and dialogue')
   .option('--model <model>', 'Veo model: veo-3.1-generate-preview (quality), veo-3.1-fast-generate-preview (speed), veo-3.1-lite-generate-preview (budget)')
   .option('--aspect <ratio>', 'Aspect ratio: 16:9 (landscape), 9:16 (portrait), 1:1 (square)')
@@ -312,20 +305,20 @@ Examples:
 // ── SPEECH ─────────────────────────────────────────────────────────────
 
 const speechCommand = new Command('speech')
-  .description(`Generate speech audio from text using text-to-speech.
-
+  .description('Generate speech audio from text using text-to-speech')
+  .addHelpText('after', `
 Providers: ${Object.entries(TTS_PROVIDER_DESCRIPTIONS).map(([k, v]) => `${k} - ${v}`).join('\n  ')}
 
-Gemini-specific options:
-  --language     BCP-47 language code (e.g. ja-JP, es-ES, fr-FR). 60+ languages supported.
-  --speakers     Multi-speaker mode (up to 2). JSON array: [{"name":"Joe","voice":"Kore"},{"name":"Jane","voice":"Puck"}]
-                 When using multi-speaker, format your text as "Name: dialogue" on each line.
+Multi-speaker (--speakers, Gemini only): JSON array like
+[{"name":"Joe","voice":"Kore"},{"name":"Jane","voice":"Puck"}]; format the
+text as "Name: dialogue" on each line.
 
 Examples:
   gipity generate speech "Hello, welcome to Gipity!"
   gipity generate speech "こんにちは世界" --provider gemini --voice Kore --language ja-JP
   gipity generate speech "Bonjour le monde" --provider gemini --language fr-FR
-  gipity generate speech 'Joe: Hey!\\nJane: Hi there!' --provider gemini --speakers '[{"name":"Joe","voice":"Charon"},{"name":"Jane","voice":"Leda"}]'`)
+  gipity generate speech 'Joe: Hey!\\nJane: Hi there!' --provider gemini --speakers '[{"name":"Joe","voice":"Charon"},{"name":"Jane","voice":"Leda"}]'
+`)
   .argument('<text>', 'Text to convert to speech (max 5000 characters)')
   .option('--provider <provider>', 'TTS provider: elevenlabs (default), openai, or gemini')
   .option('--voice <voice>', 'Voice ID or name (provider-specific)')
@@ -374,8 +367,8 @@ Examples:
 // ── MUSIC ──────────────────────────────────────────────────────────────
 
 const musicCommand = new Command('music')
-  .description(`Generate music from a text prompt using AI.
-
+  .description('Generate music from a text prompt using AI')
+  .addHelpText('after', `
 The model is chosen from the platform's music catalog. Omit --model to use the
 default; pass --model <id> only if you want a specific one (see the catalog with
 \`gipity service call music/models --get\`).
@@ -388,7 +381,8 @@ Tips:
 Examples:
   gipity generate music "chill lo-fi beat for studying"
   gipity generate music "epic orchestral battle theme" --duration 60 -o src/assets/audio/theme.mp3
-  gipity generate music "indie pop chorus" --vocals --duration 20`)
+  gipity generate music "indie pop chorus" --vocals --duration 20
+`)
   .argument('<prompt>', 'Text description of the music to generate')
   .option('--duration <seconds>', 'Clip length in seconds (default 30; max depends on the model)', (v) => parseInt(v, 10))
   .option('--model <model>', 'Music model id (default: platform default)')
@@ -428,8 +422,8 @@ Examples:
 // ── SOUND ──────────────────────────────────────────────────────────────
 
 const soundCommand = new Command('sound')
-  .description(`Generate a sound effect from a text description using AI.
-
+  .description('Generate a sound effect from a text description using AI')
+  .addHelpText('after', `
 Always billed to you (the caller) - the app's service billing_mode does not
 apply to direct generation, so there is never a reason to flip a service to
 owner_pays just to create assets.
@@ -442,7 +436,8 @@ Tips:
 Examples:
   gipity generate sound "cartoon character saying oof"
   gipity generate sound "thunder rolling in the distance" --duration 5
-  gipity generate sound "sci-fi laser blast" -o src/assets/sounds/laser.mp3`)
+  gipity generate sound "sci-fi laser blast" -o src/assets/sounds/laser.mp3
+`)
   .argument('<text>', 'Text description of the sound effect (max 1000 characters)')
   .option('--duration <seconds>', 'Clip length in seconds (0.5-30; default: automatic)', (v) => parseFloat(v))
   .option('--influence <n>', 'How closely to follow the prompt, 0.0-1.0 (higher = more literal)', (v) => parseFloat(v))

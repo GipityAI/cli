@@ -203,10 +203,15 @@ dbCommand
 
 dbCommand
   .command('checkpoint')
-  .description('Snapshot every table so a write test can be undone. Take one before exercising a real write path (page eval on the deployed app, fn call, workflow run), then `gipity db restore` to put the data back exactly as it was - no hand-written SQL to scrub test strings out of real content.')
+  .description('Snapshot every table so a write test can be undone with `gipity db restore`')
   .option('--database <name>', 'Database name')
   .option('--drop', 'Discard the existing checkpoint without restoring (keep whatever the run wrote)')
   .option('--json', 'Output as JSON')
+  .addHelpText('after', `
+Take one before exercising a real write path (page eval on the deployed app,
+fn call, workflow run), then \`gipity db restore\` to put the data back exactly
+as it was - no hand-written SQL to scrub test strings out of real content.
+`)
   .action((opts) => run('Checkpoint', async () => {
     const config = requireConfig();
     const dbName = await resolveDatabase(config.projectGuid, opts.database);
