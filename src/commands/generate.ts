@@ -264,11 +264,13 @@ Examples:
   gipity generate video "a bird flying over a mountain lake at sunset"
   gipity generate video "close-up of coffee being poured" --model veo-3.1-fast-generate-preview
   gipity generate video "vertical dance video" --aspect 9:16 --resolution 1080p -o dance.mp4
+  gipity generate video "a wave crashing" --duration 4 --model veo-3.1-lite-generate-preview
 `)
   .argument('<prompt>', 'Description of the video scene, action, camera movement, and dialogue')
   .option('--model <model>', 'Veo model: veo-3.1-generate-preview (quality), veo-3.1-fast-generate-preview (speed), veo-3.1-lite-generate-preview (budget)')
   .option('--aspect <ratio>', 'Aspect ratio: 16:9 (landscape), 9:16 (portrait), 1:1 (square)')
   .option('--resolution <res>', 'Video resolution: 720p, 1080p, 4k')
+  .option('--duration <seconds>', 'Clip length in seconds. Veo models: 4, 6, or 8 (8 required at 1080p/4K); omni-flash: 3-10. Default 8. Billing is per second, so shorter is cheaper.')
   .option('-o, --output <file>', 'Output path (default ./generated.mp4). For a clip your app ships, write it into the source tree so it deploys, e.g. -o src/assets/video/clip.mp4; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
@@ -280,6 +282,7 @@ Examples:
         model: opts.model,
         aspect_ratio: opts.aspect,
         resolution: opts.resolution,
+        duration_seconds: opts.duration ? Number(opts.duration) : undefined,
       });
       // Veo runs 30-120s; the bouncing bar + timer keeps the wait honest.
       const result = opts.json
