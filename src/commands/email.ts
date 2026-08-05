@@ -77,7 +77,7 @@ emailCommand
     if (opts.replyTo) payload.replyTo = opts.replyTo;
     if (opts.fromName) payload.fromName = opts.fromName;
 
-    const res = await post<{ data: { sent: number; skipped: number; results: { to: string; status: string }[] } }>(
+    const res = await post<{ data: { sent: number; skipped: number; results: { to: string; status: string; reason?: string }[] } }>(
       `/api/${config.projectGuid}/services/email/send`, payload,
     );
 
@@ -85,32 +85,37 @@ emailCommand
     const { sent, skipped, results } = res.data;
     if (sent > 0) console.log(success(`✓ Sent to ${sent} recipient${sent === 1 ? '' : 's'}.`));
     else console.log(warning(`Nothing sent (${skipped} skipped).`));
-    for (const r of results) console.log(muted(`  ${r.to} — ${r.status}`));
+    for (const r of results) {
+      console.log(muted(`  ${r.to} — ${r.status}${r.reason ? `: ${r.reason}` : ''}`));
+    }
   }));
 
 // --- gipity email log ---
-// Recent email() sends from the credits ledger (operation = email_send).
+// Recent email() activity from the credits ledger: delivered sends
+// (operation = email_send) plus skipped attempts (email_skip, 0-credit rows
+// recording unsubscribed/blocked/not-configured recipients).
 emailCommand
   .command('log')
-  .description('Recent email() sends from your app')
+  .description('Recent email() sends and skipped attempts from your app')
   .option('--range <range>', 'Time range (24h, 7d, 30d)', '7d')
   .option('--limit <n>', 'Max rows', '50')
   .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Email', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
-    const res = await get<{ data: { totals: { n: number; credits: number }; items: Array<{ created_at: string; credits_deducted: string; detail: { to?: string; subject?: string } | null }> } }>(
-      `/account/logs/credits?operations=email_send&app_guid=${config.projectGuid}&range=${encodeURIComponent(opts.range)}&limit=${encodeURIComponent(opts.limit)}`,
+    const res = await get<{ data: { totals: { n: number; credits: number }; items: Array<{ created_at: string; credits_deducted: string; detail: { to?: string; subject?: string; status?: string } | null }> } }>(
+      `/account/logs/credits?operations=email_send,email_skip&app_guid=${config.projectGuid}&range=${encodeURIComponent(opts.range)}&limit=${encodeURIComponent(opts.limit)}`,
     );
 
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     const { totals, items } = res.data;
-    if (!items.length) { console.log(muted('No email() sends in this range.')); return; }
-    console.log(bold(`${totals.n} send${totals.n === 1 ? '' : 's'} · ${totals.credits} credit${totals.credits === 1 ? '' : 's'}`));
+    if (!items.length) { console.log(muted('No email() activity in this range (sends and skipped attempts both appear here).')); return; }
+    console.log(bold(`${totals.n} attempt${totals.n === 1 ? '' : 's'} · ${totals.credits} credit${totals.credits === 1 ? '' : 's'}`));
     for (const r of items) {
       const when = new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 16);
       const to = r.detail?.to ?? '—';
       const subj = r.detail?.subject ? ` · ${r.detail.subject}` : '';
-      console.log(`  ${muted(when)}  ${to}${muted(subj)}`);
+      const status = r.detail?.status ? ` [skipped: ${r.detail.status}]` : '';
+      console.log(`  ${muted(when)}  ${to}${status ? warning(status) : ''}${muted(subj)}`);
     }
   }));

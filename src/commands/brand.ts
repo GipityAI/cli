@@ -18,14 +18,19 @@ import { run } from '../helpers/index.js';
 
 interface BrandData {
   branding: Record<string, string>;
-  resolved: { accent: string; themeColor: string; glyph: string; isEmoji: boolean };
+  resolved: { accent: string; accentSource?: 'override' | 'theme' | 'derived'; themeColor: string; glyph: string; isEmoji: boolean };
   files?: string[];
   assets?: string[];
 }
 
+const ACCENT_SOURCE_LABEL: Record<string, string> = {
+  theme: " (from the app's own theme --primary)",
+  derived: ' (derived from project)',
+};
+
 function printBrand(d: BrandData): void {
   console.log(`${bold('Glyph:')}  ${d.resolved.glyph}${d.resolved.isEmoji ? muted(' (emoji)') : ''}`);
-  console.log(`${bold('Accent:')} ${d.resolved.accent}${d.branding.primary_color ? '' : muted(' (derived from project)')}`);
+  console.log(`${bold('Accent:')} ${d.resolved.accent}${muted(ACCENT_SOURCE_LABEL[d.resolved.accentSource ?? (d.branding.primary_color ? 'override' : 'derived')] ?? '')}`);
   if (d.branding.app_name) console.log(`${bold('Name:')}   ${d.branding.app_name}`);
   if (d.branding.tagline) console.log(`${bold('Tagline:')} ${d.branding.tagline}`);
 }

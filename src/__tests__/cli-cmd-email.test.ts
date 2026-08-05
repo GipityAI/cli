@@ -76,35 +76,37 @@ test('gipity email test passes --reply-to and --from-name through to the request
 test('gipity email test warns when nothing is sent (all skipped)', async () => {
   mock.reset();
   mock.on('POST /api/p_TestProj/services/email/send', {
-    body: { data: { sent: 0, skipped: 1, results: [{ to: 'blocked@x.io', status: 'blocked' }] } },
+    body: { data: { sent: 0, skipped: 1, results: [{ to: 'blocked@x.io', status: 'blocked', reason: 'test/internal address the platform never emails (ec-* and suppression domains) - use a real inbox to verify delivery' }] } },
   });
   const r = await fresh(['email', 'test', 'blocked@x.io']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Nothing sent/);
-  assert.match(r.stdout, /blocked@x\.io — blocked/);
+  assert.match(r.stdout, /blocked@x\.io — blocked: test\/internal address/);
 });
 
-test('gipity email log lists recent email() sends with recipient + subject', async () => {
+test('gipity email log lists sends AND skipped attempts with recipient + subject', async () => {
   mock.reset();
   mock.on('GET /account/logs/credits', {
     body: { data: {
-      totals: { n: 2, credits: 2 },
+      totals: { n: 3, credits: 2 },
       items: [
         { created_at: '2026-07-10T10:00:00Z', credits_deducted: '1', detail: { to: 'lead@acme-corp.io', subject: 'Welcome' } },
         { created_at: '2026-07-09T09:00:00Z', credits_deducted: '1', detail: { to: 'other@acme-corp.io', subject: 'Follow up' } },
+        { created_at: '2026-07-08T08:00:00Z', credits_deducted: '0', detail: { to: 'ec-probe@914-6.com', subject: 'Test email', status: 'blocked' } },
       ],
     } },
   });
   const r = await fresh(['email', 'log']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /2 sends/);
+  assert.match(r.stdout, /3 attempts/);
   assert.match(r.stdout, /lead@acme-corp\.io/);
   assert.match(r.stdout, /Welcome/);
+  assert.match(r.stdout, /ec-probe@914-6\.com.*\[skipped: blocked\]/);
   assert.doesNotMatch(r.stdout, /undefined/);
 
   const get = mock.requests().find(q => q.method === 'GET' && q.url.startsWith('/account/logs/credits'));
   assert.ok(get, 'expected a credits-log request');
-  assert.match(get!.url, /operations=email_send/);
+  assert.match(get!.url, /operations=email_send,email_skip/);
   assert.match(get!.url, /app_guid=p_TestProj/);
 });
 
@@ -113,5 +115,5 @@ test('gipity email log prints an empty-state message when there are no sends', a
   mock.on('GET /account/logs/credits', { body: { data: { totals: { n: 0, credits: 0 }, items: [] } } });
   const r = await fresh(['email', 'log']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /No email\(\) sends/);
+  assert.match(r.stdout, /No email\(\) activity/);
 });
