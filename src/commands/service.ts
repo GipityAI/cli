@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { get, post, publicRequest, mintAppToken, ApiError } from '../api.js';
+import { get, post, publicRequest, mintAppToken, ApiError, LONG_REQUEST_TIMEOUT_MS } from '../api.js';
 import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { bold, muted } from '../colors.js';
@@ -117,7 +117,12 @@ serviceCommand
         }
         res = await publicRequest<unknown>(opts.get ? 'GET' : 'POST', url, opts.get ? undefined : body, headers);
       } else {
-        res = opts.get ? await get<unknown>(url) : await post<unknown>(url, body);
+        // Generation services (music, video, image, ...) can hold the request
+        // open for minutes - e.g. a GPU music model cold-starting from
+        // scale-to-zero renders nothing for 1-3 min first. The server bounds
+        // the work at 300s, so give POSTs that full budget instead of the 60s
+        // default (which killed every cold-start render at exactly 60s).
+        res = opts.get ? await get<unknown>(url) : await post<unknown>(url, body, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
       }
     } catch (err) {
       const hint = opts.anon ? anonBillingHint(name, err) : null;

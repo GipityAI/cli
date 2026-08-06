@@ -1,5 +1,5 @@
 import { Command, Option } from 'commander';
-import { post } from '../api.js';
+import { post, LONG_REQUEST_TIMEOUT_MS } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { pushFile } from '../sync.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'fs';
@@ -279,7 +279,7 @@ Examples:
         image_size: opts.imageSize,
         seed: Number.isFinite(opts.seed) ? opts.seed : undefined,
         input_images: inputImages,
-      });
+      }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
       const verb = inputImages ? 'Editing image...' : 'Generating image...';
       const started = Date.now();
       const result = opts.json
@@ -350,7 +350,7 @@ Examples:
         aspect_ratio: opts.aspect,
         resolution: opts.resolution,
         duration_seconds: opts.duration ? Number(opts.duration) : undefined,
-      });
+      }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
       // Veo runs 30-120s; the bouncing bar + timer keeps the wait honest.
       const started = Date.now();
       const result = opts.json
@@ -421,7 +421,7 @@ Examples:
         voice: opts.voice,
         language: opts.language,
         speakers,
-      });
+      }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
       const started = Date.now();
       const result = opts.json
         ? await doGenerate()
@@ -493,7 +493,7 @@ Examples:
         // Lyrics imply vocals; otherwise instrumental unless --vocals.
         instrumental: lyrics ? false : !opts.vocals,
         lyrics: lyrics || undefined,
-      });
+      }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
       const started = Date.now();
       const result = opts.json
         ? await doGenerate()
@@ -548,7 +548,7 @@ Examples:
         text,
         duration_seconds: opts.duration,
         prompt_influence: opts.influence,
-      });
+      }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
       const started = Date.now();
       const result = opts.json
         ? await doGenerate()

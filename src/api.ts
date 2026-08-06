@@ -26,6 +26,16 @@ export class ApiError extends Error {
 const REQUEST_TIMEOUT_MS = 60_000;
 const DOWNLOAD_HEADER_TIMEOUT_MS = 30_000;
 
+// Media generation (music/video/image/speech, `service call` POSTs) can
+// legitimately run minutes in ONE request/response: a GPU-backed music model
+// waking from scale-to-zero spends 1-3 min booting + loading weights before it
+// renders a note, and Veo video runs 30-120s. The server bounds all of these at
+// 300s (its provider fetch budget and the ALB idle timeout are both 300s), so
+// the long-call cap sits just above that ceiling - the server's clearer error
+// always arrives before the CLI gives up. Callers opt in per request; plain
+// JSON calls keep the tight default so a wedged connection still fails fast.
+export const LONG_REQUEST_TIMEOUT_MS = 310_000;
+
 /** fetch() that rejects with a clean 408 ApiError if the whole exchange (headers
  *  + body) doesn't complete within timeoutMs, instead of hanging forever. For
  *  request/response JSON calls only - never wrap a long streaming body in this. */
@@ -118,7 +128,7 @@ export async function getAuthHeader(): Promise<string | undefined> {
   return headers.Authorization;
 }
 
-async function request<T>(method: string, path: string, body?: unknown, retrying = false): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, retrying = false, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;
 
@@ -126,10 +136,10 @@ async function request<T>(method: string, path: string, body?: unknown, retrying
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
-  }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
+  }, timeoutMs, `${method} ${path}`);
 
   if (await shouldRetryAfter401(res.status, retrying)) {
-    return request<T>(method, path, body, true);
+    return request<T>(method, path, body, true, timeoutMs);
   }
 
   if (!res.ok) {
@@ -145,8 +155,8 @@ export function get<T>(path: string): Promise<T> {
   return request<T>('GET', path);
 }
 
-export function post<T>(path: string, body?: unknown): Promise<T> {
-  return request<T>('POST', path, body);
+export function post<T>(path: string, body?: unknown, opts?: { timeoutMs?: number }): Promise<T> {
+  return request<T>('POST', path, body, false, opts?.timeoutMs);
 }
 
 /** POST JSON and consume the response as a tar stream, returning each entry as
