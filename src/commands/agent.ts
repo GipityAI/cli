@@ -59,11 +59,11 @@ interface LlmModelData {
 
 agentCommand
   .command('models')
-  .description('List the LLM models an agent can use (ids for `agent create --model` and `agent set model`)')
+  .description('List the LLM models an agent can use (ids and tier aliases for `agent create --model` and `agent set model`)')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Models', async () => {
-    const res = await get<{ data: LlmModelData[] }>('/agents/models');
-    if (opts.json) { console.log(JSON.stringify(res.data)); return; }
+    const res = await get<{ data: LlmModelData[]; aliases?: Record<string, string> }>('/agents/models');
+    if (opts.json) { console.log(JSON.stringify({ models: res.data, aliases: res.aliases ?? {} })); return; }
     const width = res.data.reduce((m, x) => Math.max(m, x.id.length), 0);
     for (const m of res.data) {
       const notes = [
@@ -76,12 +76,22 @@ agentCommand
       if (m.isDefault) notes.push('default');
       console.log(`${m.id.padEnd(width)}  ${muted(notes.join(' · '))}`);
     }
+    // Tier aliases (older servers don't send them): an id pins that exact
+    // model; an alias follows the platform's rotation as new models ship.
+    if (res.aliases && Object.keys(res.aliases).length > 0) {
+      console.log('');
+      console.log('Tier aliases (an agent set to one follows the platform model rotations):');
+      const aw = Object.keys(res.aliases).reduce((m, k) => Math.max(m, k.length), 0);
+      for (const [alias, id] of Object.entries(res.aliases)) {
+        console.log(`${alias.padEnd(aw)}  ${muted(`-> ${id}`)}`);
+      }
+    }
   }));
 
 agentCommand
   .command('create <name>')
   .description('Create an agent')
-  .option('--model <model>', 'Model preference (an id from `gipity agent models`; default: platform default)')
+  .option('--model <model>', 'Model id (pins that model) or tier alias like gipity-default/opus (follows rotations) - see `gipity agent models`. Default: gipity-default')
   .option('--switch', 'Switch to new agent after creation')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
@@ -104,7 +114,7 @@ agentCommand
 
 agentCommand
   .command('set <field> <value>')
-  .description('Set a field (model, temp). Model ids: `gipity agent models`')
+  .description('Set a field (model, temp). Model ids + tier aliases: `gipity agent models`')
   .option('--json', 'Output as JSON')
   .action((field: string, value: string, opts) => run('Set', async () => {
     const config = requireConfig();
