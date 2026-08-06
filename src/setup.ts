@@ -519,7 +519,15 @@ function installSkillsAndHooks(skillsDir: string, manifestPath: string, harnessL
       ['clone', '--depth', '1', `https://github.com/${GIPITY_MARKETPLACE_REPO}.git`, join(tmp, 'repo')],
       { stdio: 'ignore', timeout: 120_000 },
     );
-    if (clone.status !== 0) return;
+    if (clone.status !== 0) {
+      // Still best-effort (setup must never hard-fail on a network blip), but
+      // never SILENT: a quiet skip here leaves hook scripts unstaged, which
+      // downstream reads as "installed but broken" (opencode's model provider
+      // missing cost an hour of diagnosis on 2026-08-06 - the failure surfaced
+      // three layers away as an opencode model-resolution error).
+      console.warn(`Skills install for ${harnessLabel}: git clone of ${GIPITY_MARKETPLACE_REPO} failed (exit ${clone.status}) - hooks/skills not refreshed; re-run \`gipity init\` with network access.`);
+      return;
+    }
     const repo = join(tmp, 'repo');
 
     let version = GIPITY_PLUGIN_VERSION;
@@ -548,7 +556,10 @@ function installSkillsAndHooks(skillsDir: string, manifestPath: string, harnessL
 
     writeFileSync(manifestPath, JSON.stringify({ version, skills: names }, null, 2) + '\n');
     console.log(`Installed ${names.length} Gipity skills for ${harnessLabel} (${skillsDir}).`);
-  } catch { /* best-effort - never break setup */ } finally {
+  } catch (e) {
+    // Best-effort (never break setup) but never silent - see the clone warning.
+    console.warn(`Skills install for ${harnessLabel} failed midway: ${e instanceof Error ? e.message : String(e)} - re-run \`gipity init\`.`);
+  } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 }
