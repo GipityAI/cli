@@ -126,9 +126,21 @@ function mapPlatform(p: string): 'darwin' | 'linux' | 'win32' {
  *  cold without the interactive prompts. */
 async function registerDevice(): Promise<state.RelayDevice> {
   const name = (hostname() || 'my-pc').trim().slice(0, 100) || 'my-pc';
+  // Platform-provisioned devboxes declare what they run and where they live
+  // (the relay-host entrypoint sets these). The daemon's cold-start register
+  // must forward them just like setup.ts pairDevice does: a devbox container
+  // has no relay.json on first boot, so THIS is the path that registers it,
+  // and dropping the kinds would land it as local/claude_code - which skips
+  // the server's cloud credit admission and devbox_compute billing entirely.
+  const deviceKind = process.env.GIPITY_DEVICE_KIND;
+  const agentKind = process.env.GIPITY_AGENT_KIND;
   const res = await post<{
     data: { short_guid: string; name: string; platform: string; token: string };
-  }>('/remote-devices', { name, platform: mapPlatform(osPlatform()), machine_id: getMachineId() });
+  }>('/remote-devices', {
+    name, platform: mapPlatform(osPlatform()), machine_id: getMachineId(),
+    ...(deviceKind ? { device_kind: deviceKind } : {}),
+    ...(agentKind ? { agent_kind: agentKind } : {}),
+  });
   const device: state.RelayDevice = {
     guid: res.data.short_guid,
     name: res.data.name,
