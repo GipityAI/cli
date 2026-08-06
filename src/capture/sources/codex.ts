@@ -155,10 +155,23 @@ function lineToEntries(
  *  *after* the positional watermark `afterUuid`. Same contract as the
  *  claude-code parser: returns entries in order, the new watermark, and
  *  whether the old watermark was still valid for this file. */
+/** Cumulative token totals from a `token_count` event_msg, or null. The
+ *  rollout's `info.total_token_usage` is the session running total and its
+ *  `input_tokens` already includes cached input (verified against real
+ *  rollouts: total_tokens = input_tokens + output_tokens), so range usage is
+ *  a plain delta of totals - never a sum over events, which would re-count
+ *  the whole session on every event. */
+function tokenTotals(payload: any): { input: number; output: number } | null {
+  const t = payload?.info?.total_token_usage;
+  if (!t || typeof t !== 'object') return null;
+  const num = (v: unknown): number => (typeof v === 'number' && v > 0 ? v : 0);
+  return { input: num(t.input_tokens), output: num(t.output_tokens) };
+}
+
 export function parseTranscript(
   content: string,
   afterUuid: string | null,
-): { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean } {
+): { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean; usage: { tokensIn: number; tokensOut: number } } {
   const lines = content.split('\n');
 
   // The session id lives in the first session_meta line. Without it we can
@@ -189,6 +202,10 @@ export function parseTranscript(
   const out: IngestEntry[] = [];
   const toolNames = new Map<string, string>();
   let lastIdx: number | null = startAfter;
+  // Cumulative token totals at the watermark (baseline) and at the end of
+  // the parsed range - their delta is this range's usage.
+  let baseUsage: { input: number; output: number } | null = null;
+  let lastUsage: { input: number; output: number } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -196,17 +213,23 @@ export function parseTranscript(
     let parsed: any;
     try { parsed = JSON.parse(line); } catch { continue; }
 
+    const isTokenCount = parsed?.type === 'event_msg' && parsed?.payload?.type === 'token_count';
+
     if (startAfter !== null && i <= startAfter) {
       // Pre-watermark: record tool names only, so a post-watermark
-      // tool_result still resolves the name of an already-forwarded call.
+      // tool_result still resolves the name of an already-forwarded call
+      // (and the running token total, so the range delta starts right).
       const p = parsed?.payload;
       if (parsed?.type === 'response_item' && p &&
           (p.type === 'custom_tool_call' || p.type === 'function_call') &&
           typeof p.call_id === 'string') {
         toolNames.set(p.call_id, typeof p.name === 'string' && p.name ? p.name : 'tool');
       }
+      if (isTokenCount) baseUsage = tokenTotals(parsed.payload) ?? baseUsage;
       continue;
     }
+
+    if (isTokenCount) lastUsage = tokenTotals(parsed.payload) ?? lastUsage;
 
     const entries = lineToEntries(parsed, sessionId, i, toolNames);
     for (const e of entries) out.push(e);
@@ -217,5 +240,11 @@ export function parseTranscript(
     entries: out,
     lastUuid: lastIdx === null ? afterUuid : positional(sessionId, lastIdx),
     foundWatermark,
+    usage: lastUsage === null
+      ? { tokensIn: 0, tokensOut: 0 }
+      : {
+          tokensIn: Math.max(0, lastUsage.input - (baseUsage?.input ?? 0)),
+          tokensOut: Math.max(0, lastUsage.output - (baseUsage?.output ?? 0)),
+        },
   };
 }

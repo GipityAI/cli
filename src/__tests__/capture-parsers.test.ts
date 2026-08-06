@@ -68,6 +68,32 @@ describe('codex rollout parser', () => {
     // Not-found still parses in full (the caller decides to replay).
     assert.equal(entries.length, 5);
   });
+
+  it('reports range usage as the delta of cumulative token_count totals', () => {
+    // Real payload shape (verified on-disk, codex 0.146.x): info.total_token_usage
+    // is the session running total; input_tokens already includes cached input.
+    const tc = (input: number, cached: number, output: number) => ({
+      timestamp: '2026-07-13T13:37:40.000Z', type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: {
+        input_tokens: input, cached_input_tokens: cached, output_tokens: output, reasoning_output_tokens: 0, total_tokens: input + output,
+      }, last_token_usage: {} } },
+    });
+    const lines = [...codexLines, tc(13177, 9984, 5), tc(20000, 15000, 40)];
+    const jsonl = lines.map(l => JSON.stringify(l)).join('\n') + '\n';
+
+    // Full parse: totals up to the last event (the payload-less token_count in
+    // the base fixture contributes nothing).
+    const full = parseCodex(jsonl, null);
+    assert.deepEqual(full.usage, { tokensIn: 20000, tokensOut: 40 });
+
+    // From a watermark past the first rich token_count: usage is the delta,
+    // not the cumulative total re-counted.
+    const tail = parseCodex(jsonl, `${CODEX_SID}#${lines.length - 2}`);
+    assert.deepEqual(tail.usage, { tokensIn: 20000 - 13177, tokensOut: 40 - 5 });
+
+    // No token_count in range and none before: zeros, not NaN.
+    assert.deepEqual(parseCodex(CODEX_JSONL, null).usage, { tokensIn: 0, tokensOut: 0 });
+  });
 });
 
 describe('codex rollout parser - hostile inputs', () => {

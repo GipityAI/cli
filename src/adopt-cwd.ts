@@ -220,12 +220,15 @@ export async function adoptCurrentDir(opts: {
 
   let isNew = false;
   if (!project) {
-    const device = relayState.getDevice();
-    const body: { name: string; slug: string; autoChat?: 'claude_code'; deviceGuid?: string } = {
+    // No autoChat: which agent will run here isn't known (init wires them
+    // all up; build's picker runs later), so a pre-created chat would guess
+    // `claude_code` and sit empty forever when another agent is used. The
+    // first captured session creates/reuses a conversation with the right
+    // source via the launch path or the capture runner's self-arm resolve.
+    const body: { name: string; slug: string } = {
       name: opts.projectName,
       slug: opts.projectSlug,
     };
-    if (device) { body.autoChat = 'claude_code'; body.deviceGuid = device.guid; }
     try {
       const res = await post<{ data: ProjectData }>('/projects', body);
       project = res.data;

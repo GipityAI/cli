@@ -1477,9 +1477,12 @@ async function createNewProject(
     }
 
     try {
-      const device = relayState.getDevice();
-      const body: { name: string; slug: string; autoChat?: 'claude_code'; deviceGuid?: string } = { name: projectName, slug: projectSlug };
-      if (device) { body.autoChat = 'claude_code'; body.deviceGuid = device.guid; }
+      // No autoChat here: the agent isn't chosen yet (the picker runs after
+      // project setup), so a pre-created chat would guess `claude_code` and
+      // sit empty forever whenever the user picks another agent. The launch
+      // path creates (or the placeholder-reuse logic finds) the conversation
+      // with the RIGHT source moments later.
+      const body: { name: string; slug: string } = { name: projectName, slug: projectSlug };
       const res = await post<{ data: ProjectData }>('/projects', body);
       // Single console.log keeps the line on the headless stderr stream -
       // process.stdout.write would leak the message onto the child's stdout.
