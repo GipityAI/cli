@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get, post, put, patch, del, publicRequest, mintAppToken } from '../api.js';
 import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
@@ -60,7 +60,7 @@ recordsCommand
 recordsCommand
   .command('config <table>')
   .description('Show or set a table\'s Records API config (auth level, search, etc.)')
-  .option('--auth <level>', 'Auth level: public (anonymous writes), member (sign-in), or user')
+  .addOption(new Option('--auth <level>', 'Auth level: public (anonymous writes), member (sign-in), or user').choices(['public', 'member', 'user']))
   .option('--searchable <bool>', 'Enable full-text search (true/false)')
   .option('--primary-key <col>', 'Primary key column (default: id)')
   .option('--soft-delete <col>', 'Soft-delete column (pass "none" to clear)')
@@ -94,8 +94,8 @@ recordsCommand
   .command('query <table>')
   .description('List records (full-text search, filter, sort, recycle bin)')
   .option('-q, --q <text>', 'Full-text search across the table\'s text columns (needs `--searchable true` on the table)')
-  .option('--filter <filter>', 'AND filter string (e.g., "status:eq:active")')
-  .option('--any <filter>', 'OR filter group, same grammar as --filter (e.g., "owner:eq:me,shared:eq:true")')
+  .option('--filter <filter>', 'AND filter string, "col:op:value" comma-joined. Ops: eq, neq, gt, gte, lt, lte, like, ilike, in (pipe-separated values), is_null, not_null. Full grammar: gipity skill read app-records')
+  .option('--any <filter>', 'OR filter group, same grammar and ops as --filter (e.g., "owner:eq:me,shared:eq:true")')
   .option('--sort <sort>', 'Sort string (e.g., "created_at:desc")')
   .option('--limit <n>', 'Max rows', '20')
   .option('--offset <n>', 'Offset', '0')

@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get, post } from '../api.js';
 import { muted, success } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
@@ -34,7 +34,7 @@ export const approvalCommand = new Command('approval')
 approvalCommand
   .command('list')
   .description('List pending approvals')
-  .option('--status <status>', 'pending|approved|denied|cancelled|expired|all', 'pending')
+  .addOption(new Option('--status <status>', 'Filter by status').choices(['pending', 'approved', 'denied', 'cancelled', 'expired', 'all']).default('pending'))
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
     const res = await get<{ data: ApprovalSummary[] }>(`/approvals?status=${encodeURIComponent(opts.status)}`);
@@ -47,7 +47,7 @@ approvalCommand
   .command('create <title...>')
   .description('Create a pending approval')
   .option('--description <text>', 'Detailed context')
-  .option('--type <type>', 'yes_no | choice | text', 'yes_no')
+  .addOption(new Option('--type <type>', 'Approval type').choices(['yes_no', 'choice', 'text']).default('yes_no'))
   .option('--choices <a,b,c>', 'Comma-separated options (for --type choice)')
   .option('--prompt <text>', 'Custom prompt shown to the user')
   .option('--expires-in <minutes>', 'Minutes until expiry (default: 10080 = 7d)')

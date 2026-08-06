@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get, post, del } from '../api.js';
 import { requireConfig, getConfigPath } from '../config.js';
 import { error as clrError, success, muted, bold } from '../colors.js';
@@ -37,8 +37,8 @@ const roomCommand = new Command('room')
   .description('Manage realtime rooms')
   .argument('[action]', 'list | create | delete | info', 'list')
   .argument('[name]', 'room name (for create | delete | info)')
-  .option('--type <type>', 'room type for create: state | relay', 'state')
-  .option('--auth <level>', 'auth level for create: public | user', 'public')
+  .addOption(new Option('--type <type>', 'Room type for create').choices(['state', 'relay']).default('state'))
+  .addOption(new Option('--auth <level>', 'Auth level for create').choices(['public', 'user']).default('public'))
   .option('--max-clients <n>', 'max clients for create (1-200)')
   .option('--json', 'Output as JSON')
   .action((action: string, name: string | undefined, opts) => run('Realtime room', async () => {

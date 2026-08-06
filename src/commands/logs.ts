@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get } from '../api.js';
 import { requireConfig } from '../config.js';
 import { success, error as clrError, warning, muted, bold } from '../colors.js';
@@ -110,7 +110,7 @@ logsCommand
   .command('app')
   .description('Unified recent activity for this app — JS errors, failed function calls, failed services, network failures. Designed for agents debugging a deployed app.')
   .option('--since <window>', "Window: 5m / 10m / 30m / 1h / 6h / 24h / 7d", '10m')
-  .option('--severity <level>', 'error | warn | network | all', 'all')
+  .addOption(new Option('--severity <level>', 'Severity filter').choices(['error', 'warn', 'network', 'all']).default('all'))
   .option('--type <list>', "Comma-separated: errors,functions,services,traffic. Default excludes traffic (high volume).")
   .option('--filter <pattern>', 'Substring match against message / fn name / path (case-insensitive)')
   .option('--limit <n>', 'Max entries', '100')

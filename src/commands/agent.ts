@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { get, post, put, del } from '../api.js';
 import { requireConfig, saveConfig } from '../config.js';
-import { error as clrError, success } from '../colors.js';
+import { error as clrError, success, muted } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
@@ -46,10 +46,42 @@ export const agentCommand = new Command('agent')
     });
   }));
 
+interface LlmModelData {
+  id: string;
+  provider: string;
+  displayName: string;
+  inputCostPerMTok: number;
+  outputCostPerMTok: number;
+  maxContextTokens: number;
+  isDefault?: boolean;
+  blurb?: string;
+}
+
+agentCommand
+  .command('models')
+  .description('List the LLM models an agent can use (ids for `agent create --model` and `agent set model`)')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Models', async () => {
+    const res = await get<{ data: LlmModelData[] }>('/agents/models');
+    if (opts.json) { console.log(JSON.stringify(res.data)); return; }
+    const width = res.data.reduce((m, x) => Math.max(m, x.id.length), 0);
+    for (const m of res.data) {
+      const notes = [
+        m.displayName,
+        m.provider,
+        `$${m.inputCostPerMTok}/$${m.outputCostPerMTok} per 1M tok`,
+        `${Math.round(m.maxContextTokens / 1000)}K ctx`,
+      ];
+      if (m.blurb) notes.push(m.blurb);
+      if (m.isDefault) notes.push('default');
+      console.log(`${m.id.padEnd(width)}  ${muted(notes.join(' · '))}`);
+    }
+  }));
+
 agentCommand
   .command('create <name>')
   .description('Create an agent')
-  .option('--model <model>', 'Model preference')
+  .option('--model <model>', 'Model preference (an id from `gipity agent models`; default: platform default)')
   .option('--switch', 'Switch to new agent after creation')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
@@ -72,7 +104,7 @@ agentCommand
 
 agentCommand
   .command('set <field> <value>')
-  .description('Set a field (model, temp)')
+  .description('Set a field (model, temp). Model ids: `gipity agent models`')
   .option('--json', 'Output as JSON')
   .action((field: string, value: string, opts) => run('Set', async () => {
     const config = requireConfig();

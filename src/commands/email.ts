@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get, post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { error as clrError, success, bold, muted, warning } from '../colors.js';
@@ -97,7 +97,7 @@ emailCommand
 emailCommand
   .command('log')
   .description('Recent email() sends and skipped attempts from your app')
-  .option('--range <range>', 'Time range (24h, 7d, 30d)', '7d')
+  .addOption(new Option('--range <range>', 'Time range').choices(['1h', '24h', '7d', '30d', '1y']).default('7d'))
   .option('--limit <n>', 'Max rows', '50')
   .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
   .option('--json', 'Output raw JSON')

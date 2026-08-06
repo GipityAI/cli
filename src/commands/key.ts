@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { get, post, del } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { bold, muted, success, warning } from '../colors.js';
@@ -50,7 +50,7 @@ async function projectGuid(opts: { project?: string }): Promise<string> {
 keyCommand
   .command('create <name>')
   .description('Mint a project API key (shown once). Give it a name you will recognize later')
-  .option('--role <role>', 'viewer | editor | owner (default: viewer)', 'viewer')
+  .addOption(new Option('--role <role>', 'Access role for the key').choices(['viewer', 'editor', 'owner']).default('viewer'))
   .option('--expires-days <n>', 'Days until the key expires (default: never)')
   .option(...projectOpt)
   .option('--json', 'Output as JSON')

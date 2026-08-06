@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { post } from '../api.js';
 import { resolveProjectContext, getConfigPath } from '../config.js';
 import { pushFile } from '../sync.js';
@@ -8,7 +8,12 @@ import { error as clrError, success, muted } from '../colors.js';
 import { printCommandError } from '../helpers/command.js';
 import { withSpinner } from '../progress.js';
 import { guessMime } from '../upload.js';
-import { IMAGE_MODELS_DOC, IMAGE_GEMINI_ASPECT_RATIOS, IMAGE_GEMINI_SIZES, VIDEO_MODELS_DOC, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC } from '../provider-docs.js';
+import {
+  IMAGE_MODELS_TABLE, IMAGE_PROVIDER_IDS, IMAGE_QUALITY_IDS, IMAGE_TIER_ALIASES_DOC, IMAGE_TIER_ALIAS_IDS,
+  IMAGE_GEMINI_ASPECT_RATIO_IDS, IMAGE_GEMINI_SIZE_IDS,
+  VIDEO_MODEL_IDS, VIDEO_MODELS_TABLE, VIDEO_ASPECT_RATIOS, VIDEO_ASPECT_RATIO_IDS, VIDEO_RESOLUTION_IDS,
+  TTS_PROVIDER_IDS, TTS_PROVIDER_DESCRIPTIONS, GEMINI_TTS_VOICES_DOC,
+} from '../provider-docs.js';
 
 interface GenerateResult {
   url: string;
@@ -229,7 +234,11 @@ function readInputImages(paths: string[]): { data: string; mime_type: string }[]
 const imageCommand = new Command('image')
   .description('Generate an image from a text prompt, or edit existing images with --input')
   .addHelpText('after', `
-Models: ${IMAGE_MODELS_DOC}
+Models (one line per provider; pass an id with --model, the provider with --provider):
+${IMAGE_MODELS_TABLE}
+
+Tier aliases (pass to --model instead of an id; each names a provider+model):
+  ${IMAGE_TIER_ALIASES_DOC}
 
 Editing (--input): pass one or more source images and the prompt becomes an edit
 instruction applied to them - "make it night time", "add a hat", "remove the car
@@ -246,12 +255,12 @@ Examples:
 `)
   .argument('<prompt>', 'Text description of the image, or (with --input) the edit instruction to apply')
   .option('--input <file>', 'Source image to edit/compose (repeatable). With --input the prompt is an edit instruction; routes to Gemini.', (v: string, acc: string[]) => (acc || []).concat(v))
-  .option('--provider <provider>', 'Image provider: openai, bfl, or gemini (default: bfl)')
-  .option('--model <model>', 'Model ID (see provider list above)')
+  .addOption(new Option('--provider <provider>', 'Image provider (default: bfl)').choices(IMAGE_PROVIDER_IDS))
+  .option('--model <model>', `Model id for the chosen provider, or a tier alias (${IMAGE_TIER_ALIAS_IDS.join(', ')}); see Models below`)
   .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (OpenAI/BFL)')
-  .option('--quality <quality>', 'Quality: low|medium|high|auto (gpt-image-2)')
-  .option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only): 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 4:5, 5:4, 21:9')
-  .option('--image-size <size>', 'Output resolution (Gemini only): 512, 1K, 2K, 4K')
+  .addOption(new Option('--quality <quality>', 'Quality (gpt-image-2 only)').choices(IMAGE_QUALITY_IDS))
+  .addOption(new Option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only)').choices(IMAGE_GEMINI_ASPECT_RATIO_IDS))
+  .addOption(new Option('--image-size <size>', 'Output resolution (Gemini only)').choices(IMAGE_GEMINI_SIZE_IDS))
   .option('--seed <n>', 'Deterministic seed (BFL only): reuse one seed to keep a set of images visually coherent', (v) => parseInt(v, 10))
   .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
@@ -308,7 +317,10 @@ Examples:
 const videoCommand = new Command('video')
   .description('Generate a short video (up to 8 seconds) from a text prompt using Google Veo')
   .addHelpText('after', `
-Models: ${VIDEO_MODELS_DOC}
+Models (default: veo-3.1-generate-preview):
+${VIDEO_MODELS_TABLE}
+
+Aspect ratios: ${VIDEO_ASPECT_RATIOS}
 
 Tips:
   - Describe the scene, camera movement, lighting, and any dialogue
@@ -322,9 +334,9 @@ Examples:
   gipity generate video "a wave crashing" --duration 4 --model veo-3.1-lite-generate-preview
 `)
   .argument('<prompt>', 'Description of the video scene, action, camera movement, and dialogue')
-  .option('--model <model>', 'Veo model: veo-3.1-generate-preview (quality), veo-3.1-fast-generate-preview (speed), veo-3.1-lite-generate-preview (budget)')
-  .option('--aspect <ratio>', 'Aspect ratio: 16:9 (landscape), 9:16 (portrait), 1:1 (square)')
-  .option('--resolution <res>', 'Video resolution: 720p, 1080p, 4k')
+  .addOption(new Option('--model <model>', 'Video model; see Models below for quality/price').choices(VIDEO_MODEL_IDS))
+  .addOption(new Option('--aspect <ratio>', 'Aspect ratio (landscape, portrait, square)').choices(VIDEO_ASPECT_RATIO_IDS))
+  .addOption(new Option('--resolution <res>', 'Video resolution').choices(VIDEO_RESOLUTION_IDS))
   .option('--duration <seconds>', 'Clip length in seconds. Veo models: 4, 6, or 8 (8 required at 1080p/4K); omni-flash: 3-10. Default 8. Billing is per second, so shorter is cheaper.')
   .option('-o, --output <file>', 'Output path (default ./generated.mp4). For a clip your app ships, write it into the source tree so it deploys, e.g. -o src/assets/video/clip.mp4; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
@@ -367,7 +379,13 @@ Examples:
 const speechCommand = new Command('speech')
   .description('Generate speech audio from text using text-to-speech')
   .addHelpText('after', `
-Providers: ${Object.entries(TTS_PROVIDER_DESCRIPTIONS).map(([k, v]) => `${k} - ${v}`).join('\n  ')}
+Providers:
+${Object.entries(TTS_PROVIDER_DESCRIPTIONS).map(([k, v]) => `  ${k.padEnd(10)}  ${v}`).join('\n')}
+
+Voices: openai voices are the list above; the full Gemini list is below. ElevenLabs
+voice ids: gipity service call "tts/voices?provider=elevenlabs" --get
+
+Gemini voices: ${GEMINI_TTS_VOICES_DOC}
 
 Multi-speaker (--speakers, Gemini only): JSON array like
 [{"name":"Joe","voice":"Kore"},{"name":"Jane","voice":"Puck"}]; format the
@@ -380,8 +398,8 @@ Examples:
   gipity generate speech 'Joe: Hey!\\nJane: Hi there!' --provider gemini --speakers '[{"name":"Joe","voice":"Charon"},{"name":"Jane","voice":"Leda"}]'
 `)
   .argument('<text>', 'Text to convert to speech (max 5000 characters)')
-  .option('--provider <provider>', 'TTS provider: elevenlabs (default), openai, or gemini')
-  .option('--voice <voice>', 'Voice ID or name (provider-specific)')
+  .addOption(new Option('--provider <provider>', 'TTS provider (default: elevenlabs)').choices(TTS_PROVIDER_IDS))
+  .option('--voice <voice>', 'Voice ID or name (provider-specific; see Voices below)')
   .option('--language <code>', 'BCP-47 language code, e.g. ja-JP, es-ES (Gemini only, 60+ languages)')
   .option('--speakers <json>', 'Multi-speaker config as JSON array (Gemini only, up to 2 speakers)')
   .option('-o, --output <file>', 'Output path (default ./speech.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/sounds/intro.mp3; the cwd default is fine for one-off generation.')
@@ -447,7 +465,7 @@ Examples:
 `)
   .argument('<prompt>', 'Text description of the music to generate')
   .option('--duration <seconds>', 'Clip length in seconds (default 30; max depends on the model)', (v) => parseInt(v, 10))
-  .option('--model <model>', 'Music model id (default: platform default)')
+  .option('--model <model>', 'Music model id (default: platform default; list ids: gipity service call music/models --get)')
   .option('--vocals', 'Allow vocals (default: instrumental only)')
   .option('-o, --output <file>', 'Output path (default ./music.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/audio/theme.mp3; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')

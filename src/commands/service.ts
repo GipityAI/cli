@@ -14,9 +14,10 @@ const SERVICES: Array<{ name: string; method: 'POST' | 'GET'; desc: string }> = 
   { name: 'image', method: 'POST', desc: 'Generate an image ({ prompt, provider?, size? })' },
   { name: 'image/models', method: 'GET', desc: 'List image providers/models' },
   { name: 'tts', method: 'POST', desc: 'Text-to-speech ({ text, voice?, ... })' },
-  { name: 'tts/voices', method: 'GET', desc: 'List TTS voices' },
+  { name: 'tts/voices', method: 'GET', desc: 'List TTS voices (append ?provider=elevenlabs|openai|gemini)' },
   { name: 'sound', method: 'POST', desc: 'Sound effect ({ text, duration_seconds? })' },
   { name: 'music', method: 'POST', desc: 'Music generation ({ prompt, duration_seconds? })' },
+  { name: 'music/models', method: 'GET', desc: 'List music models (ids for --model / model)' },
   { name: 'video', method: 'POST', desc: 'Video generation ({ prompt, ... })' },
   { name: 'location/ip', method: 'POST', desc: 'IP geolocation ({ ip? })' },
   { name: 'location/geocode', method: 'POST', desc: 'Reverse geocode ({ lat, lon })' },
@@ -80,9 +81,12 @@ serviceCommand
   .action((name: string, bodyArg: string | undefined, opts) => run('Call', async () => {
     const config = requireConfig();
     // Encode each path segment but preserve the `/` separators so subpaths
-    // like `location/geocode` and `llm/models` resolve correctly.
-    const path = name.split('/').map(encodeURIComponent).join('/');
-    const url = `/api/${config.projectGuid}/services/${path}`;
+    // like `location/geocode` and `llm/models` resolve correctly. A query
+    // string rides along untouched, so listing endpoints that filter by
+    // parameter work: `gipity service call "tts/voices?provider=elevenlabs" --get`.
+    const [pathPart, query] = name.split('?', 2);
+    const path = pathPart.split('/').map(encodeURIComponent).join('/');
+    const url = `/api/${config.projectGuid}/services/${path}${query ? `?${query}` : ''}`;
     const body = resolveBody(bodyArg || opts.data, opts.file);
 
     // Name the calling identity (stderr, so stdout stays parseable). An owner
