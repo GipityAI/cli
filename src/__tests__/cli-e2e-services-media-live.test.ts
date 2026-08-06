@@ -108,8 +108,22 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.equal(body.data.default_model, 'music-v1', 'music-v1 should be the default');
     // ace-step (GPU model on the Modal backend) is enabled, so it's advertised too.
     assert.ok(ids.includes('ace-step'), `expected ace-step in ${JSON.stringify(ids)}`);
+    // Every row advertises whether it can sing exact lyrics; both current models can.
+    for (const m of models) {
+      assert.equal(typeof m.supports_lyrics, 'boolean', `supports_lyrics missing on ${JSON.stringify(m)}`);
+    }
+    assert.ok(models.find((m: { id: string; supports_lyrics: boolean }) => m.id === 'music-v1')!.supports_lyrics,
+      'music-v1 should advertise supports_lyrics');
     // `infra` is the hidden routing target and must never be returned to apps.
     for (const m of models) assert.ok(!('infra' in m), `infra leaked: ${JSON.stringify(m)}`);
+  });
+
+  it('service call music rejects lyrics + instrumental:true with a 400 (free)', () => {
+    const r = cli(
+      ['service', 'call', 'music', '{"prompt":"jazz","lyrics":"some words","instrumental":true}'],
+    );
+    assert.notEqual(r.status, 0, 'lyrics + instrumental:true must be rejected');
+    assert.match(r.stderr || r.stdout, /instrumental/i, `expected the conflict named in the error, got: ${r.stderr || r.stdout}`);
   });
 
   it('service call music <body> generates a real clip (costs credits)', () => {
@@ -143,6 +157,21 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     const meta = JSON.parse(r.stdout);
     assert.equal(meta.model, 'music-v1', 'expected the default model id in the result');
     assert.ok(existsSync(out) && statSync(out).size > 1000, `expected a non-empty mp3 at ${out}`);
+  });
+
+  it('generate music --lyrics-file sings caller lyrics end to end (costs credits)', () => {
+    const lyricsPath = join(projectDir, 'e2e-lyrics.txt');
+    writeFileSync(lyricsPath, '[Verse]\nGolden anchor on the harbor wall\n[Hook]\nSignal fire burning for the midnight call\n');
+    const out = join(projectDir, 'gen-lyric-song.mp3');
+    const r = cli(
+      ['generate', 'music', 'slow acoustic folk, clear female vocals', '--lyrics-file', lyricsPath,
+        '--duration', '12', '-o', out, '--json'],
+      { timeout: 300000 },
+    );
+    assert.equal(r.status, 0, `generate music --lyrics-file failed: ${r.stderr || r.stdout}`);
+    const meta = JSON.parse(r.stdout);
+    assert.equal(meta.model, 'music-v1', 'lyrics should ride the default model');
+    assert.ok(existsSync(out) && statSync(out).size > 10_000, `expected a non-trivial mp3 at ${out}`);
   });
 
   // Sound effects run against the DEFAULT billing config (user_pays) on a fresh

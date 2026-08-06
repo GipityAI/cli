@@ -455,29 +455,44 @@ default; pass --model <id> only if you want a specific one (see the catalog with
 
 Tips:
   - Describe genre, mood, instruments, and tempo (e.g. "upbeat lo-fi hip hop with mellow piano")
-  - Music is instrumental by default; pass --vocals to allow singing
+  - Music is instrumental by default; pass --vocals to allow singing, or --lyrics /
+    --lyrics-file to have the vocalist sing YOUR exact words (section tags like
+    [Verse] / [Chorus] are understood; keep the prompt to style only)
+  - With lyrics, size --duration to the words (roughly 10s per short section)
   - Longer clips cost more; the max length depends on the model
 
 Examples:
   gipity generate music "chill lo-fi beat for studying"
   gipity generate music "epic orchestral battle theme" --duration 60 -o src/assets/audio/theme.mp3
   gipity generate music "indie pop chorus" --vocals --duration 20
+  gipity generate music "80s synth-pop, female vocals" --lyrics-file lyrics.txt --duration 120 -o song.mp3
 `)
   .argument('<prompt>', 'Text description of the music to generate')
   .option('--duration <seconds>', 'Clip length in seconds (default 30; max depends on the model)', (v) => parseInt(v, 10))
   .option('--model <model>', 'Music model id (default: platform default; list ids: gipity service call music/models --get)')
   .option('--vocals', 'Allow vocals (default: instrumental only)')
+  .option('--lyrics <text>', 'Exact lyrics to sing (implies vocals; only lyrics-capable models)')
+  .option('--lyrics-file <file>', 'Read the exact lyrics to sing from a file (implies vocals)')
   .option('-o, --output <file>', 'Output path (default ./music.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/audio/theme.mp3; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
       if (opts.output) ensureOutputDir(opts.output);
+      if (opts.lyrics && opts.lyricsFile) {
+        console.error(clrError('Pass --lyrics or --lyrics-file, not both.'));
+        process.exit(1);
+      }
+      const lyrics: string | undefined = opts.lyricsFile
+        ? readFileSync(opts.lyricsFile, 'utf8').trim()
+        : opts.lyrics;
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/music`, {
         prompt,
         duration_seconds: opts.duration,
         model: opts.model,
-        instrumental: !opts.vocals,
+        // Lyrics imply vocals; otherwise instrumental unless --vocals.
+        instrumental: lyrics ? false : !opts.vocals,
+        lyrics: lyrics || undefined,
       });
       const started = Date.now();
       const result = opts.json
