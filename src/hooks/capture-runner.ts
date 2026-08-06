@@ -91,6 +91,14 @@ interface StateFile {
   // event, so it can't rely on a specific event name the way Claude/Codex
   // do (see ensureAttached).
   attached?: boolean;
+  // Metrics accumulated across flushes but not yet rolled into the
+  // conversation via a `result` entry. Mid-run flushes (PostToolUse,
+  // pre-compact, subagent-stop) advance the watermark, so the Stop-time
+  // flush alone can't see the whole prompt run - these carry the earlier
+  // flushes' share until Stop/SessionEnd emits the result and resets them.
+  pending_tokens_in?: number;
+  pending_tokens_out?: number;
+  pending_active_ms?: number;
 }
 
 // PostToolUse fires after every tool call. We flush on it so a session that is
@@ -115,10 +123,14 @@ function readState(convGuid: string): StateFile | null {
   try {
     const raw = readFileSync(p, 'utf-8');
     const parsed = JSON.parse(raw);
+    const posNum = (v: unknown): number | undefined => (typeof v === 'number' && v >= 0 ? v : undefined);
     return {
       last_uuid: typeof parsed.last_uuid === 'string' ? parsed.last_uuid : null,
       last_flush_ms: typeof parsed.last_flush_ms === 'number' ? parsed.last_flush_ms : undefined,
       attached: typeof parsed.attached === 'boolean' ? parsed.attached : undefined,
+      pending_tokens_in: posNum(parsed.pending_tokens_in),
+      pending_tokens_out: posNum(parsed.pending_tokens_out),
+      pending_active_ms: posNum(parsed.pending_active_ms),
     };
   } catch {
     return null;
@@ -382,8 +394,50 @@ async function ensureAttached(convGuid: string, hook: HookInput): Promise<void> 
   if (ok) writeState(convGuid, { ...(state ?? { last_uuid: null }), attached: true });
 }
 
+// A gap between consecutive transcript timestamps longer than this is idle
+// time (e.g. a replayed range spanning the user's think-time between
+// prompts), not agent work - skip it when estimating active time.
+export const ACTIVE_GAP_MAX_MS = 5 * 60_000;
+
+/** Estimate the agent's working time over a batch of entries: the sum of
+ *  gaps between consecutive entry timestamps, skipping idle stretches.
+ *  Within one prompt run the transcript grows continuously (tool calls,
+ *  assistant chunks), so this tracks real work closely; the hook path has no
+ *  agent-reported duration the way the relay's stream `result` footer does. */
+export function activeMsFromEntries(entries: IngestEntry[]): number {
+  let total = 0;
+  let prev: number | null = null;
+  for (const e of entries) {
+    if (!e.ts) continue;
+    const t = Date.parse(e.ts);
+    if (isNaN(t)) continue;
+    if (prev !== null) {
+      const gap = t - prev;
+      if (gap > 0 && gap <= ACTIVE_GAP_MAX_MS) total += gap;
+    }
+    prev = t;
+  }
+  return total;
+}
+
+/** Fallback token totals for parsers that don't report `usage` (Codex, Grok):
+ *  sum the assistant entries' token fields. Claude/opencode override this via
+ *  ParseResult.usage - their per-entry fields undercount (no cache tokens)
+ *  or repeat across lines, which a plain entry sum can't correct. */
+export function entryTokenTotals(entries: IngestEntry[]): { tokensIn: number; tokensOut: number } {
+  let tokensIn = 0;
+  let tokensOut = 0;
+  for (const e of entries) {
+    if (e.kind !== 'assistant') continue;
+    if (typeof e.input_tokens === 'number' && e.input_tokens > 0) tokensIn += e.input_tokens;
+    if (typeof e.output_tokens === 'number' && e.output_tokens > 0) tokensOut += e.output_tokens;
+  }
+  return { tokensIn, tokensOut };
+}
+
 async function handleStopFamily(
   convGuid: string, src: RemoteAgentAdapter, hook: HookInput, isSubagent: boolean, minIntervalMs = 0,
+  emitResult = false,
 ): Promise<void> {
   void isSubagent;
   if (!hook.transcript_path || !existsSync(hook.transcript_path)) return;
@@ -402,11 +456,13 @@ async function handleStopFamily(
     const state = readState(convGuid) ?? { last_uuid: null };
     const content = await readWholeFile(hook.transcript_path);
 
+    let replayed = false;
     let result = src.capture.parse(content, state.last_uuid, hook);
     if (!result.foundWatermark && state.last_uuid !== null) {
       // Transcript rotated (/clear or compact) - watermark isn't present.
       // Replay from top; server dedupes via the source_uuid unique index.
       result = src.capture.parse(content, null, hook);
+      replayed = true;
     }
 
     // Base64 image blocks (Read-of-image tool results) upload to VFS and
@@ -416,11 +472,51 @@ async function handleStopFamily(
     if (hook.cwd) rewriter.setCwd(hook.cwd);
     const entries = await rewriter.rewrite(result.entries);
 
+    // Roll this flush's token usage + working time into the pending
+    // counters. A replayed-from-top range re-parses lines whose rows the
+    // server already has (and whose tokens an earlier result already
+    // counted), so its usage is unknowable without server state - skip it
+    // rather than double-count; only the rotation boundary is undercounted.
+    const flushUsage = replayed
+      ? { tokensIn: 0, tokensOut: 0 }
+      : result.usage ?? entryTokenTotals(result.entries);
+    const flushActive = replayed ? 0 : activeMsFromEntries(result.entries);
+    const pendIn = (state.pending_tokens_in ?? 0) + flushUsage.tokensIn;
+    const pendOut = (state.pending_tokens_out ?? 0) + flushUsage.tokensOut;
+    const pendActive = (state.pending_active_ms ?? 0) + flushActive;
+
+    // On a clean end-of-run event, emit the accumulated metrics as a
+    // `result` entry - the same footer the relay's stream path posts, which
+    // the server rolls into the conversation counters the projects list
+    // reads (tokens_in/tokens_out/active_ms). The source_uuid is
+    // deterministic in the watermark so a retried POST dedupes instead of
+    // double-counting. No cost here: only the stream footer reports cost.
+    let resultEmitted = false;
+    if (emitResult && result.lastUuid && (pendIn > 0 || pendOut > 0 || pendActive > 0)) {
+      const lastTs = [...entries].reverse().find((e) => e.ts)?.ts;
+      entries.push({
+        kind: 'result',
+        tokens_in: pendIn,
+        tokens_out: pendOut,
+        duration_ms: pendActive,
+        source_uuid: `${hook.session_id ?? convGuid}-result-${result.lastUuid}`,
+        ...(lastTs ? { ts: lastTs } : {}),
+      });
+      resultEmitted = true;
+    }
+
     const ok = await postEntries(convGuid, entries);
     if (ok) {
       // Stamp the flush time even when no new lines landed, so the throttle
       // above measures from the last attempt. Keep the watermark if unchanged.
-      writeState(convGuid, { last_uuid: result.lastUuid ?? state.last_uuid, last_flush_ms: Date.now() });
+      writeState(convGuid, {
+        ...state,
+        last_uuid: result.lastUuid ?? state.last_uuid,
+        last_flush_ms: Date.now(),
+        pending_tokens_in: resultEmitted ? 0 : pendIn,
+        pending_tokens_out: resultEmitted ? 0 : pendOut,
+        pending_active_ms: resultEmitted ? 0 : pendActive,
+      });
     }
   } finally {
     release();
@@ -432,7 +528,7 @@ async function handleSessionEnd(convGuid: string, src: RemoteAgentAdapter, hook:
   // Stop, so there's usually nothing new, but a race between Stop and
   // SessionEnd could leave lines behind.
   if (hook.transcript_path && existsSync(hook.transcript_path)) {
-    await handleStopFamily(convGuid, src, hook, false);
+    await handleStopFamily(convGuid, src, hook, false, 0, true);
   }
 
   const sessionId = hook.session_id ?? 'unknown';
@@ -532,7 +628,9 @@ async function main(): Promise<void> {
       case 'session-start':
         break; // ensureAttached above already covers what this event used to do
       case 'stop':
-        await handleStopFamily(convGuid, src, hook, false);
+        // End of a prompt run - flush AND roll the run's accumulated
+        // tokens/working time into the conversation via a result entry.
+        await handleStopFamily(convGuid, src, hook, false, 0, true);
         break;
       case 'subagent-stop':
         await handleStopFamily(convGuid, src, hook, true);

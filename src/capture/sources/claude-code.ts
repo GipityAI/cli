@@ -35,7 +35,12 @@ export type IngestEntry =
   | { kind: 'tool_use'; tool_use_id: string; tool_name: string; tool_input?: unknown; source_uuid?: string; ts?: string }
   | { kind: 'tool_result'; tool_use_id: string; tool_name?: string; content: unknown; is_error?: boolean; source_uuid?: string; ts?: string }
   | { kind: 'compact'; trigger?: string; source_uuid?: string; ts?: string }
-  | { kind: 'system'; content: string; source_uuid?: string; ts?: string };
+  | { kind: 'system'; content: string; source_uuid?: string; ts?: string }
+  // Session/run-level metrics footer. The relay stream path emits it from
+  // Claude's own `result` event; the hook-capture path synthesizes one per
+  // prompt run (capture-runner) so tokens + working time reach the
+  // conversation counters for terminal sessions too.
+  | { kind: 'result'; total_cost_usd?: number; num_turns?: number; duration_ms?: number; tokens_in?: number; tokens_out?: number; source_uuid?: string; ts?: string };
 
 /** Pull token usage + model + stop_reason off an assistant `message` object.
  *  Same shape in the transcript JSONL and the stream-json assistant event, so
@@ -176,7 +181,7 @@ export function transcriptLineToEntries(line: any, toolNames?: Map<string, strin
 export function parseTranscript(
   content: string,
   afterUuid: string | null,
-): { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean } {
+): { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean; usage: { tokensIn: number; tokensOut: number } } {
   let seenWatermark = afterUuid === null;
   let lastUuid: string | null = afterUuid;
   const out: IngestEntry[] = [];
@@ -185,6 +190,16 @@ export function parseTranscript(
   // whole file (including pre-watermark lines) so a result whose tool_use
   // was forwarded in an earlier sweep still resolves its name.
   const toolNames = new Map<string, string>();
+  // Token totals for the newly parsed range. Claude Code splits one API
+  // response across several transcript lines (one per content block), each
+  // repeating the same `message.usage`, so count each `message.id` once.
+  // tokens_in is the full input side (fresh + cache-read + cache-creation)
+  // to match the relay result footer's semantics; the per-entry input_tokens
+  // stays fresh-input-only, which is why summing entries can't replace this.
+  const countedUsage = new Set<string>();
+  let tokensIn = 0;
+  let tokensOut = 0;
+  const num = (v: unknown): number => (typeof v === 'number' && v > 0 ? v : 0);
 
   for (const raw of content.split('\n')) {
     const line = raw.trim();
@@ -206,6 +221,19 @@ export function parseTranscript(
       continue;
     }
 
+    // Usage is counted independently of entry emission: an assistant line
+    // whose content produced no entries still carries real token usage.
+    if (parsed?.type === 'assistant' && parsed?.isSidechain !== true) {
+      const m = parsed.message;
+      const u = m?.usage;
+      const key = typeof m?.id === 'string' && m.id ? m.id : parsed.uuid;
+      if (u && typeof key === 'string' && !countedUsage.has(key)) {
+        countedUsage.add(key);
+        tokensIn += num(u.input_tokens) + num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens);
+        tokensOut += num(u.output_tokens);
+      }
+    }
+
     const entries = transcriptLineToEntries(parsed, toolNames);
     if (entries.length) {
       for (const e of entries) out.push(e);
@@ -222,5 +250,6 @@ export function parseTranscript(
     entries: out,
     lastUuid,
     foundWatermark: seenWatermark,
+    usage: { tokensIn, tokensOut },
   };
 }

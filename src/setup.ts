@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, mkdtempSync, rmSync
 import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 import { DEFAULT_API_BASE, resolveApiBase } from './config.js';
-import { ensureOpencodePluginInstalled } from './opencode-setup.js';
+import { ensureOpencodePluginInstalled, stagedPluginPath } from './opencode-setup.js';
 
 export { SKILLS_CONTENT };
 
@@ -161,7 +161,7 @@ export const LEGACY_MARKETPLACE_REPO = 'GipityAI/claude-plugin';
 // an installed plugin when the marketplace advances - only an explicit
 // `plugin install`/`update` does - so this constant is how a CLI upgrade tells
 // ensureGipityPluginInstalled() to refresh a stale user-scope install.
-export const GIPITY_PLUGIN_VERSION = '0.7.0';
+export const GIPITY_PLUGIN_VERSION = '0.8.0';
 
 /** True for hook commands the CLI itself wrote into settings.json in past
  *  versions. Matched by signature so migration strips exactly our own
@@ -660,9 +660,15 @@ export function setupCodexIntegration(): void {
 
 /** Materialize the Gipity skills for opencode. Shares AGENTS_SKILLS_DIR (and
  *  the manifest) with Codex - both read the same cross-agent directory - but
- *  gates on the opencode binary so either tool being present is enough. */
+ *  gates on the opencode binary so either tool being present is enough.
+ *
+ *  Also re-installs when the staged opencode plugin is absent even though the
+ *  manifest says current: a machine whose skills predate the plugin's addition
+ *  to hooks/scripts otherwise never receives it (the version gate can't see
+ *  per-file additions - that's exactly how session capture silently shipped
+ *  disabled on every pre-existing install). */
 export function ensureOpencodeSkillsInstalled(): void {
-  if (agentSkillsState().current) return;
+  if (agentSkillsState().current && existsSync(stagedPluginPath())) return;
   if (!binaryOnPath('opencode')) return;
   installSkillsAndHooks(AGENTS_SKILLS_DIR, AGENT_SKILLS_MANIFEST, 'opencode');
 }

@@ -155,3 +155,39 @@ describe('parseTranscript', () => {
     assert.equal(r.entries.length, 5);
   });
 });
+
+describe('parseTranscript usage totals', () => {
+  const line = (obj: any) => JSON.stringify(obj);
+
+  it('sums fresh + cache tokens per API message, counting a split message once', () => {
+    // One API response split across two transcript lines (one per content
+    // block) repeats the same message.id + usage - it must count ONCE.
+    const usage = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 1000, cache_creation_input_tokens: 100 };
+    const t = [
+      line({ type: 'user', uuid: 'u1', message: { content: 'go' } }),
+      line({ type: 'assistant', uuid: 'a1', message: { id: 'msg_X', content: [{ type: 'text', text: 'part 1' }], usage } }),
+      line({ type: 'assistant', uuid: 'a2', message: { id: 'msg_X', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }], usage } }),
+      line({ type: 'assistant', uuid: 'a3', message: { id: 'msg_Y', content: [{ type: 'text', text: 'done' }], usage: { input_tokens: 5, output_tokens: 7 } } }),
+    ].join('\n');
+    const r = parseTranscript(t, null);
+    assert.deepEqual(r.usage, { tokensIn: 10 + 1000 + 100 + 5, tokensOut: 20 + 7 });
+  });
+
+  it('counts usage only past the watermark and skips sidechain lines', () => {
+    const t = [
+      line({ type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [{ type: 'text', text: 'old' }], usage: { input_tokens: 999, output_tokens: 999 } } }),
+      line({ type: 'assistant', uuid: 'a2', isSidechain: true, message: { id: 'm2', content: [{ type: 'text', text: 'sub' }], usage: { input_tokens: 500, output_tokens: 500 } } }),
+      line({ type: 'assistant', uuid: 'a3', message: { id: 'm3', content: [{ type: 'text', text: 'new' }], usage: { input_tokens: 3, output_tokens: 4 } } }),
+    ].join('\n');
+    const r = parseTranscript(t, 'a1');
+    assert.deepEqual(r.usage, { tokensIn: 3, tokensOut: 4 });
+  });
+
+  it('counts usage from an assistant line even when it emits no entries', () => {
+    // Empty content still carries real token usage.
+    const t = line({ type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [], usage: { input_tokens: 8, output_tokens: 2 } } });
+    const r = parseTranscript(t, null);
+    assert.equal(r.entries.length, 0);
+    assert.deepEqual(r.usage, { tokensIn: 8, tokensOut: 2 });
+  });
+});

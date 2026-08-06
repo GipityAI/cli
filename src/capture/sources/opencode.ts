@@ -104,7 +104,7 @@ function messageToEntries(info: any, parts: any[]): IngestEntry[] {
 export function parseTranscript(
   content: string,
   afterUuid: string | null,
-): { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean } {
+): { entries: IngestEntry[]; lastUuid: string | null; foundWatermark: boolean; usage: { tokensIn: number; tokensOut: number } } {
   const lines = content.split('\n');
 
   // First pass: locate the watermark message so a rewind/fork (id gone)
@@ -123,6 +123,12 @@ export function parseTranscript(
 
   const out: IngestEntry[] = [];
   let lastUuid: string | null = foundWatermark ? afterUuid : null;
+  // Token totals for the newly parsed range. tokens_in is the full input side
+  // (fresh input + cache read/write) to match the relay result footer's
+  // semantics; the per-entry input_tokens stays `tokens.input` only.
+  let tokensIn = 0;
+  let tokensOut = 0;
+  const num = (v: unknown): number => (typeof v === 'number' && v > 0 ? v : 0);
 
   for (let i = 0; i < lines.length; i++) {
     if (watermarkLine !== -1 && i <= watermarkLine) continue;
@@ -130,11 +136,19 @@ export function parseTranscript(
     if (!line) continue;
     let parsed: any;
     try { parsed = JSON.parse(line); } catch { continue; }
-    const entries = messageToEntries(parsed?.info, Array.isArray(parsed?.parts) ? parsed.parts : []);
+    const info = parsed?.info;
+    const entries = messageToEntries(info, Array.isArray(parsed?.parts) ? parsed.parts : []);
     if (!entries.length) continue;
+    // Count usage only for lines that emit entries: entry-less lines don't
+    // advance the watermark, so counting them would re-add their tokens on
+    // every subsequent flush.
+    if (info?.role === 'assistant' && info?.tokens) {
+      tokensIn += num(info.tokens.input) + num(info.tokens.cache?.read) + num(info.tokens.cache?.write);
+      tokensOut += num(info.tokens.output);
+    }
     for (const e of entries) out.push(e);
-    if (typeof parsed?.info?.id === 'string') lastUuid = parsed.info.id;
+    if (typeof info?.id === 'string') lastUuid = info.id;
   }
 
-  return { entries: out, lastUuid, foundWatermark };
+  return { entries: out, lastUuid, foundWatermark, usage: { tokensIn, tokensOut } };
 }

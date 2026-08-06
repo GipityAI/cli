@@ -88,7 +88,17 @@ export function ensureOpencodeInstalled(opts: { quiet?: boolean } = {}): boolean
  *  steady-state cost is two file reads. */
 export function ensureOpencodePluginInstalled(): boolean {
   const src = stagedPluginPath();
-  if (!existsSync(src)) return existsSync(opencodePluginDest());
+  if (!existsSync(src)) {
+    const installed = existsSync(opencodePluginDest());
+    if (!installed) {
+      // Never fail silently here: without the plugin, opencode sessions run
+      // fine but record nothing, which looks identical to "working".
+      console.warn(
+        'Gipity opencode plugin is not staged (skills install incomplete?) - session capture is off. Re-run `gipity init` with network access to fix.',
+      );
+    }
+    return installed;
+  }
   const dest = opencodePluginDest();
   try {
     if (existsSync(dest) && readFileSync(dest, 'utf-8') === readFileSync(src, 'utf-8')) return true;

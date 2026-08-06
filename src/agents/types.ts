@@ -34,6 +34,13 @@ export interface CaptureParseResult {
   entries: IngestEntry[];
   lastUuid: string | null;
   foundWatermark: boolean;
+  /** Token totals for the newly parsed range, with source-correct semantics
+   *  (e.g. Claude counts cache tokens and dedupes the repeated `usage` across
+   *  a message's lines - things a per-entry sum can't get right). Parsers that
+   *  don't provide it fall back to summing the entries' token fields in the
+   *  capture runner. Feeds the `result` ingest entry that rolls tokens into
+   *  the conversation counters the projects list reads. */
+  usage?: { tokensIn: number; tokensOut: number };
 }
 
 /** This agent's session-capture wiring - absorbed from the old

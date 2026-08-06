@@ -458,6 +458,25 @@ describe('opencode transcript parser', () => {
     assert.equal(entries.length, 5);
   });
 
+  it('reports usage totals (fresh + cache tokens) for the parsed range only', async () => {
+    const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
+    const cachedLine = JSON.stringify({
+      info: {
+        id: 'msg_05', sessionID: SID, role: 'assistant', time: { created: 1754400030000 },
+        parentID: 'msg_01', modelID: 'deepseek/deepseek-v4-pro', providerID: 'gipity', mode: 'build',
+        path: { cwd: '/w', root: '/w' }, cost: 0,
+        tokens: { input: 50, output: 60, reasoning: 0, cache: { read: 400, write: 30 } },
+      },
+      parts: [{ id: 'prt_10', sessionID: SID, messageID: 'msg_05', type: 'text', text: 'cached turn' }],
+    });
+    // Full parse: msg_02 (1200/340) + msg_03 (1600/20) + msg_05 (50+400+30/60).
+    const full = parseOpencode(OC_JSONL + cachedLine + '\n', null);
+    assert.deepEqual(full.usage, { tokensIn: 1200 + 1600 + 480, tokensOut: 340 + 20 + 60 });
+    // From a watermark: only messages past it count.
+    const tail = parseOpencode(OC_JSONL + cachedLine + '\n', 'msg_03');
+    assert.deepEqual(tail.usage, { tokensIn: 480, tokensOut: 60 });
+  });
+
   it('tool dedup keys are the stable call ids; errored tools carry is_error', async () => {
     const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
     const errLine = JSON.stringify({
