@@ -17,7 +17,7 @@ import { hasEnvPrefix } from './agents/types.js';
  */
 export interface ClientContext {
   cli: string;
-  harness: 'claude-code' | 'codex' | 'grok' | 'agy' | 'cursor' | 'aider' | 'gemini' | 'ci' | 'manual';
+  harness: 'claude-code' | 'codex' | 'grok' | 'agy' | 'opencode' | 'cursor' | 'aider' | 'gemini' | 'ci' | 'manual';
   harnessVersion?: string;
   harnessSession?: string;
   node?: string;

@@ -23,7 +23,7 @@ irm https://gipity.ai/install.ps1 | iex
 | You want to... | Run |
 |----------------|-----|
 | Start building right now, from anywhere | `gipity build` |
-| Use your own workflow in your own directory | `gipity init`, then `claude` / `codex` / `grok` |
+| Use your own workflow in your own directory | `gipity init`, then `claude` / `codex` / `grok` / `opencode` |
 | Drive this computer from gipity.ai (phone, browser) | `gipity connect` |
 
 ### `gipity build` - start from anywhere
@@ -40,7 +40,7 @@ Prefer launching your agent yourself? From any project directory:
 
 ```bash
 gipity init
-claude        # or codex, or grok - whatever you use
+claude        # or codex, grok, or opencode - whatever you use
 ```
 
 `init` links the directory to a Gipity project, writes CLAUDE.md/AGENTS.md primers so your agent understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on your machine (Claude Code, Codex, Grok; Cursor and Gemini get primer files too).
@@ -126,7 +126,7 @@ gipity login --email you@example.com
 gipity login --code 123456
 cd my-project
 gipity init
-claude        # or codex, or grok
+claude        # or codex, grok, or opencode
 ```
 
 ## Coding Agent Integration

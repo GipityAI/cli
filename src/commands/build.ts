@@ -1186,6 +1186,11 @@ async function launchNonClaudeAgent(adapter: RemoteAgentAdapter, ctx: {
   }
 
   // ── Spawn ───────────────────────────────────────────────────────────────
+  // Async pre-spawn setup (e.g. opencode's model-slot token mint). Best-effort:
+  // the agent must still launch when offline or logged out.
+  if (adapter.prepareLaunch) {
+    try { await adapter.prepareLaunch(); } catch { /* never block the launch */ }
+  }
   const childEnv = { ...process.env };
   if (convGuid) childEnv.GIPITY_CONVERSATION_GUID = convGuid;
 

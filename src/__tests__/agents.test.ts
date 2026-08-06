@@ -11,8 +11,8 @@ import assert from 'node:assert/strict';
 import { AGENT_ADAPTERS, AGENT_KEYS, getAdapter, getAdapterBySource } from '../agents/index.js';
 
 describe('agent adapter registry', () => {
-  it('exposes claude, codex, grok, agy in picker order (claude first = default)', () => {
-    assert.deepEqual(AGENT_KEYS, ['claude', 'codex', 'grok', 'agy']);
+  it('exposes claude, codex, grok, agy, opencode in picker order (claude first = default)', () => {
+    assert.deepEqual(AGENT_KEYS, ['claude', 'codex', 'grok', 'agy', 'opencode']);
   });
 
   it('maps CLI keys and server sources to the same adapters', () => {
@@ -21,6 +21,7 @@ describe('agent adapter registry', () => {
     assert.equal(getAdapterBySource('codex').key, 'codex');
     assert.equal(getAdapterBySource('grok').key, 'grok');
     assert.equal(getAdapterBySource('agy').key, 'agy');
+    assert.equal(getAdapterBySource('opencode').key, 'opencode');
   });
 
   it('throws loudly on unknown keys/sources (no silent Claude fallback)', () => {
@@ -170,5 +171,61 @@ describe('agy argv', () => {
     assert.equal(agy.hooksSupportedOnPlatform('darwin'), true);
     assert.equal(agy.hooksSupportedOnPlatform('linux'), true);
     assert.equal(agy.hooksSupportedOnPlatform('win32'), false);
+  });
+});
+
+describe('opencode argv', () => {
+  const opencode = getAdapter('opencode');
+
+  it('headless uses `run` with --auto for bypass', () => {
+    assert.deepEqual(
+      opencode.buildHeadlessArgs({ message: 'fix', bypassApprovals: true }),
+      ['run', 'fix', '--auto'],
+    );
+  });
+
+  it('namespaces Gipity model ids/aliases to the gipity provider', () => {
+    assert.deepEqual(
+      opencode.buildHeadlessArgs({ message: 'm', model: 'deepseek' }),
+      ['run', 'm', '--model', 'gipity/deepseek'],
+    );
+    // Concrete catalog ids (OpenRouter slugs) also namespace: their vendor
+    // prefix is not an opencode provider.
+    assert.deepEqual(
+      opencode.buildHeadlessArgs({ message: 'm', model: 'deepseek/deepseek-v4-pro' }),
+      ['run', 'm', '--model', 'gipity/deepseek/deepseek-v4-pro'],
+    );
+  });
+
+  it('passes opencode-native provider refs through verbatim (BYO key)', () => {
+    assert.deepEqual(
+      opencode.buildHeadlessArgs({ message: 'm', model: 'anthropic/claude-sonnet-5' }),
+      ['run', 'm', '--model', 'anthropic/claude-sonnet-5'],
+    );
+    assert.deepEqual(
+      opencode.buildHeadlessArgs({ message: 'm', model: 'gipity/qwen' }),
+      ['run', 'm', '--model', 'gipity/qwen'],
+    );
+  });
+
+  it('resume rides --session in both modes', () => {
+    assert.deepEqual(opencode.buildHeadlessArgs({ message: 'more', resume: 'ses_1' }), ['run', 'more', '--session', 'ses_1']);
+    assert.deepEqual(opencode.buildInteractiveArgs({ resume: 'ses_1' }), ['--session', 'ses_1']);
+  });
+
+  it('json stream uses --format json and session ids come from bus events', () => {
+    assert.deepEqual(
+      opencode.buildHeadlessArgs({ message: 'm', jsonStream: true }),
+      ['run', 'm', '--format', 'json'],
+    );
+    assert.equal(opencode.sessionIdFromStreamEvent({ type: 'message.part.updated', properties: { sessionID: 'ses_9' } }), 'ses_9');
+    assert.equal(opencode.sessionIdFromStreamEvent({ type: 'session.created', properties: { info: { id: 'ses_2' } } }), 'ses_2');
+    assert.equal(opencode.sessionIdFromStreamEvent({ type: 'file.edited' }), null);
+  });
+
+  it('plugin-based capture works on every platform, no replay hack', () => {
+    assert.equal(opencode.hooksSupportedOnPlatform('win32'), true);
+    assert.equal(opencode.daemonStreamCapture, false);
+    assert.equal(opencode.headlessCapture, undefined);
   });
 });

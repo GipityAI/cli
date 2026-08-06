@@ -159,6 +159,12 @@ export interface RemoteAgentAdapter {
   /** Best-effort auto-install when the binary is missing. Returns true when
    *  the binary is usable afterwards. Absent = we can only print a hint. */
   ensureInstalled?(): boolean;
+  /** Async pre-spawn hook run by the launcher right before the agent starts,
+   *  in both interactive and headless paths. For setup work that needs the
+   *  network or the user's session (e.g. opencode's model-slot token mint) -
+   *  the sync AgentSetup surface can't await. Best-effort: a throw is caught
+   *  and the launch proceeds. */
+  prepareLaunch?(): Promise<void>;
   /** How to update the installed binary to latest, unattended - or null when
    *  the current install type has no safe unattended path (GUI installs,
    *  unrecognized package managers). Absent = never auto-updated. Consumed

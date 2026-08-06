@@ -79,7 +79,7 @@ function binaryOnPath(bin: string): boolean {
 }
 
 interface AgentSpec {
-  key: 'claude' | 'codex' | 'grok' | 'agy';
+  key: 'claude' | 'codex' | 'grok' | 'agy' | 'opencode';
   binary: string;
   source: string;
   /** argv for a bare terminal run of `prompt` inside the project; null when
@@ -130,6 +130,17 @@ const AGENTS: AgentSpec[] = [
     // cwd (a bare launch silently mis-binds to agy's own config dir instead,
     // confirmed live - see cli/src/agents/agy.ts).
     terminalArgs: (prompt) => ['-p', prompt, '--new-project', '--dangerously-skip-permissions'],
+  },
+  {
+    key: 'opencode',
+    binary: 'opencode',
+    source: 'opencode',
+    // opencode runs no Claude-format hooks at all - capture is driven by the
+    // Gipity opencode plugin (session.idle -> transcript + capture runner),
+    // which the launcher installs. So the terminal e2e goes through
+    // `gipity build --agent opencode -p`, like grok.
+    terminalArgs: null,
+    terminalViaBuild: true,
   },
 ];
 

@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, mkdtempSync, rmSync
 import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 import { DEFAULT_API_BASE, resolveApiBase } from './config.js';
+import { ensureOpencodePluginInstalled } from './opencode-setup.js';
 
 export { SKILLS_CONTENT };
 
@@ -35,6 +36,7 @@ export const PRIMER_FILES = {
   codex: 'AGENTS.md',
   grok: 'AGENTS.md', // Grok Build reads the AGENTS.md family (and CLAUDE.md) natively
   agy: 'AGENTS.md', // Antigravity reads the same AGENTS.md/GEMINI.md rules family natively
+  opencode: 'AGENTS.md', // opencode reads AGENTS.md (and CLAUDE.md) natively
   aider: 'AGENTS.md', // shares the Codex primer; aider is pointed at it via .aider.conf.yml
   gemini: 'GEMINI.md',
   copilot: '.github/copilot-instructions.md',
@@ -647,6 +649,34 @@ export function setupCodexIntegration(): void {
   setupCodexHooks();
 }
 
+// --- opencode ----------------------------------------------------------------
+// opencode reads the same cross-agent ~/.agents/skills directory Codex does
+// (it walks .agents/skills natively), so its skills install shares the Codex
+// dir + manifest. Its deeper integration - the Gipity plugin providing the
+// model slot and session capture - lives in opencode-setup.ts; the plugin file
+// itself ships in the GipityAI/skills repo (hooks/scripts/opencode-plugin.mjs)
+// and is staged into ~/.gipity/agent-hooks by installSkillsAndHooks like every
+// other hook script.
+
+/** Materialize the Gipity skills for opencode. Shares AGENTS_SKILLS_DIR (and
+ *  the manifest) with Codex - both read the same cross-agent directory - but
+ *  gates on the opencode binary so either tool being present is enough. */
+export function ensureOpencodeSkillsInstalled(): void {
+  if (agentSkillsState().current) return;
+  if (!binaryOnPath('opencode')) return;
+  installSkillsAndHooks(AGENTS_SKILLS_DIR, AGENT_SKILLS_MANIFEST, 'opencode');
+}
+
+/** Full opencode integration: user-scope skills + the Gipity opencode plugin
+ *  (model provider + session capture). Gated on the opencode binary. The
+ *  import cycle with opencode-setup.ts (it reads AGENT_HOOKS_DIR from here)
+ *  is safe: neither module calls into the other at module-eval time. */
+export function setupOpencodeIntegration(): void {
+  if (!binaryOnPath('opencode')) return;
+  ensureOpencodeSkillsInstalled();
+  ensureOpencodePluginInstalled();
+}
+
 // --- Google Antigravity (agy) --------------------------------------------
 // agy's hook system is a real departure from the Claude-format hooks Codex
 // and Grok reuse: project hooks live in `.agents/hooks.json` as a NAMED-block
@@ -1034,6 +1064,7 @@ export const SUPPORTED_TOOLS: Array<{ key: string; label: string; setup: () => v
   { key: 'codex',   label: 'OpenAI Codex (AGENTS.md + skills + sync hooks)',       setup: setupAgentsMd,  integrate: setupCodexIntegration },
   { key: 'grok',    label: 'Grok Build (AGENTS.md + Gipity plugin)',               setup: setupAgentsMd,  integrate: ensureGrokPluginInstalled },
   { key: 'agy',     label: 'Antigravity (AGENTS.md + skills + sync hooks)',        setup: setupAgentsMd,  integrate: setupAgyIntegration },
+  { key: 'opencode', label: 'opencode (AGENTS.md + skills + Gipity plugin)',       setup: setupAgentsMd,  integrate: setupOpencodeIntegration },
   { key: 'aider',   label: 'Aider (AGENTS.md + .aider.conf.yml)',                  setup: setupAiderMd, optIn: true },
   { key: 'gemini',  label: 'Gemini CLI (GEMINI.md)',                               setup: setupGeminiMd },
   { key: 'copilot', label: 'GitHub Copilot (.github/copilot-instructions.md)',     setup: setupCopilotMd },

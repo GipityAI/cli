@@ -104,9 +104,18 @@ export async function pairDevice(opts: { name?: string; force?: boolean } = {}):
     throw new Error('Device name must be 1–100 non-whitespace characters.');
   }
   const plat = mapPlatform(osPlatform());
+  // Platform-provisioned devboxes declare what they run and where they live
+  // (the relay-host entrypoint sets these); a normal local pairing sends
+  // neither and the server defaults to local/claude_code.
+  const deviceKind = process.env.GIPITY_DEVICE_KIND;
+  const agentKind = process.env.GIPITY_AGENT_KIND;
   const res = await post<{
     data: { short_guid: string; name: string; platform: string; token: string };
-  }>('/remote-devices', { name, platform: plat, machine_id: getMachineId() });
+  }>('/remote-devices', {
+    name, platform: plat, machine_id: getMachineId(),
+    ...(deviceKind ? { device_kind: deviceKind } : {}),
+    ...(agentKind ? { agent_kind: agentKind } : {}),
+  });
 
   state.setDevice({
     guid: res.data.short_guid,

@@ -379,3 +379,111 @@ describe('hook payload normalization (grok camelCase)', () => {
     }
   });
 });
+
+describe('opencode transcript parser', () => {
+  // Fixture mirrors the plugin-written format: one {info, parts} line per
+  // message (SDK Message + Part[] shapes, opencode 1.18.x).
+  const SID = 'ses_abc123';
+  const ocLines = [
+    {
+      info: { id: 'msg_01', sessionID: SID, role: 'user', time: { created: 1754400000000 }, agent: 'build', model: { providerID: 'gipity', modelID: 'deepseek/deepseek-v4-pro' } },
+      parts: [
+        { id: 'prt_01', sessionID: SID, messageID: 'msg_01', type: 'text', text: 'add a /health endpoint' },
+        { id: 'prt_02', sessionID: SID, messageID: 'msg_01', type: 'text', text: 'injected context', synthetic: true },
+      ],
+    },
+    {
+      info: {
+        id: 'msg_02', sessionID: SID, role: 'assistant', time: { created: 1754400001000, completed: 1754400009000 },
+        parentID: 'msg_01', modelID: 'deepseek/deepseek-v4-pro', providerID: 'gipity', mode: 'build',
+        path: { cwd: '/w', root: '/w' }, cost: 0.002,
+        tokens: { input: 1200, output: 340, reasoning: 0, cache: { read: 0, write: 0 } }, finish: 'tool_use',
+      },
+      parts: [
+        { id: 'prt_03', sessionID: SID, messageID: 'msg_02', type: 'text', text: 'Adding it now.' },
+        {
+          id: 'prt_04', sessionID: SID, messageID: 'msg_02', type: 'tool', callID: 'call_777', tool: 'bash',
+          state: { status: 'completed', input: { command: 'echo ok' }, output: 'ok', title: 'echo ok', metadata: {}, time: { start: 1, end: 2 } },
+        },
+      ],
+    },
+    {
+      info: {
+        id: 'msg_03', sessionID: SID, role: 'assistant', time: { created: 1754400010000 },
+        parentID: 'msg_01', modelID: 'deepseek/deepseek-v4-pro', providerID: 'gipity', mode: 'build',
+        path: { cwd: '/w', root: '/w' }, cost: 0.001,
+        tokens: { input: 1600, output: 20, reasoning: 0, cache: { read: 0, write: 0 } }, finish: 'stop',
+      },
+      parts: [
+        { id: 'prt_05', sessionID: SID, messageID: 'msg_03', type: 'reasoning', text: 'thinking...' },
+        { id: 'prt_06', sessionID: SID, messageID: 'msg_03', type: 'text', text: 'Done - /health returns 200.' },
+      ],
+    },
+  ];
+  const OC_JSONL = ocLines.map(l => JSON.stringify(l)).join('\n') + '\n';
+
+  it('maps {info, parts} lines to prompt/assistant/tool entries, skipping synthetic + reasoning', async () => {
+    const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
+    const { entries, lastUuid, foundWatermark } = parseOpencode(OC_JSONL, null);
+    assert.equal(foundWatermark, true);
+    assert.deepEqual(entries.map(e => e.kind), ['prompt', 'assistant', 'tool_use', 'tool_result', 'assistant']);
+
+    const [prompt, callTurn, toolUse, toolResult, final] = entries as any[];
+    assert.equal(prompt.prompt, 'add a /health endpoint'); // synthetic part skipped
+    assert.equal(prompt.source_uuid, 'msg_01');
+    assert.equal(callTurn.model, 'deepseek/deepseek-v4-pro');
+    assert.equal(callTurn.input_tokens, 1200);
+    assert.equal(callTurn.output_tokens, 340);
+    assert.equal(callTurn.stop_reason, 'tool_use');
+    assert.equal(toolUse.tool_use_id, 'call_777');
+    assert.equal(toolUse.tool_name, 'bash');
+    assert.deepEqual(toolUse.tool_input, { command: 'echo ok' });
+    assert.equal(toolResult.content, 'ok');
+    assert.equal(final.text, 'Done - /health returns 200.');
+    assert.equal(lastUuid, 'msg_03');
+  });
+
+  it('resumes from a message-id watermark', async () => {
+    const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
+    const { entries, foundWatermark, lastUuid } = parseOpencode(OC_JSONL, 'msg_02');
+    assert.equal(foundWatermark, true);
+    assert.deepEqual(entries.map(e => e.kind), ['assistant']);
+    assert.equal(lastUuid, 'msg_03');
+  });
+
+  it('a foreign watermark (forked/rewound session) replays from the top', async () => {
+    const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
+    const { entries, foundWatermark } = parseOpencode(OC_JSONL, 'msg_zz');
+    assert.equal(foundWatermark, false);
+    assert.equal(entries.length, 5);
+  });
+
+  it('tool dedup keys are the stable call ids; errored tools carry is_error', async () => {
+    const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
+    const errLine = JSON.stringify({
+      info: {
+        id: 'msg_04', sessionID: SID, role: 'assistant', time: { created: 1754400020000 },
+        parentID: 'msg_01', modelID: 'deepseek/deepseek-v4-pro', providerID: 'gipity', mode: 'build',
+        path: { cwd: '/w', root: '/w' }, cost: 0,
+        tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+      parts: [{
+        id: 'prt_09', sessionID: SID, messageID: 'msg_04', type: 'tool', callID: 'call_err', tool: 'bash',
+        state: { status: 'error', input: { command: 'boom' }, error: 'exploded', time: { start: 1, end: 2 } },
+      }],
+    });
+    const { entries } = parseOpencode(errLine + '\n', null);
+    const toolUse = entries.find(e => e.kind === 'tool_use') as any;
+    const toolResult = entries.find(e => e.kind === 'tool_result') as any;
+    assert.equal(toolUse.source_uuid, 'call_err');
+    assert.equal(toolResult.source_uuid, 'call_err#out');
+    assert.equal(toolResult.is_error, true);
+    assert.equal(toolResult.content, 'exploded');
+  });
+
+  it('shrugs off garbage lines', async () => {
+    const { parseTranscript: parseOpencode } = await import('../capture/sources/opencode.js');
+    const { entries } = parseOpencode('not json\n{"info":{}}\n{"parts":[]}\n' + OC_JSONL, null);
+    assert.equal(entries.length, 5);
+  });
+});
