@@ -17,6 +17,58 @@ interface GenerateResult {
   provider: string;
   size_bytes: number;
   seed?: number;
+  /** Media length in seconds - present for video/sound/music, absent for image/speech. */
+  duration_seconds?: number;
+  /** Present only when the operation actually cost credits; when present,
+   *  remaining_balance is the real post-deduction balance. */
+  credits_deducted?: number;
+  remaining_balance?: number;
+}
+
+// ── Metrics output ─────────────────────────────────────────────────────
+// Every subcommand reports what happened the same way: a headline naming the
+// model, then one metric per line (labels right-aligned into a scannable
+// column), then the saved path. Agents get the same fields via --json.
+
+interface Metric { label: string; value: string }
+
+function printMetrics(metrics: Array<Metric | null>): void {
+  const rows = metrics.filter((m): m is Metric => m !== null);
+  const width = Math.max(...rows.map((m) => m.label.length));
+  for (const m of rows) {
+    console.log(`  ${muted(`${m.label.padStart(width)}:`)} ${m.value}`);
+  }
+}
+
+function fmtSeconds(s: number): string {
+  if (s >= 60) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  return `${s < 10 ? Math.round(s * 10) / 10 : Math.round(s)}s`;
+}
+
+/** The standard metric rows, in a fixed order so every subcommand reads the
+ *  same: duration, size, time, speed, credits. Rows whose data is missing
+ *  (image has no duration; free ops have no credits) are skipped. */
+function generationMetrics(result: GenerateResult, elapsedSeconds: number): Array<Metric | null> {
+  // ffmpeg-style realtime multiple: media seconds produced per wall-clock
+  // second. Generation is slower than playback, so expect values below 1x.
+  const speed = result.duration_seconds !== undefined && elapsedSeconds > 0
+    ? result.duration_seconds / elapsedSeconds : undefined;
+  return [
+    result.duration_seconds !== undefined
+      ? { label: 'duration', value: `${fmtSeconds(result.duration_seconds)} clip` } : null,
+    { label: 'size', value: `${Math.round(result.size_bytes / 1024)}KB` },
+    { label: 'time', value: fmtSeconds(elapsedSeconds) },
+    speed !== undefined
+      ? { label: 'speed', value: `${speed >= 1 ? Math.round(speed * 10) / 10 : Math.round(speed * 100) / 100}x realtime` } : null,
+    result.credits_deducted !== undefined
+      ? { label: 'credits', value: `${result.credits_deducted.toLocaleString('en-US')} (${result.remaining_balance!.toLocaleString('en-US')} remaining)` } : null,
+  ];
+}
+
+/** JSON-mode result: the server fields plus how long generation took and
+ *  where the file landed. */
+function jsonResult(result: GenerateResult, elapsedSeconds: number, savedPath: string): string {
+  return JSON.stringify({ ...result, generation_seconds: Math.round(elapsedSeconds * 10) / 10, saved: savedPath });
 }
 
 /** Download a URL and save to a local file, then push it up to the project so
@@ -220,9 +272,11 @@ Examples:
         input_images: inputImages,
       });
       const verb = inputImages ? 'Editing image...' : 'Generating image...';
+      const started = Date.now();
       const result = opts.json
         ? await doGenerate()
         : await withSpinner(verb, doGenerate, { done: null });
+      const elapsed = (Date.now() - started) / 1000;
 
       const ext = result.content_type.includes('png') ? 'png' : 'jpg';
       const filename = opts.output || `generated.${ext}`;
@@ -230,13 +284,14 @@ Examples:
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: savedPath }));
+        console.log(jsonResult(result, elapsed, savedPath));
       } else {
-        const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
-        if (result.seed !== undefined) {
-          console.log(muted(`Seed ${result.seed} — pass --seed ${result.seed} to keep the next image coherent`));
-        }
+        console.log(muted(`Generated with ${result.provider}/${result.model}`));
+        printMetrics([
+          ...generationMetrics(result, elapsed),
+          result.seed !== undefined
+            ? { label: 'seed', value: `${result.seed} ${muted(`(pass --seed ${result.seed} to keep the next image coherent)`)}` } : null,
+        ]);
         // Saved-path last: a caller reading a truncated tail of this output (an
         // agent batching several generates in one shell call) must still see
         // WHERE the bytes landed - that is the one line the next command needs.
@@ -285,18 +340,20 @@ Examples:
         duration_seconds: opts.duration ? Number(opts.duration) : undefined,
       });
       // Veo runs 30-120s; the bouncing bar + timer keeps the wait honest.
+      const started = Date.now();
       const result = opts.json
         ? await doGenerate()
         : await withSpinner('Generating video...', doGenerate, { done: null });
+      const elapsed = (Date.now() - started) / 1000;
 
       const filename = opts.output || 'generated.mp4';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: savedPath }));
+        console.log(jsonResult(result, elapsed, savedPath));
       } else {
-        const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`${muted(`Generated with ${result.provider}/${result.model} (${sizeKb}KB)`)}`);
+        console.log(muted(`Generated with ${result.provider}/${result.model}`));
+        printMetrics(generationMetrics(result, elapsed));
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
@@ -347,18 +404,20 @@ Examples:
         language: opts.language,
         speakers,
       });
+      const started = Date.now();
       const result = opts.json
         ? await doGenerate()
         : await withSpinner('Generating speech...', doGenerate, { done: null });
+      const elapsed = (Date.now() - started) / 1000;
 
       const filename = opts.output || 'speech.mp3';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: savedPath }));
+        console.log(jsonResult(result, elapsed, savedPath));
       } else {
-        const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`${muted(`Generated with ${result.provider} (${sizeKb}KB)`)}`);
+        console.log(muted(`Generated with ${result.provider}`));
+        printMetrics(generationMetrics(result, elapsed));
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
@@ -402,18 +461,20 @@ Examples:
         model: opts.model,
         instrumental: !opts.vocals,
       });
+      const started = Date.now();
       const result = opts.json
         ? await doGenerate()
         : await withSpinner('Generating music...', doGenerate, { done: null });
+      const elapsed = (Date.now() - started) / 1000;
 
       const filename = opts.output || 'music.mp3';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: savedPath }));
+        console.log(jsonResult(result, elapsed, savedPath));
       } else {
-        const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`${muted(`Generated with ${result.model} (${sizeKb}KB)`)}`);
+        console.log(muted(`Generated with ${result.model}`));
+        printMetrics(generationMetrics(result, elapsed));
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {
@@ -455,18 +516,20 @@ Examples:
         duration_seconds: opts.duration,
         prompt_influence: opts.influence,
       });
+      const started = Date.now();
       const result = opts.json
         ? await doGenerate()
         : await withSpinner('Generating sound effect...', doGenerate, { done: null });
+      const elapsed = (Date.now() - started) / 1000;
 
       const filename = opts.output || 'sound.mp3';
       const savedPath = await downloadFile(result.url, filename, !!opts.output);
 
       if (opts.json) {
-        console.log(JSON.stringify({ ...result, saved: savedPath }));
+        console.log(jsonResult(result, elapsed, savedPath));
       } else {
-        const sizeKb = Math.round(result.size_bytes / 1024);
-        console.log(`${muted(`Generated sound effect (${sizeKb}KB)`)}`);
+        console.log(muted('Generated sound effect'));
+        printMetrics(generationMetrics(result, elapsed));
         console.log(success(`Saved to ${savedPath}`));
       }
     } catch (err: any) {

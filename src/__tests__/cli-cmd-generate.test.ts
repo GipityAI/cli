@@ -106,6 +106,61 @@ test('gipity generate image names the default file after the bytes', async () =>
   assert.throws(() => readFileSync(join(dir, 'generated.png')));
 });
 
+function mockVideo() {
+  mock.on('POST /projects/p_TestProj/generate/video', { body: {
+    url: `${mock.apiBase}/files/generated.mp4`,
+    content_type: 'video/mp4',
+    model: 'veo-3.1-generate-preview',
+    provider: 'gemini',
+    size_bytes: 1223680,
+    duration_seconds: 4,
+    credits_deducted: 1680,
+    remaining_balance: 48320,
+  } });
+  mock.on('GET /files/generated.mp4', { contentType: 'video/mp4', raw: 'fakemp4bytess' });
+}
+
+test('gipity generate video reports duration, time, speed, and credits metrics', async () => {
+  mock.reset();
+  mockVideo();
+  const r = await fresh(['generate', 'video', 'a wave crashing']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Generated with gemini\/veo-3\.1-generate-preview/);
+  // One labeled metric per line, so an agent (or human) can scan the column.
+  assert.match(r.stdout, /duration: 4s clip/);
+  assert.match(r.stdout, /size: 1195KB/);
+  assert.match(r.stdout, /time: [\d.]+m? ?[\d.]*s/);
+  assert.match(r.stdout, /speed: [\d.]+x realtime/);
+  assert.match(r.stdout, /credits: 1,680 \(48,320 remaining\)/);
+  assert.match(r.stdout, /Saved to \/.*\/generated\.mp4/);
+});
+
+test('gipity generate video --json carries the metadata fields through', async () => {
+  mock.reset();
+  mockVideo();
+  const r = await fresh(['generate', 'video', 'a wave crashing', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop()!);
+  assert.equal(out.model, 'veo-3.1-generate-preview');
+  assert.equal(out.duration_seconds, 4);
+  assert.equal(out.credits_deducted, 1680);
+  assert.equal(out.remaining_balance, 48320);
+  assert.equal(typeof out.generation_seconds, 'number');
+  assert.match(out.saved, /\/generated\.mp4$/);
+});
+
+// Free/unpriced operations come back with no credits fields at all (the server
+// omits them rather than sending placeholder zeros) - the metric line must be
+// absent, not "0 credits (0 remaining)".
+test('gipity generate omits the credits line when nothing was deducted', async () => {
+  mock.reset();
+  mockSound();
+  const r = await fresh(['generate', 'sound', 'a ding']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Generated sound effect/);
+  assert.doesNotMatch(r.stdout, /credits:/);
+});
+
 test('gipity generate surfaces an out-of-credits 402 with the buy link', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/generate/image', {
