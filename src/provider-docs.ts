@@ -111,7 +111,7 @@ export const IMAGE_TIER_ALIAS_IDS = [
 
 export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-5.4-nano (cheapest), gpt-5.4-mini (cheap reasoning). Anthropic: claude-haiku-4-5 (cheapest). Gemini: gemini-3.1-flash-lite (cheapest, 1M context)`;
 
-export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini`;
+export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini, openrouter`;
 
 export const OPENAI_TTS_VOICES_DOC = `alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse`;
 
