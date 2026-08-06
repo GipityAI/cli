@@ -138,12 +138,21 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.ok(typeof body.credits_used === 'number' && body.credits_used > 0, 'expected credits_used > 0');
   });
 
-  it('service call music model=ace-step renders on the GPU (Modal) backend', () => {
-    const r = cli(
-      ['service', 'call', 'music', '{"prompt":"mellow ambient synth pads","duration_seconds":6,"instrumental":true,"model":"ace-step"}'],
-      { timeout: 300000 }, // GPU cold start (container boot + weight load) can run long
-    );
-    assert.equal(r.status, 0, `ace-step music failed: ${r.stderr || r.stdout}`);
+  it('service call music model=ace-step sings caller lyrics on the GPU (Modal) backend', () => {
+    // Lyrics instead of instrumental: same GPU spend, but this also exercises
+    // supports_lyrics routing through the prod REST path end to end.
+    const payload = '{"prompt":"mellow ambient synth pads, soft female vocals","duration_seconds":6,"lyrics":"[verse]\\nOne small lantern on the evening tide","model":"ace-step"}';
+    // A COLD Modal container (boot + weight load) outlives the ~60s gateway
+    // timeout, so the first request after idle can fail while the container
+    // keeps warming (EasyClaw #455). Retry up to twice - each failed attempt
+    // still advances the warm-up, and a warm render takes seconds. A warm
+    // failure still fails the test; remove the retries when #455 is fixed.
+    let r = cli(['service', 'call', 'music', payload], { timeout: 300000 });
+    for (let attempt = 0; r.status !== 0 && attempt < 2; attempt++) {
+      console.warn(`[e2e] ace-step attempt ${attempt + 1} failed (cold start? see EasyClaw #455) - retrying: ${(r.stderr || r.stdout).slice(0, 200)}`);
+      r = cli(['service', 'call', 'music', payload], { timeout: 300000 });
+    }
+    assert.equal(r.status, 0, `ace-step music failed after retries: ${r.stderr || r.stdout}`);
     const body = JSON.parse(r.stdout);
     assert.match(body.url ?? '', /^https?:\/\//, `expected a CDN url, got: ${r.stdout}`);
     assert.equal(body.model, 'ace-step', 'response should echo the ace-step model');
@@ -171,6 +180,8 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.equal(r.status, 0, `generate music --lyrics-file failed: ${r.stderr || r.stdout}`);
     const meta = JSON.parse(r.stdout);
     assert.equal(meta.model, 'music-v1', 'lyrics should ride the default model');
+    assert.equal(meta.duration_seconds, 12, 'requested duration should be honored in the result');
+    assert.ok(typeof meta.credits_deducted === 'number' && meta.credits_deducted > 0, 'a lyric render costs credits');
     assert.ok(existsSync(out) && statSync(out).size > 10_000, `expected a non-trivial mp3 at ${out}`);
   });
 

@@ -257,3 +257,70 @@ test('generate rejects an unusable -o path before spending a paid generation', a
   assert.equal(mock.requests().filter(q => q.url.includes('/generate/')).length, 0,
     'no generation request should be made when the output path is unusable');
 });
+
+// ── generate music: lyrics flags ────────────────────────────────────────
+// The lyrics/vocals/instrumental mapping is pure client-side logic, so pin it
+// here against the mock server: what the CLI actually PUTS IN THE BODY is the
+// contract the platform validates.
+
+function mockMusic() {
+  mock.on('POST /projects/p_TestProj/generate/music', { body: {
+    url: `${mock.apiBase}/files/music.mp3`,
+    content_type: 'audio/mpeg',
+    model: 'music-v1',
+    provider: 'gipity',
+    size_bytes: 12,
+    duration_seconds: 30,
+  } });
+  mock.on('GET /files/music.mp3', { contentType: 'audio/mpeg', raw: 'fakemusicbts' });
+}
+
+function musicRequestBody(): Record<string, unknown> {
+  const req = mock.requests().find(q => q.url.includes('/generate/music'));
+  assert.ok(req, 'expected a /generate/music request');
+  return req!.body as Record<string, unknown>;
+}
+
+test('generate music defaults to instrumental with no lyrics field', async () => {
+  mock.reset();
+  mockMusic();
+  const r = await fresh(['generate', 'music', 'calm piano']);
+  assert.equal(r.status, 0, r.stderr);
+  const body = musicRequestBody();
+  assert.equal(body['instrumental'], true);
+  assert.ok(!('lyrics' in body) || body['lyrics'] === undefined, 'no lyrics key without a lyrics flag');
+});
+
+test('generate music --lyrics sends the words and flips instrumental off', async () => {
+  mock.reset();
+  mockMusic();
+  const r = await fresh(['generate', 'music', '80s synth-pop', '--lyrics', '[Verse]\nExact words to sing']);
+  assert.equal(r.status, 0, r.stderr);
+  const body = musicRequestBody();
+  assert.equal(body['lyrics'], '[Verse]\nExact words to sing');
+  assert.equal(body['instrumental'], false, 'lyrics imply vocals');
+});
+
+test('generate music --lyrics-file reads and trims the file contents', async () => {
+  mock.reset();
+  mockMusic();
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(dir, 'words.txt'), '[Hook]\nSing it from a file\n\n');
+  const r = await freshIn(dir, ['generate', 'music', 'folk ballad', '--lyrics-file', 'words.txt']);
+  assert.equal(r.status, 0, r.stderr);
+  const body = musicRequestBody();
+  assert.equal(body['lyrics'], '[Hook]\nSing it from a file');
+  assert.equal(body['instrumental'], false);
+});
+
+test('generate music rejects --lyrics with --lyrics-file before any request', async () => {
+  mock.reset();
+  mockMusic();
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(dir, 'words.txt'), 'file words');
+  const r = await freshIn(dir, ['generate', 'music', 'jazz', '--lyrics', 'inline words', '--lyrics-file', 'words.txt']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--lyrics or --lyrics-file, not both/);
+  assert.equal(mock.requests().filter(q => q.url.includes('/generate/')).length, 0,
+    'the conflict must be caught before a paid generation request leaves the machine');
+});
