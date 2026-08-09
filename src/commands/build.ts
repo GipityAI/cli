@@ -10,7 +10,7 @@ import { get, post, ApiError, getAccountSlug } from '../api.js';
 import { interactiveLogin } from '../login-flow.js';
 import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
 import { sync, type SyncResult } from '../sync.js';
-import { slugify, ensureGipityPluginInstalled, setupProjectTools, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
+import { slugify, ensureGipityPluginInstalled, setupProjectTools, setupToolForAgent, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
   buildProjectContextBlock as buildProjectContextBlockText,
   buildNewProjectPrompt,
@@ -768,6 +768,13 @@ async function runLaunch(
         }
       }
       const adapter = getAdapter(agentKey);
+
+      // The project's tool set was resolved above, before we knew which agent
+      // the user would pick (the picker runs after). A project pinned to one
+      // tool - or set up on a machine where this agent wasn't installed yet -
+      // would otherwise launch this agent with no primer and no capture hooks.
+      // Idempotent: a no-op when the agent is already part of the project.
+      setupToolForAgent(adapter.key);
 
       // We never ask about the model: an explicit `--model` passes straight
       // through to the agent, and with no flag the agent's own default (and

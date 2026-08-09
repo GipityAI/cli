@@ -27,10 +27,8 @@ export interface FinalizeLocalProjectOpts {
   sync?: 'soft' | 'strict';
   /** Allow interactive bulk-deletion confirmation. Hook-driven callers pass false. */
   interactive?: boolean;
-  /** Subset of AI-tool primers to write. Defaults to `DEFAULT_TOOLS`
-   *  (preserves the historical behavior of writing CLAUDE.md + AGENTS.md
-   *  unconditionally, plus the new Gemini/Copilot/Cursor primers - but not
-   *  opt-in tools like aider, whose setup writes an `.aider.conf.yml`). */
+  /** Subset of AI-tool primers to write. Omit to use the project's own
+   *  resolution (an explicit `--for` pin, else what's installed here). */
   tools?: typeof SUPPORTED_TOOLS;
 }
 
@@ -92,7 +90,10 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
     // soft mode - swallow; caller can log
   }
 
-  setupProjectTools(opts.tools ?? DEFAULT_TOOLS);
+  // No explicit list => let setupProjectTools resolve it (project pin, else
+  // detection). Passing DEFAULT_TOOLS here would have quietly bypassed both
+  // and written every tool's primer on this path only.
+  setupProjectTools(opts.tools);
 
   return { applied };
 }

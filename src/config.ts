@@ -15,6 +15,12 @@ export interface GipityConfig {
    *  display it read-only. Default: true. Set false per-project to opt
    *  out of capture without losing the other integration features. */
   captureHooks?: boolean;
+  /** Coding tools this project is set up for (SUPPORTED_TOOLS keys), pinned by
+   *  `gipity init --for <tools>`. Absent = auto-detect from what's installed on
+   *  the machine. Stored so the choice survives: `gipity build` and the relay
+   *  daemon both call setupProjectTools() with no arguments, and without this
+   *  they would re-add primers for every tool on the next run. */
+  tools?: string[];
 }
 
 const CONFIG_FILE = '.gipity.json';

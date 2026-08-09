@@ -4,9 +4,9 @@ import { existsSync, readFileSync } from 'fs';
 import { getAccountSlug } from '../api.js';
 import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
 import { getAuth } from '../auth.js';
-import { slugify, setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE } from '../setup.js';
+import { slugify, setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE, resolveProjectTools, type SupportedTool } from '../setup.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
-import { success, error as clrError, info, muted, bold } from '../colors.js';
+import { success, error as clrError, info, muted, bold, brand } from '../colors.js';
 import { confirm } from '../utils.js';
 import {
   scanForAdoption,
@@ -19,8 +19,25 @@ import {
 
 const TOOL_KEYS = SUPPORTED_TOOLS.map(t => t.key);
 
-function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
-  if (!forFlag) return DEFAULT_TOOLS;
+/** The tool keys to pin in .gipity.json, or null to leave the project on
+ *  auto-detect. Only an explicit `--for` pins: a bare `init` records nothing,
+ *  so the project keeps tracking whatever the user installs later. `--for all`
+ *  is an explicit choice too - it pins the full set on purpose. */
+function pinnedToolKeys(forFlag: string | undefined, tools: SupportedTool[]): string[] | null {
+  return forFlag ? tools.map(t => t.key) : null;
+}
+
+/** Which tools this `init` run sets up.
+ *
+ *  No `--for` defers to the project: its existing pin if it has one, else
+ *  what's installed here (resolveProjectTools). Falling straight through to
+ *  detection instead would make a bare re-run of `init` quietly widen a pinned
+ *  project back out - `--for opencode` today, then a plain `gipity init`
+ *  tomorrow re-adds every installed agent's primer.
+ *
+ *  On a FRESH init there is no config yet, so this is detection, as intended. */
+function resolveTools(forFlag: string | undefined): SupportedTool[] {
+  if (!forFlag) return resolveProjectTools();
   const requested = forFlag.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   const unknown = requested.filter(k => !TOOL_KEYS.includes(k) && k !== 'all');
   if (unknown.length) {
@@ -35,18 +52,22 @@ function resolveTools(forFlag: string | undefined): typeof SUPPORTED_TOOLS {
 
 export const initCommand = new Command('init')
   .description('Link this directory to a project')
-  .addHelpText('after', `\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on this machine (${AGENT_ADAPTERS.map(a => a.displayName).join(', ')}).`)
+  .addHelpText('after', `\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks. By default it only sets up the tools actually installed here (${AGENT_ADAPTERS.map(a => a.displayName).join(', ')}, …) - use --for to choose explicitly.`)
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
   .option('--no-capture', 'Don\'t record Claude Code sessions in this directory to your Gipity project (sets captureHooks: false in .gipity.json)')
   .option(
     '--for <tools>',
-    `Which AI tool primer files to write (comma-separated). Default: all except aider (opt-in - it also writes .aider.conf.yml). Choices: ${TOOL_KEYS.join(', ')}, all`,
+    `Which AI tool primer files to write (comma-separated). Default: the tools detected on this machine. An explicit --for is remembered in .gipity.json, so later commands don't re-add the others. Choices: ${TOOL_KEYS.join(', ')}, all`,
   )
   .addHelpText('after', `
 Examples:
-  $ gipity init                          Link cwd as a new project (slug = dir name).
+  $ gipity init                          Link cwd as a new project (slug = dir name);
+                                         sets up the tools installed on this machine.
   $ gipity init my-app                   Link cwd with an explicit slug.
+  $ gipity init --for opencode           Only opencode - pinned, so a later
+                                         gipity build won't re-add the others.
+  $ gipity init --for all                Every tool, whether installed or not.
   $ gipity init --for codex              AGENTS.md + Codex skills/sync hooks only.
   $ gipity init --for grok               AGENTS.md + the Gipity plugin in Grok only.
   $ gipity init --for cursor,gemini      Write only the Cursor + Gemini primers.
@@ -64,7 +85,7 @@ Working with an existing Gipity project:
   .action(async (name: string | undefined, opts) => {
     // Resolve the requested tool primer set up front so a bad --for value
     // fails fast with a clear message instead of going through the catch.
-    let tools: typeof SUPPORTED_TOOLS;
+    let tools: SupportedTool[];
     try {
       tools = resolveTools(opts.for);
     } catch (e: any) {
@@ -73,6 +94,14 @@ Working with an existing Gipity project:
     }
     const wantsClaude = tools.some(t => t.key === 'claude');
     const primerSummary = tools.map(t => t.label).join(', ');
+    // Name what was left out, and how to get it. Silence here is what made the
+    // old write-everything default feel arbitrary in the other direction: a
+    // user with one agent could not tell whether a missing primer was a
+    // decision or a bug.
+    const skipped = DEFAULT_TOOLS.filter(d => !tools.some(t => t.key === d.key));
+    const skippedNote = skipped.length
+      ? `${muted(`Skipped (not installed here): ${skipped.map(t => t.key).join(', ')} - add with`)} ${brand(`gipity init --for ${skipped.map(t => t.key).join(',')}`)}${muted('.')}`
+      : null;
 
     try {
       // Check auth
@@ -113,9 +142,18 @@ Working with an existing Gipity project:
             existing.captureHooks = false;
             changed = true;
           }
+          // An explicit --for re-pins the project. Without persisting it,
+          // `gipity build` (which calls setupProjectTools() with no arguments)
+          // would re-add every tool's primer on its next run.
+          const pinned = pinnedToolKeys(opts.for, tools);
+          if (pinned && JSON.stringify(existing.tools ?? null) !== JSON.stringify(pinned)) {
+            existing.tools = pinned;
+            changed = true;
+          }
           if (changed) saveConfigAt(cwd, existing);
         }
         console.log(success(`Refreshed primer files: ${primerSummary}.`));
+        if (skippedNote) console.log(skippedNote);
         if (opts.capture === false) {
           console.log(success('Session recording disabled for this project (captureHooks: false in .gipity.json).'));
         }
@@ -189,15 +227,18 @@ Working with an existing Gipity project:
 
       // Session recording opt-out. Written after adopt so it lands in the
       // freshly created .gipity.json regardless of how the link happened.
-      if (opts.capture === false) {
+      const pinnedFresh = pinnedToolKeys(opts.for, tools);
+      if (opts.capture === false || pinnedFresh) {
         try {
           const cfg = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8'));
-          cfg.captureHooks = false;
+          if (opts.capture === false) cfg.captureHooks = false;
+          if (pinnedFresh) cfg.tools = pinnedFresh;
           saveConfigAt(cwd, cfg);
-        } catch { /* config missing/unreadable - nothing to opt out of */ }
+        } catch { /* config missing/unreadable - nothing to record */ }
       }
 
       console.log(success(`Wrote primer files: ${primerSummary}.`));
+      if (skippedNote) console.log(skippedNote);
       if (wantsClaude) {
         console.log(success(`Ready! Run your coding agent here (${AGENT_ADAPTERS.map(a => a.key).join(', ')}), or \`gipity build\` to launch one with a picker.`));
         // Recording happens by default (however Claude Code is launched), so

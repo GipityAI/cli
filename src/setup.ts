@@ -6,7 +6,7 @@ import { homedir, tmpdir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, mkdtempSync, rmSync, cpSync, readdirSync } from 'fs';
 import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
-import { DEFAULT_API_BASE, resolveApiBase } from './config.js';
+import { DEFAULT_API_BASE, resolveApiBase, getConfig } from './config.js';
 import { ensureOpencodePluginInstalled, stagedPluginPath } from './opencode-setup.js';
 
 export { SKILLS_CONTENT };
@@ -1076,21 +1076,121 @@ export function setupCursorMd(): void {
  *  explicitly (`--for aider`): aider's setup writes `.aider.conf.yml`, which
  *  changes how aider behaves in this directory - a heavier footprint than
  *  dropping an inert markdown primer. */
-export const SUPPORTED_TOOLS: Array<{ key: string; label: string; setup: () => void; integrate?: () => void; optIn?: boolean }> = [
-  { key: 'claude',  label: 'Claude Code (CLAUDE.md + Gipity plugin)',              setup: setupClaudeMd,  integrate: setupClaudeHooks },
-  { key: 'codex',   label: 'OpenAI Codex (AGENTS.md + skills + sync hooks)',       setup: setupAgentsMd,  integrate: setupCodexIntegration },
-  { key: 'grok',    label: 'Grok Build (AGENTS.md + Gipity plugin)',               setup: setupAgentsMd,  integrate: ensureGrokPluginInstalled },
-  { key: 'agy',     label: 'Antigravity (AGENTS.md + skills + sync hooks)',        setup: setupAgentsMd,  integrate: setupAgyIntegration },
-  { key: 'opencode', label: 'opencode (AGENTS.md + skills + Gipity plugin)',       setup: setupAgentsMd,  integrate: setupOpencodeIntegration },
-  { key: 'aider',   label: 'Aider (AGENTS.md + .aider.conf.yml)',                  setup: setupAiderMd, optIn: true },
-  { key: 'gemini',  label: 'Gemini CLI (GEMINI.md)',                               setup: setupGeminiMd },
-  { key: 'copilot', label: 'GitHub Copilot (.github/copilot-instructions.md)',     setup: setupCopilotMd },
-  { key: 'cursor',  label: 'Cursor (.cursor/rules/gipity.mdc)',                    setup: setupCursorMd },
+export interface SupportedTool {
+  key: string;
+  label: string;
+  setup: () => void;
+  integrate?: () => void;
+  /** Excluded from the default set; must be named explicitly via `--for`.
+   *  Use for a tool whose setup changes how it behaves in this directory
+   *  (aider's .aider.conf.yml), not merely drops an inert primer. */
+  optIn?: boolean;
+  /** Executable that proves this tool is installed. Drives {@link detectedTools}
+   *  so a project only gets primers for tools the user actually has. Absent =
+   *  undetectable from a terminal, so the tool is only ever set up when named
+   *  explicitly (see the note on `copilot` below). */
+  binary?: string;
+}
+
+export const SUPPORTED_TOOLS: SupportedTool[] = [
+  { key: 'claude',  label: 'Claude Code (CLAUDE.md + Gipity plugin)',              setup: setupClaudeMd,  integrate: setupClaudeHooks,        binary: 'claude' },
+  { key: 'codex',   label: 'OpenAI Codex (AGENTS.md + skills + sync hooks)',       setup: setupAgentsMd,  integrate: setupCodexIntegration,   binary: 'codex' },
+  { key: 'grok',    label: 'Grok Build (AGENTS.md + Gipity plugin)',               setup: setupAgentsMd,  integrate: ensureGrokPluginInstalled, binary: 'grok' },
+  { key: 'agy',     label: 'Antigravity (AGENTS.md + skills + sync hooks)',        setup: setupAgentsMd,  integrate: setupAgyIntegration,     binary: 'agy' },
+  { key: 'opencode', label: 'opencode (AGENTS.md + skills + Gipity plugin)',       setup: setupAgentsMd,  integrate: setupOpencodeIntegration, binary: 'opencode' },
+  { key: 'aider',   label: 'Aider (AGENTS.md + .aider.conf.yml)',                  setup: setupAiderMd, optIn: true,                          binary: 'aider' },
+  { key: 'gemini',  label: 'Gemini CLI (GEMINI.md)',                               setup: setupGeminiMd,                                     binary: 'gemini' },
+  // Copilot and Cursor are primarily IDE extensions - a user can rely on either
+  // daily with no CLI on PATH, so a binary probe would wrongly say "absent".
+  // Both ship an optional shell command, so probe it, but ALSO honor a project
+  // that already has their config directory (see detectedTools).
+  { key: 'copilot', label: 'GitHub Copilot (.github/copilot-instructions.md)',     setup: setupCopilotMd,                                    binary: 'copilot' },
+  { key: 'cursor',  label: 'Cursor (.cursor/rules/gipity.mdc)',                    setup: setupCursorMd,                                     binary: 'cursor' },
 ];
+
+/** A tool whose primer file this project ALREADY has counts as in use, even
+ *  with no CLI on PATH. Two things this buys:
+ *
+ *    - the IDE-extension case (Copilot, Cursor): a user can rely on either
+ *      daily with nothing on PATH, and dropping their primer from the refresh
+ *      would leave it frozen at whatever CLI version wrote it - and the primers
+ *      are regenerated per release, so stale means the agent reads outdated
+ *      Gipity instructions;
+ *    - existing projects: everything set up before detection existed keeps
+ *      being maintained instead of silently going stale.
+ *
+ *  Deliberately keyed on the primer file, not a config directory. `.github`
+ *  was the obvious Copilot marker and is a bad one - workflows and issue
+ *  templates mean most GitHub repos have it, so it would have re-enabled
+ *  Copilot almost everywhere and undone the point of detecting at all. */
+function hasExistingPrimer(root: string, key: string): boolean {
+  const primer = PRIMER_FILES[key as keyof typeof PRIMER_FILES];
+  return !!primer && existsSync(join(root, primer));
+}
 
 /** The primer set written when the user makes no explicit `--for` choice:
  *  every tool except opt-in ones. */
+/** Every non-opt-in tool. The set `--for all` expands to, and the fallback
+ *  when detection finds nothing (a fresh box or CI container, where writing
+ *  every primer is better than writing none). */
 export const DEFAULT_TOOLS = SUPPORTED_TOOLS.filter(t => !t.optIn);
+
+/** The tools this project should be set up for: binary on PATH, or a primer
+ *  this project already has (see hasExistingPrimer).
+ *
+ *  Deliberately NOT a module-level const - `binaryOnPath` shells out per tool,
+ *  and the answer changes when the user installs something mid-session.
+ *
+ *  Falls back to DEFAULT_TOOLS when nothing is detected, mirroring `gipity
+ *  build`'s agent picker: on a machine with no coding agent at all, offering
+ *  everything beats offering nothing. */
+export function detectedTools(): SupportedTool[] {
+  const root = resolve(process.cwd());
+  const found = DEFAULT_TOOLS.filter(
+    t => hasExistingPrimer(root, t.key) || (!!t.binary && binaryOnPath(t.binary)),
+  );
+  return found.length ? found : DEFAULT_TOOLS;
+}
+
+/** What a bare `setupProjectTools()` should act on for THIS project, in
+ *  precedence order:
+ *    1. the project's own pinned list (`gipity init --for <tools>`, stored in
+ *       .gipity.json) - an explicit user choice outlives any later re-run;
+ *    2. otherwise, whatever is detected on this machine.
+ *
+ *  Precedence matters: without (1), `gipity build` - which calls this with no
+ *  arguments - would quietly re-add primers for tools the user had scoped out
+ *  at init, so `--for` only ever held until the next command. */
+export function resolveProjectTools(): SupportedTool[] {
+  const pinned = getConfig()?.tools;
+  if (pinned?.length) {
+    const chosen = SUPPORTED_TOOLS.filter(t => pinned.includes(t.key));
+    if (chosen.length) return chosen;
+  }
+  return detectedTools();
+}
+
+/** Set up ONE tool by key, on demand, no matter what the project is pinned to
+ *  or what detection found. Returns true if that tool exists and was run.
+ *
+ *  Launching an agent is a stronger statement of intent than the pin: a pin
+ *  (`gipity init --for claude`) means "don't litter my project with tools I
+ *  don't use", NOT "refuse to set up a tool I am actively starting". Without
+ *  this, `gipity build` -> pick opencode inside a claude-pinned project would
+ *  launch opencode with no AGENTS.md and no capture plugin - it would run, but
+ *  know nothing about Gipity and record nothing, which reads as a broken
+ *  integration rather than a respected preference.
+ *
+ *  Deliberately does NOT rewrite the pin. The files it writes persist, so the
+ *  agent keeps working; silently editing a choice the user typed is worse than
+ *  re-running an idempotent setup on each launch. */
+export function setupToolForAgent(key: string): boolean {
+  const tool = SUPPORTED_TOOLS.find(t => t.key === key);
+  if (!tool) return false;
+  tool.setup();
+  tool.integrate?.();
+  return true;
+}
 
 /** Registry-driven project setup - the single entry point every "link this
  *  directory" path shares (`init`, `project create`, `gipity claude`, the
@@ -1098,7 +1198,7 @@ export const DEFAULT_TOOLS = SUPPORTED_TOOLS.filter(t => !t.optIn);
  *  (hooks/skills install) when it has one, and refreshes .gitignore. Replaces
  *  the setupClaudeHooks/setupClaudeMd/setupAgentsMd/setupGitignore quartet
  *  that used to be copy-pasted per call site and silently skipped newer tools. */
-export function setupProjectTools(tools: typeof SUPPORTED_TOOLS = DEFAULT_TOOLS): void {
+export function setupProjectTools(tools: SupportedTool[] = resolveProjectTools()): void {
   for (const t of tools) {
     t.setup();
     t.integrate?.();
