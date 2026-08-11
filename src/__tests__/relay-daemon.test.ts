@@ -270,6 +270,10 @@ describe('daemon: dispatch happy path', () => {
     assert.equal(acks.length, 1);
     assert.equal(acks[0].guid, 'rds_fail1');
     assert.equal(acks[0].status, 'error');
+    // The child's real failure must survive verbatim. A fresh $HOME means
+    // `claude auth status` on this host reports signed out, so the "log in to
+    // Claude Code" hint may be appended - but it must never REPLACE the actual
+    // error, or a genuine crash gets misreported as a login problem.
     assert.match(acks[0].error || '', /exited with code/);
   });
 });

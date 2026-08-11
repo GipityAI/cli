@@ -49,6 +49,8 @@ import { ensureRelayAgentToken } from './agent-token.js';
 import { redactEntries, redactString, normalizeSecrets } from './redact.js';
 import { getMachineId } from './machine-id.js';
 import { collectDiagnostics } from './diagnostics.js';
+import { claudeAuthStatusAsync, claudeLoginHint } from '../claude-setup.js';
+import type { ClaudeAuthStatus } from '../claude-setup.js';
 import { runAgentUpdates, agentUpdateInProgress } from './agent-updates.js';
 import { SessionPool, PoolFullError, type QueryFactory, type SessionStateKind } from './session-pool.js';
 import { getConfig } from '../config.js';
@@ -1282,6 +1284,20 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   // stderr lines so the visible marker carries the real error instead of
   // just an exit code (previously stderr only reached the daemon's log).
   const stderrNote = stderrTail ? `: ${stderrTail.slice(0, 300)}` : '';
+
+  // Claude Code's own "Not logged in · Please run /login" is advice for someone
+  // sitting at a Claude Code prompt. The person reading THIS is in a browser on
+  // a different machine, where /login means nothing and the failing machine is
+  // unnamed. So ADD the actionable line - appended, never substituted. A host
+  // being signed out makes login the likely cause but doesn't prove it caused
+  // THIS failure (a run using ANTHROPIC_API_KEY works while `auth status` still
+  // reports signed out), and swallowing the child's real error to assert a
+  // guess would trade one misleading message for another. Only computed on the
+  // failure path - the check spawns a process.
+  const authHint = (exitCode !== 0 && !killed && !runtimeLimit && !spawnErr)
+    ? claudeAuthFailureHint(await claudeAuthStatusAsync(), stderrTail, state.getDevice()?.name)
+    : null;
+  const authNote = authHint ? ` · ${authHint}` : '';
   const tail = runtimeLimit
     ? `stopped after ${dur} (runtime limit)`
     : killed
@@ -1290,7 +1306,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
         ? `failed (${dur}: ${spawnErr})`
         : exitCode === 0
           ? `finished (${dur})`
-          : `failed (${dur}, exit ${exitCode}${stderrNote})`;
+          : `failed (${dur}, exit ${exitCode}${stderrNote})${authNote}`;
   pushSystem(`Claude Code ${tail}`);
   await flushQueue();
 
@@ -1312,9 +1328,38 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
     log('info', 'dispatch done', { id: d.short_guid, ms, startupMs });
     await ack(d.short_guid, 'done', undefined, metrics);
   } else {
-    log('warn', 'dispatch child exited nonzero', { id: d.short_guid, exitCode, ms });
-    await ack(d.short_guid, 'error', `Claude Code exited with code ${exitCode}${stderrNote}`);
+    log('warn', 'dispatch child exited nonzero', { id: d.short_guid, exitCode, ms, authHint: !!authHint });
+    await ack(d.short_guid, 'error', `Claude Code exited with code ${exitCode}${stderrNote}${authNote}`);
   }
+}
+
+/** Stderr shapes that mean "Claude Code could not authenticate". Only consulted
+ *  when `claude auth status` couldn't answer, so it never has to be exhaustive. */
+const CLAUDE_AUTH_ERROR_RE =
+  /not logged in|please run \/login|claude auth login|invalid api key|authentication_error|oauth token (?:has )?(?:expired|been revoked)/i;
+
+/**
+ * Decide whether a failed dispatch was really "Claude Code isn't logged in on
+ * this machine", and if so return a line the reader can act on. Pure: the
+ * caller does the I/O (`claudeAuthStatusAsync`) and passes the result in.
+ *
+ * Conservative by construction:
+ *   - `loggedIn: false` is definitive, so translate.
+ *   - status null (couldn't tell: Claude Code absent, or too old for `auth
+ *     status`) falls back to the child's stderr, which can only ADD a hint we
+ *     would otherwise not have given.
+ *   - `loggedIn: true` never translates, so a user prompt that merely contains
+ *     the words "not logged in" cannot manufacture a bogus login hint.
+ * Exported for tests.
+ */
+export function claudeAuthFailureHint(
+  status: ClaudeAuthStatus | null,
+  stderrTail: string,
+  deviceName?: string,
+): string | null {
+  if (status?.loggedIn === false) return claudeLoginHint(deviceName);
+  if (status === null && CLAUDE_AUTH_ERROR_RE.test(stderrTail)) return claudeLoginHint(deviceName);
+  return null;
 }
 
 /**

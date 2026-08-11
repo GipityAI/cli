@@ -101,6 +101,17 @@ const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 // wait, then re-read and ADOPT the freshly-rotated token instead of refreshing.
 const LOCK_WAIT_MS = 10_000;          // refresh is one quick round-trip; cap the wait
 const LOCK_POLL_MS = 100;
+// A refresh is a token lookup plus a signature, sub-second in practice. Without
+// a deadline, though, a wedged socket (connected, then silent: a dropped NAT
+// flow, a black-holed path) hangs this fetch FOREVER, and because every
+// authenticated command resolves its bearer token through here, the whole CLI
+// hangs with it, before any spinner or phase output exists to show it, and
+// while sync already holds .gipity/sync.lock. That is the silent, unbounded
+// "deploy just stalls" stall. Bound each attempt so a dead connection becomes a
+// retry (and then a real error) instead of an infinite wait.
+// (env override exists so the regression test can prove the timer actually
+// fires without burning 3 x 15s of real wall clock).
+const REFRESH_TIMEOUT_MS = Number(process.env.GIPITY_REFRESH_TIMEOUT_MS) || 15_000;
 
 /** Acquire the global auth-refresh lock. Returns a release fn, or null if we
  *  couldn't get it within the wait window (caller then proceeds best-effort —
@@ -196,9 +207,11 @@ export async function refreshTokenIfNeeded(force = false): Promise<void> {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ refreshToken }),
+          signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
         });
       } catch {
-        await delay(attempt * 300); continue;   // network blip - retry
+        // Network blip OR a timeout we just imposed - both are retryable here.
+        await delay(attempt * 300); continue;
       }
 
       if (res.ok) {

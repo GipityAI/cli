@@ -5,7 +5,7 @@ import { homedir } from 'os';
 import { LOCAL_PKG_DIR, LOCAL_ENTRY, STATE_FILE, SETTINGS_FILE, UPDATE_LOG, readState, readSettings, updatesDisabled } from '../updater/state.js';
 import { bold, dim, success, warning, error as clrError, muted } from '../colors.js';
 import { getAuth, sessionExpired } from '../auth.js';
-import { isClaudeInstalled, isClaudeAuthenticated, probeClaudeAuthenticated } from '../claude-setup.js';
+import { isClaudeInstalled, probeClaudeAuthenticated, claudeAuthStatus, claudeCredentialHeuristic, claudeLoginHint } from '../claude-setup.js';
 import * as relayState from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
 import { resolveCliPath } from '../relay/setup.js';
@@ -80,7 +80,7 @@ export interface EnvReport {
    *  {@link versionManagerNode}. */
   node: { ok: boolean; version: string; version_manager: string | null };
   gipity: { installed: boolean; version: string; logged_in: boolean; email: string | null; session_expired: boolean };
-  claude: { installed: boolean; authenticated: boolean };
+  claude: { installed: boolean; authenticated: boolean; account?: string | null; method?: string | null };
   relay: {
     paired: boolean;
     running: boolean;
@@ -138,10 +138,24 @@ export function gatherEnv(opts: { probeClaude?: boolean } = {}): EnvReport {
     email: auth?.email ?? null,
     session_expired: expired,
   };
-  const claude = { installed: isClaudeInstalled(), authenticated: false };
-  // Default: cheap heuristic (poll-safe). With --probe-claude: a real (billed)
-  // `claude -p` ping for a definitive answer.
-  claude.authenticated = claude.installed && (opts.probeClaude ? probeClaudeAuthenticated() : isClaudeAuthenticated());
+  const claude: EnvReport['claude'] = { installed: isClaudeInstalled(), authenticated: false };
+  // `claude auth status` is authoritative (it reads Claude Code's own store, so
+  // it sees the macOS Keychain and notices a revoked token) and NOT billed, but
+  // it is a ~2s process spawn - so run it ONCE and derive both the verdict and
+  // the account from that single call. --probe-claude remains for the rare case
+  // you want proof that a real round-trip works, not just that a credential
+  // exists. Naming the signed-in account is the fastest way to spot the classic
+  // relay misconfiguration: the daemon running as a different user/HOME than
+  // the human who logged in, so it reads a different ~/.claude and is forever
+  // "not logged in" no matter how many times they sign in interactively.
+  if (claude.installed) {
+    const status = opts.probeClaude ? null : claudeAuthStatus();
+    claude.authenticated = opts.probeClaude
+      ? probeClaudeAuthenticated()
+      : (status?.loggedIn ?? claudeCredentialHeuristic());
+    claude.account = status?.email ?? null;
+    claude.method = status?.authMethod ?? null;
+  }
   const relay = {
     paired: !!device,
     running: relayState.isDaemonRunning(),
@@ -192,7 +206,14 @@ export const doctorCommand = new Command('doctor')
       console.log(`${muted('                ')} ${dim(`login PATH yet. Ensure ${env.node.version_manager} auto-activates in your shell rc, set it as the default version, or symlink node + gipity onto your base PATH.`)}`);
     }
     console.log(`${muted('gipity login    ')} ${env.gipity.logged_in ? success(`logged in as ${env.gipity.email}`) : (env.gipity.session_expired ? warning(`session expired (${env.gipity.email})`) : warning('not logged in'))}`);
-    console.log(`${muted('claude code     ')} installed ${yn(env.claude.installed)} · authenticated ${yn(env.claude.authenticated)}`);
+    const claudeAccount = env.claude.account ? muted(`  (${env.claude.account}${env.claude.method ? ` via ${env.claude.method}` : ''})`) : '';
+    console.log(`${muted('claude code     ')} installed ${yn(env.claude.installed)} · authenticated ${yn(env.claude.authenticated)}${claudeAccount}`);
+    if (env.claude.installed && !env.claude.authenticated) {
+      // The single most common cause of a relay that accepts messages and then
+      // fails every one of them. Say the fix here rather than making them find
+      // it from a failed dispatch.
+      console.log(`${muted('                ')} ${warning(claudeLoginHint())}`);
+    }
     const autostartLabel = env.relay.autostart === null ? muted('n/a') : yn(env.relay.autostart);
     console.log(`${muted('relay           ')} paired ${yn(env.relay.paired)} · running ${yn(env.relay.running)} · autostart ${autostartLabel}${env.relay.paused ? warning(' · paused') : ''}${env.relay.device ? muted(`  (${env.relay.device.name})`) : ''}`);
     // Codex approves project hooks interactively and stores the decision in

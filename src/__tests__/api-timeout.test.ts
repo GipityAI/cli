@@ -48,6 +48,45 @@ function hangUntilAborted(): typeof globalThis.fetch {
     })) as unknown as typeof globalThis.fetch;
 }
 
+/** A fetch that fails like a network error the instant it is called, but first
+ *  asserts a deadline was wired in. The buffered-body helpers bound
+ *  time-to-first-byte at 30s-310s, so waiting for a real fire would stall the
+ *  suite for minutes; asserting the signal REACHES fetch is the regression that
+ *  matters, because the bug being guarded is a raw `fetch()` with no signal at
+ *  all (which hangs forever on a wedged socket). */
+function requiresAbortSignal(seen: string[]): typeof globalThis.fetch {
+  return ((input: string | URL, init?: RequestInit) => {
+    assert.ok(init?.signal, `${String(input)} must reach fetch with an AbortSignal`);
+    seen.push(String(input));
+    return Promise.reject(Object.assign(new Error('connection reset'), { name: 'TypeError' }));
+  }) as unknown as typeof globalThis.fetch;
+}
+
+describe('every buffered-body path carries a deadline', () => {
+  // Regression: these four bypassed request()/fetchWithTimeout and called a raw
+  // fetch() with no signal. One unbounded call is enough to hang a whole deploy
+  // while sync holds .gipity/sync.lock, with no output and no error, forever.
+  const cases: Array<[string, (api: any) => Promise<unknown>]> = [
+    ['download', api => api.download('/projects/p_x/file')],
+    ['downloadWithHeaders', api => api.downloadWithHeaders('/projects/p_x/export')],
+    ['postForTarEntries', api => api.postForTarEntries('/tools/browser/screenshot', {})],
+    ['publicRequest', api => api.publicRequest('POST', '/api/token', { app: 'p_x' })],
+  ];
+
+  for (const [name, call] of cases) {
+    it(`${name}() passes an AbortSignal to fetch`, async () => {
+      const api = await import('../api.js');
+      const seen: string[] = [];
+      globalThis.fetch = requiresAbortSignal(seen);
+
+      // Rejects with the stubbed network error, not a hang. The assertion that
+      // guards the bug lives inside the stub.
+      await assert.rejects(call(api));
+      assert.equal(seen.length, 1, 'the call should have reached fetch exactly once');
+    });
+  }
+});
+
 describe('api request() timeout override', () => {
   it('post() honors a per-call timeoutMs instead of the 60s default', async () => {
     const { post, ApiError } = await import('../api.js');

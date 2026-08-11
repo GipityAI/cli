@@ -993,9 +993,18 @@ async function runLaunch(
       }
       // A Gipity project directory is trusted by construction - the user
       // created or explicitly chose it. Pre-accept Claude's per-directory
-      // trust dialog so an interactive launch doesn't stop to ask. Headless
-      // `-p` runs skip the dialog already, so this is only needed interactively.
-      if (!nonInteractive) markFolderTrusted(process.cwd());
+      // trust dialog so an interactive launch doesn't stop to ask.
+      //
+      // This runs for HEADLESS runs too. It used to be skipped for `-p` on the
+      // theory that "headless runs skip the dialog already" - true of the
+      // blocking prompt, but NOT of its consequences: an untrusted workspace
+      // makes Claude Code discard the project's whole permissions.allow list
+      // ("Ignoring 32 permissions.allow entries ... this workspace has not been
+      // trusted"). That failure is silent and deferred - the agent just gets
+      // denied tools it was configured to have, mid-run, with nothing tying it
+      // back to trust. Relay dispatches are the main headless path, so they
+      // were the main victims. markFolderTrusted is idempotent and best-effort.
+      markFolderTrusted(process.cwd());
 
       const child = spawnCommand(claudeCmd, allArgs, {
         stdio: 'inherit',

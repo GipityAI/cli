@@ -22,7 +22,11 @@ export class ApiError extends Error {
 // finish well within REQUEST_TIMEOUT_MS; the S3 PUT path keeps its own
 // size-based timeout. Streaming downloads can't use a single total cap (a large
 // but healthy tree would be cut off mid-stream), so downloadStream bounds only
-// the time-to-first-byte here and an idle watchdog in sync.ts guards the body.
+// the time-to-first-byte here and an idle watchdog in sync.ts guards the body;
+// the buffered large-body paths (download, downloadWithHeaders,
+// postForTarEntries) use fetchWithStagedTimeout for the same two-phase reason.
+// "Every" is literal: a raw fetch() here has no deadline at all, and one
+// unbounded call is enough to hang a whole deploy while it holds the lock.
 const REQUEST_TIMEOUT_MS = 60_000;
 const DOWNLOAD_HEADER_TIMEOUT_MS = 30_000;
 
@@ -48,6 +52,64 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     }
     throw e;
   }
+}
+
+/** fetch() for responses whose BODY may be large or slow to produce (a project
+ *  export, a screenshot tar). A single total cap is wrong here (it would cut
+ *  off a healthy large transfer), but NO cap lets a wedged socket hang forever,
+ *  which is the stall that leaves a command silent, unkillable by any deadline,
+ *  and still holding the project lock. So bound the two phases separately:
+ *  `headerMs` for time-to-first-byte (the server does its work before it
+ *  responds), then a size-aware body budget once the headers land.
+ *
+ *  Callers MUST consume the response through the returned `read()` so the body
+ *  deadline is cleared and an abort surfaces as a clean 408 rather than a bare
+ *  AbortError. Every exit path, including parsing a non-2xx error body, has
+ *  to go through it, or the timer outlives the request. */
+async function fetchWithStagedTimeout(
+  url: string,
+  init: RequestInit,
+  headerMs: number,
+  label: string,
+): Promise<{ res: Response; read: <T>(fn: (r: Response) => Promise<T>) => Promise<T> }> {
+  const ac = new AbortController();
+  let timer = setTimeout(() => ac.abort(), headerMs);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: ac.signal });
+  } catch (e: any) {
+    clearTimeout(timer);
+    if (ac.signal.aborted) {
+      throw new ApiError(408, 'REQUEST_TIMEOUT',
+        `${label} timed out after ${Math.round(headerMs / 1000)}s (no response from the server)`);
+    }
+    throw e;
+  }
+
+  // Headers are in: re-arm the same controller with a budget for the body,
+  // scaled by the declared length on the same throughput policy as the PUT path.
+  clearTimeout(timer);
+  const declared = Number(res.headers.get('content-length') ?? 0);
+  const bodyMs = putTimeoutMs(Number.isFinite(declared) ? declared : 0);
+  timer = setTimeout(() => ac.abort(), bodyMs);
+
+  return {
+    res,
+    async read<T>(fn: (r: Response) => Promise<T>): Promise<T> {
+      try {
+        return await fn(res);
+      } catch (e: any) {
+        if (ac.signal.aborted) {
+          throw new ApiError(408, 'REQUEST_TIMEOUT',
+            `${label} stalled mid-body (no completion in ${Math.round(bodyMs / 1000)}s)`);
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }
 
 /** Resolve the Bearer token value. A GIPITY_TOKEN env var (a long-lived agent
@@ -168,20 +230,28 @@ export async function postForTarEntries(
 ): Promise<Array<{ name: string; buffer: Buffer }>> {
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, {
+  // The capture (load + render across viewports) runs server-side BEFORE the
+  // first byte, so time-to-first-byte gets the long budget; the server bounds
+  // itself at 300s, so its own clearer error always beats this ceiling.
+  const { res, read } = await fetchWithStagedTimeout(url, {
     method: 'POST',
     headers,
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }, LONG_REQUEST_TIMEOUT_MS, `POST ${path}`);
+
   if (await shouldRetryAfter401(res.status, retried)) {
+    await read(r => r.arrayBuffer().catch(() => null));  // drain + clear the body timer
     return postForTarEntries(path, body, true);
   }
   if (!res.ok) {
-    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
+    const json = await read(r => r.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } })));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
     throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
   }
-  if (!res.body) throw new ApiError(500, 'EMPTY_RESPONSE', 'Server returned no body');
+  if (!res.body) {
+    await read(async () => null);  // clear the body timer before bailing out
+    throw new ApiError(500, 'EMPTY_RESPONSE', 'Server returned no body');
+  }
 
   const extract = tar.extract();
   const entries: Array<{ name: string; buffer: Buffer }> = [];
@@ -201,9 +271,11 @@ export async function postForTarEntries(
     extract.on('error', reject);
   });
 
-  Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream).pipe(extract);
-  await done;
-  return entries;
+  return read(async () => {
+    Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream).pipe(extract);
+    await done;
+    return entries;
+  });
 }
 
 export function put<T>(path: string, body?: unknown): Promise<T> {
@@ -256,18 +328,20 @@ export async function sendMessage(message: string): Promise<string> {
 /** Download a file as raw bytes (no JSON parsing) */
 export async function download(path: string, retried = false): Promise<Buffer> {
   const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, {
+  const { res, read } = await fetchWithStagedTimeout(url, {
     headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
-  });
+  }, DOWNLOAD_HEADER_TIMEOUT_MS, `GET ${path}`);
 
   if (await shouldRetryAfter401(res.status, retried)) {
+    await read(r => r.arrayBuffer().catch(() => null));
     return download(path, true);
   }
   if (!res.ok) {
+    await read(async () => null);
     throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: ${res.statusText}`));
   }
 
-  return Buffer.from(await res.arrayBuffer());
+  return read(async r => Buffer.from(await r.arrayBuffer()));
 }
 
 /** Download raw bytes plus the response headers - for binary endpoints whose
@@ -279,20 +353,23 @@ export async function downloadWithHeaders(
   retried = false,
 ): Promise<{ buffer: Buffer; headers: Headers }> {
   const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, {
+  // The bundle is assembled server-side before the first byte, so a big project
+  // legitimately waits; give time-to-first-byte the long budget, not the 30s one.
+  const { res, read } = await fetchWithStagedTimeout(url, {
     headers: { ...clientHeaders(), 'Authorization': `Bearer ${await bearerToken()}` },
-  });
+  }, LONG_REQUEST_TIMEOUT_MS, `GET ${path}`);
 
   if (await shouldRetryAfter401(res.status, retried)) {
+    await read(r => r.arrayBuffer().catch(() => null));
     return downloadWithHeaders(path, true);
   }
   if (!res.ok) {
-    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
+    const json = await read(r => r.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } })));
     const err = json.error || { code: 'UNKNOWN', message: res.statusText };
     throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
   }
 
-  return { buffer: Buffer.from(await res.arrayBuffer()), headers: res.headers };
+  return read(async r => ({ buffer: Buffer.from(await r.arrayBuffer()), headers: r.headers }));
 }
 
 /** POST raw bytes (e.g. a .gip bundle) and parse the JSON response, returning
@@ -446,11 +523,11 @@ export async function publicRequest<T>(
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
   const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method,
     headers: { ...clientHeaders(), 'Content-Type': 'application/json', ...extraHeaders },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
 
   if (!res.ok) {
     const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));

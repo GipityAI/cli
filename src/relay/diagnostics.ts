@@ -24,6 +24,7 @@ import type { ChildProcess } from 'child_process';
 import { resolveCommand, spawnCommand } from '../platform.js';
 import { cliVersion } from '../client-context.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
+import { claudeAuthStatusAsync } from '../claude-setup.js';
 
 export interface RelayDiagnostics {
   collected_at?: string;
@@ -40,6 +41,13 @@ export interface RelayDiagnostics {
    *  plus the non-agent 'cursor' extra. */
   agents?: Record<string, string>;
   projects_local?: number;
+  /** Whether Claude Code on this machine is signed in. A dispatch to a machine
+   *  whose Claude Code is logged out fails on arrival, and until now that was
+   *  only discoverable by sending a message and watching it fail - so report it
+   *  on the heartbeat and let the UI warn first. `undefined` means the question
+   *  couldn't be answered (Claude Code absent, or too old for `auth status`),
+   *  which must not be rendered as "logged out". */
+  claude_auth?: { logged_in: boolean; method?: string; subscription?: string };
 }
 
 const PROBE_TIMEOUT_MS = 4000;
@@ -149,10 +157,15 @@ export async function collectDiagnostics(): Promise<RelayDiagnostics> {
   // so the whole snapshot costs one timeout, not the sum of four. `cursor` is
   // a non-agent extra (no adapter - it's not a coding agent Gipity dispatches
   // to), probed alongside the registry-driven agent binaries.
-  const [versions, cursor, gpu] = await Promise.all([
+  // claudeAuthStatusAsync is a local credential read (not billed) and is
+  // already bounded + best-effort, so it joins the same concurrent batch.
+  // Deliberately NOT recording the account email it also returns: this payload
+  // is non-PII by design.
+  const [versions, cursor, gpu, claudeAuth] = await Promise.all([
     Promise.all(AGENT_ADAPTERS.map((a) => probeVersion(a.binary))),
     probeVersion('cursor'),
     detectGpu(),
+    claudeAuthStatusAsync(),
   ]);
   const agents: RelayDiagnostics['agents'] = {};
   AGENT_ADAPTERS.forEach((a, i) => {
@@ -174,6 +187,9 @@ export async function collectDiagnostics(): Promise<RelayDiagnostics> {
     gpu,
     agents: Object.keys(agents).length ? agents : undefined,
     projects_local: localProjectCount(),
+    claude_auth: claudeAuth
+      ? { logged_in: claudeAuth.loggedIn, method: claudeAuth.authMethod, subscription: claudeAuth.subscriptionType }
+      : undefined,
   };
 }
 
