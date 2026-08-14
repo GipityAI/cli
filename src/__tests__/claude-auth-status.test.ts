@@ -68,7 +68,22 @@ describe('claudeAuthFailureHint', () => {
     assert.equal(claudeAuthFailureHint(SIGNED_IN, 'Not logged in · Please run /login'), null);
   });
 
-  it('falls back to the stderr shape only when status is unknown', () => {
+  it('sees the login line when it arrives as assistant STDOUT, not stderr', () => {
+    // The real shape from a paired device on 2026-08-14. Claude Code printed
+    // "Not logged in · Please run /login" as assistant text on stdout, while
+    // stderr carried only the wrapper's own chatter - so a stderr-only
+    // haystack produced no hint and the user saw a bare exit-1 dispatch
+    // error. The caller now passes `stderr + assistant tail`.
+    const stderrTail = 'Synced 1 change with Gipity. | Sending to Claude Code: hi there | Done (00:00:02.7)';
+    const assistantTail = 'Not logged in · Please run /login';
+    assert.equal(claudeAuthFailureHint(null, stderrTail), null, 'stderr alone cannot see it');
+    assert.ok(
+      claudeAuthFailureHint(null, `${stderrTail} ${assistantTail}`, 'Wiredcoach\'s Linux PC'),
+      'combined tail must produce the hint',
+    );
+  });
+
+  it('falls back to the output shape only when status is unknown', () => {
     assert.ok(claudeAuthFailureHint(null, 'Error: Not logged in · Please run /login'));
     assert.ok(claudeAuthFailureHint(null, 'invalid api key'));
     assert.ok(claudeAuthFailureHint(null, 'OAuth token has expired'));

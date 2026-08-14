@@ -1243,6 +1243,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   let killed = false;
   let runtimeLimit = false;
   let stderrTail = '';
+  let assistantTail = '';
   let startupMs: number | undefined;
   try {
     const result = await spawnGipityClaude(args, cwd, d, queue, { resumeWords: transcript?.words });
@@ -1250,6 +1251,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
     killed = result.killed;
     runtimeLimit = result.runtimeLimit ?? false;
     stderrTail = result.stderrTail ?? '';
+    assistantTail = result.assistantTail ?? '';
     startupMs = result.startupMs;
   } catch (err: any) {
     spawnErr = err?.message || String(err);
@@ -1295,7 +1297,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   // guess would trade one misleading message for another. Only computed on the
   // failure path - the check spawns a process.
   const authHint = (exitCode !== 0 && !killed && !runtimeLimit && !spawnErr)
-    ? claudeAuthFailureHint(await claudeAuthStatusAsync(), stderrTail, state.getDevice()?.name)
+    ? claudeAuthFailureHint(await claudeAuthStatusAsync(), `${stderrTail} ${assistantTail}`, state.getDevice()?.name)
     : null;
   const authNote = authHint ? ` · ${authHint}` : '';
   const tail = runtimeLimit
@@ -1333,7 +1335,7 @@ async function handleDispatch(claimed: ClaimedDispatch): Promise<void> {
   }
 }
 
-/** Stderr shapes that mean "Claude Code could not authenticate". Only consulted
+/** Output shapes that mean "Claude Code could not authenticate". Only consulted
  *  when `claude auth status` couldn't answer, so it never has to be exhaustive. */
 const CLAUDE_AUTH_ERROR_RE =
   /not logged in|please run \/login|claude auth login|invalid api key|authentication_error|oauth token (?:has )?(?:expired|been revoked)/i;
@@ -1346,19 +1348,22 @@ const CLAUDE_AUTH_ERROR_RE =
  * Conservative by construction:
  *   - `loggedIn: false` is definitive, so translate.
  *   - status null (couldn't tell: Claude Code absent, or too old for `auth
- *     status`) falls back to the child's stderr, which can only ADD a hint we
- *     would otherwise not have given.
+ *     status`) falls back to the child's OUTPUT tail, which can only ADD a
+ *     hint we would otherwise not have given. That tail must include stdout,
+ *     not just stderr: Claude Code prints "Not logged in · Please run /login"
+ *     as assistant text on stdout, so a stderr-only haystack misses the only
+ *     line that names the failure.
  *   - `loggedIn: true` never translates, so a user prompt that merely contains
  *     the words "not logged in" cannot manufacture a bogus login hint.
  * Exported for tests.
  */
 export function claudeAuthFailureHint(
   status: ClaudeAuthStatus | null,
-  stderrTail: string,
+  outputTail: string,
   deviceName?: string,
 ): string | null {
   if (status?.loggedIn === false) return claudeLoginHint(deviceName);
-  if (status === null && CLAUDE_AUTH_ERROR_RE.test(stderrTail)) return claudeLoginHint(deviceName);
+  if (status === null && CLAUDE_AUTH_ERROR_RE.test(outputTail)) return claudeLoginHint(deviceName);
   return null;
 }
 
@@ -1898,7 +1903,7 @@ export async function spawnGipityClaude(
   d: ClaimedDispatch,
   queue?: IngestQueue,
   meta?: { resumeWords?: number; streamJson?: boolean },
-): Promise<{ exitCode: number; killed: boolean; runtimeLimit?: boolean; stderrTail?: string; startupMs?: number }> {
+): Promise<{ exitCode: number; killed: boolean; runtimeLimit?: boolean; stderrTail?: string; assistantTail?: string; startupMs?: number }> {
   // streamJson (default true) = the Claude path: parse the child's
   // stream-json stdout into ingest entries and stand hook capture down.
   // false = non-Claude agents (Codex/Grok): hook capture owns the
@@ -1963,6 +1968,8 @@ export async function spawnGipityClaude(
     // payload works for a future codex/aider/etc. runner.
     const dispatchStartedAt = Date.now();
     let stdoutBytesTotal = 0;
+    // Last few assistant texts, for the auth-failure hint (see the push site).
+    const assistantTail: string[] = [];
     let lastStdoutByteAt = dispatchStartedAt;
     let stdoutBytesAtLastTick = 0;
     const phases = new PhaseTracker();
@@ -2124,6 +2131,18 @@ export async function spawnGipityClaude(
         // replay), so the same uuid reaches the server on every retry.
         if (!e.source_uuid) e.source_uuid = randomUUID();
       }
+      // Keep a small tail of assistant TEXT for the auth-failure hint. Claude
+      // Code reports "Not logged in · Please run /login" as assistant output
+      // on stdout, not on stderr - so a hint that only reads stderrTail can
+      // never see the one line that names the problem (observed live on a
+      // paired device 2026-08-14: the conversation showed the login message
+      // while the failure marker showed only the wrapper's chatter).
+      for (const e of entries) {
+        if (e.kind === 'assistant' && typeof (e as { text?: unknown }).text === 'string') {
+          assistantTail.push((e as { text: string }).text.trim());
+          if (assistantTail.length > 3) assistantTail.shift();
+        }
+      }
       q.push(...entries);
     });
     child.stdout?.on('data', (chunk) => {
@@ -2198,6 +2217,7 @@ export async function spawnGipityClaude(
       cleanup();
       resolve({
         exitCode: code ?? 1, killed, runtimeLimit, stderrTail: stderrTail.join(' | '),
+        assistantTail: assistantTail.join(' | '),
         startupMs: firstEventAt !== undefined ? Math.max(0, firstEventAt - dispatchStartedAt) : undefined,
       });
     });

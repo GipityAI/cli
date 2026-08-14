@@ -1209,6 +1209,19 @@ async function launchNonClaudeAgent(adapter: RemoteAgentAdapter, ctx: {
   }
   const childEnv = { ...process.env };
   if (convGuid) childEnv.GIPITY_CONVERSATION_GUID = convGuid;
+  // Pin project attribution for the agent's own model calls. opencode's
+  // Gipity provider sends this as X-Gipity-Project so per-project cost
+  // reporting sees the spend; without it every llm_agent ledger row lands
+  // unattributed (project_id NULL), which is what happened to the first
+  // cloud devbox sessions.
+  //
+  // The plugin's fallback is to read .gipity.json from the directory OPENCODE
+  // reports, which is not reliably the linked project dir - the plugin has
+  // always documented that a runner which knows the project should pin it
+  // here, but nothing ever did. We do know it: this is the launch that just
+  // resolved the config.
+  const projectGuidForAgent = getConfig()?.projectGuid;
+  if (projectGuidForAgent) childEnv.GIPITY_PROJECT = projectGuidForAgent;
 
   const agentCmd = resolveCommand(adapter.binary);
   const child = spawnCommand(agentCmd, agentArgs, {
