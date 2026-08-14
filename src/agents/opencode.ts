@@ -54,14 +54,25 @@ export const opencodeAdapter: RemoteAgentAdapter = {
   binary: 'opencode',
 
   buildInteractiveArgs({ resume, model }) {
-    const args: string[] = [];
+    const args = ['--dir', process.cwd()];
     if (model) args.push('--model', toOpencodeModel(model));
     if (resume) args.push('--session', resume);
     return args;
   },
 
   buildHeadlessArgs({ message, resume, model, bypassApprovals, jsonStream }) {
-    const args = ['run', message];
+    // `--dir` is REQUIRED, not a nicety: opencode resolves its own working
+    // directory rather than inheriting the spawn cwd, and lands on $HOME when
+    // nothing tells it otherwise. On a cloud devbox that meant every file the
+    // agent wrote went to /home/relay instead of the project - so nothing
+    // synced back to Gipity and the user saw an agent that "didn't write any
+    // files" (observed live 2026-08-14: `← Write /home/relay/foo.txt` while
+    // the daemon's own sync ran in .../GipityProjects/project-394).
+    //
+    // process.cwd() is the right value: `gipity build` is spawned by the relay
+    // daemon with cwd set to the resolved project dir, and launches the agent
+    // from that same cwd.
+    const args = ['run', '--dir', process.cwd(), message];
     if (model) args.push('--model', toOpencodeModel(model));
     if (resume) args.push('--session', resume);
     if (bypassApprovals) args.push('--auto');

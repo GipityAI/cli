@@ -180,43 +180,59 @@ describe('opencode argv', () => {
   it('headless uses `run` with --auto for bypass', () => {
     assert.deepEqual(
       opencode.buildHeadlessArgs({ message: 'fix', bypassApprovals: true }),
-      ['run', 'fix', '--auto'],
+      ['run', '--dir', process.cwd(), 'fix', '--auto'],
     );
   });
 
   it('namespaces Gipity model ids/aliases to the gipity provider', () => {
     assert.deepEqual(
       opencode.buildHeadlessArgs({ message: 'm', model: 'deepseek' }),
-      ['run', 'm', '--model', 'gipity/deepseek'],
+      ['run', '--dir', process.cwd(), 'm', '--model', 'gipity/deepseek'],
     );
     // Concrete catalog ids (OpenRouter slugs) also namespace: their vendor
     // prefix is not an opencode provider.
     assert.deepEqual(
       opencode.buildHeadlessArgs({ message: 'm', model: 'deepseek/deepseek-v4-pro' }),
-      ['run', 'm', '--model', 'gipity/deepseek/deepseek-v4-pro'],
+      ['run', '--dir', process.cwd(), 'm', '--model', 'gipity/deepseek/deepseek-v4-pro'],
     );
   });
 
   it('passes opencode-native provider refs through verbatim (BYO key)', () => {
     assert.deepEqual(
       opencode.buildHeadlessArgs({ message: 'm', model: 'anthropic/claude-sonnet-5' }),
-      ['run', 'm', '--model', 'anthropic/claude-sonnet-5'],
+      ['run', '--dir', process.cwd(), 'm', '--model', 'anthropic/claude-sonnet-5'],
     );
     assert.deepEqual(
       opencode.buildHeadlessArgs({ message: 'm', model: 'gipity/qwen' }),
-      ['run', 'm', '--model', 'gipity/qwen'],
+      ['run', '--dir', process.cwd(), 'm', '--model', 'gipity/qwen'],
     );
   });
 
+  it('always pins --dir to the launch cwd (opencode ignores the spawn cwd)', () => {
+    // Without --dir, opencode resolves its own working directory and lands on
+    // $HOME: on a cloud devbox every agent file write went to /home/relay
+    // instead of the project, so nothing ever synced back. Both modes must
+    // carry it, and it must be the process cwd - `gipity build` is launched
+    // by the relay daemon in the resolved project dir.
+    for (const args of [
+      opencode.buildHeadlessArgs({ message: 'x' }),
+      opencode.buildInteractiveArgs({}),
+    ]) {
+      const i = args.indexOf('--dir');
+      assert.ok(i >= 0, 'every opencode invocation must pin --dir');
+      assert.equal(args[i + 1], process.cwd());
+    }
+  });
+
   it('resume rides --session in both modes', () => {
-    assert.deepEqual(opencode.buildHeadlessArgs({ message: 'more', resume: 'ses_1' }), ['run', 'more', '--session', 'ses_1']);
-    assert.deepEqual(opencode.buildInteractiveArgs({ resume: 'ses_1' }), ['--session', 'ses_1']);
+    assert.deepEqual(opencode.buildHeadlessArgs({ message: 'more', resume: 'ses_1' }), ['run', '--dir', process.cwd(), 'more', '--session', 'ses_1']);
+    assert.deepEqual(opencode.buildInteractiveArgs({ resume: 'ses_1' }), ['--dir', process.cwd(), '--session', 'ses_1']);
   });
 
   it('json stream uses --format json and session ids come from bus events', () => {
     assert.deepEqual(
       opencode.buildHeadlessArgs({ message: 'm', jsonStream: true }),
-      ['run', 'm', '--format', 'json'],
+      ['run', '--dir', process.cwd(), 'm', '--format', 'json'],
     );
     assert.equal(opencode.sessionIdFromStreamEvent({ type: 'message.part.updated', properties: { sessionID: 'ses_9' } }), 'ses_9');
     assert.equal(opencode.sessionIdFromStreamEvent({ type: 'session.created', properties: { info: { id: 'ses_2' } } }), 'ses_2');
