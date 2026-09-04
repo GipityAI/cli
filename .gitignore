@@ -10,3 +10,7 @@ ss-*.png
 
 # gw worktrees (git tracks them via .git/worktrees metadata; the dir itself is scratch)
 .worktrees/
+
+# Private keys - never commit
+*.pem
+*.key
