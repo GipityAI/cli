@@ -14,9 +14,10 @@ import { basename, resolve, relative, join } from 'node:path';
 import { post, del } from './api.js';
 import { getProjectRoot } from './config.js';
 import { guessMime } from './upload.js';
+import { BRAND } from './brand.js';
 
 /** Dirs a hand-made asset is never in, and that are expensive to walk. */
-const FIND_SKIP = new Set(['node_modules', '.git', '.gipity', 'dist', 'build', '.next', 'coverage']);
+const FIND_SKIP = new Set(['node_modules', '.git', BRAND.file.homeDir, 'dist', 'build', '.next', 'coverage']);
 
 /** Find files named `name` anywhere under `root` (breadth-first, bounded). */
 function findByBasename(root: string, name: string, limit = 3): string[] {

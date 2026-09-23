@@ -11,6 +11,7 @@
 import { promises as fs, readdirSync, statSync } from 'fs';
 import { join, relative, extname } from 'path';
 import { isSyncIgnored } from './setup.js';
+import { BRAND } from './brand.js';
 
 export interface TemplateVars {
   /** Project's short_guid — the canonical identifier used in all API URLs. */
@@ -21,7 +22,7 @@ export interface TemplateVars {
   description?: string;
   /** Account + project slugs — when both are present, {{HEAD_BLOCK}} gains the
    *  canonical URL, og:url, and absolute og:image the social crawlers need
-   *  (https://app.gipity.ai/{accountSlug}/{projectSlug}/). */
+   *  (`https://<app host>/{accountSlug}/{projectSlug}/`). */
   accountSlug?: string;
   projectSlug?: string;
 }
@@ -105,7 +106,7 @@ function buildHeadBlock(v: TemplateVars): string {
   const t = escapeHtml(v.projectName);
   const d = v.description ? escapeHtml(v.description) : '';
   const url = v.accountSlug && v.projectSlug
-    ? `https://app.gipity.ai/${v.accountSlug}/${v.projectSlug}/`
+    ? `https://${BRAND.host.app}/${v.accountSlug}/${v.projectSlug}/`
     : undefined;
   const themeColor = darkTint(ACCENT_PALETTE[hashString(v.projectGuid || v.projectName) % ACCENT_PALETTE.length]);
   const jsonLd = JSON.stringify({
@@ -170,7 +171,7 @@ export function buildTemplateVars(v: TemplateVars): Record<string, string> {
     // `crossorigin="anonymous"` so SDK errors surface with a real message/stack
     // (CORS mode) instead of a sanitized message-less "Script error". The CDN
     // returns Access-Control-Allow-Origin:*, so it works on any app domain.
-    '{{ANALYTICS_SCRIPT}}': `<script defer crossorigin="anonymous" src="https://media.gipity.ai/client/v1/gipity.js" data-app="${v.projectGuid}"></script>`,
+    '{{ANALYTICS_SCRIPT}}': `<script defer crossorigin="anonymous" src="${BRAND.url.media}/client/v1/${BRAND.file.browserSdk}" data-app="${v.projectGuid}"></script>`,
   };
 }
 

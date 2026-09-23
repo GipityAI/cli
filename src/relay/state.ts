@@ -16,6 +16,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { BRAND } from '../brand.js';
 
 export interface RelayDevice {
   guid: string;
@@ -61,7 +62,7 @@ export interface RelayState {
 // which is paired to a DIFFERENT account — and project/chat creation fails with
 // "deviceGuid does not match a paired device". Scoping it lets each auth context pair
 // and own its own device. Unset GIPITY_DIR → ~/.gipity, unchanged for normal users.
-const RELAY_DIR = process.env.GIPITY_DIR || join(homedir(), '.gipity');
+const RELAY_DIR = process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir);
 const RELAY_FILE = join(RELAY_DIR, 'relay.json');
 const FILE_MODE = 0o600;
 

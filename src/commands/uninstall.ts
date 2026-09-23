@@ -20,6 +20,7 @@ import { bold, brand, dim, success, error as clrError, muted } from '../colors.j
 import * as relayState from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
+import { BRAND } from '../brand.js';
 
 /** The install.sh / install.ps1 launcher appends a line to the user's shell rc
  *  files putting ~/.gipity/launcher/bin on PATH. Once ~/.gipity is deleted that
@@ -38,7 +39,7 @@ function removeInstallerPathLines(): string[] {
     try { text = readFileSync(rc, 'utf-8'); } catch { continue; }
     const lines = text.split('\n');
     const kept = lines.filter(
-      (line) => line.trim() !== marker && !line.includes('.gipity/launcher/bin'),
+      (line) => line.trim() !== marker && !line.includes(`${BRAND.file.homeDir}/launcher/bin`),
     );
     if (kept.length === lines.length) continue;
     try { writeFileSync(rc, kept.join('\n')); touched.push(rc); } catch { /* ignore */ }
@@ -115,13 +116,13 @@ export const uninstallCommand = new Command('uninstall')
   .option('--yes', 'Skip confirmation prompts')
   .action(async (opts: { yes?: boolean }) => {
     const autoYes = opts.yes || getAutoConfirm();
-    const gipityDir = join(homedir(), '.gipity');
+    const gipityDir = join(homedir(), BRAND.file.homeDir);
     // Installs from install.sh / install.ps1 keep the launcher binary itself
     // under ~/.gipity/launcher/bin, so wiping ~/.gipity removes the binary too -
     // the only leftover is the PATH line the installer added to the shell rc
     // files (cleaned up below). An npm-global install instead leaves the binary
     // in npm's bin dir, which the user removes with `npm uninstall -g gipity`.
-    const launcherBin = join(gipityDir, 'launcher', 'bin', 'gipity');
+    const launcherBin = join(gipityDir, 'launcher', 'bin', BRAND.cli);
     const installedViaLauncher = existsSync(launcherBin);
 
     console.log(`${bold('Gipity uninstall')} - this will:`);

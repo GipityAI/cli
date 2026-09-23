@@ -6,7 +6,7 @@ import { bold, muted } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 import { confirm } from '../utils.js';
 
-// All commands hit the app API (https://a.gipity.ai/api/<guid>/records/...),
+// All commands hit the app API (<apiBase>/api/<guid>/records/...),
 // which authorizes the logged-in owner via their Bearer token. (The native
 // Records API is the only records surface that exists server-side; there is no
 // /projects/<guid>/records mirror.)

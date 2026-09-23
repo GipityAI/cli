@@ -64,8 +64,9 @@ import { getConfig } from '../config.js';
 import type { IngestEntry } from '../capture/sources/claude-code.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
 import type { CaptureHookInput, CaptureParseResult, RemoteAgentAdapter } from '../agents/index.js';
+import { BRAND } from '../brand.js';
 
-const CAPTURE_DIR = join(homedir(), '.gipity', 'capture-state');
+const CAPTURE_DIR = join(homedir(), BRAND.file.homeDir, 'capture-state');
 const INGEST_BATCH_MAX = 100; // server caps at 200; stay comfortably under
 
 type HookInput = CaptureHookInput;

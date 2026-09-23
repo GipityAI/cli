@@ -14,12 +14,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { BRAND } from './brand.js';
 
 export interface Prefs {
   lastAgent?: string;
 }
 
-const PREFS_PATH = join(homedir(), '.gipity', 'prefs.json');
+const PREFS_PATH = join(homedir(), BRAND.file.homeDir, 'prefs.json');
 
 export function readPrefs(): Prefs {
   if (!existsSync(PREFS_PATH)) return {};
@@ -37,7 +38,7 @@ export function writePrefs(update: Partial<Prefs>): void {
   try {
     const current = readPrefs();
     const next: Prefs = { ...current, ...update };
-    mkdirSync(join(homedir(), '.gipity'), { recursive: true });
+    mkdirSync(join(homedir(), BRAND.file.homeDir), { recursive: true });
     writeFileSync(PREFS_PATH, JSON.stringify(next, null, 2) + '\n');
   } catch {
     /* best-effort - prefs are a convenience */

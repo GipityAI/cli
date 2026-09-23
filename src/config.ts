@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, resolve } from 'path';
+import { BRAND, isBrandHost } from './brand.js';
 import ignore, { type Ignore } from 'ignore';
 
 export interface GipityConfig {
@@ -23,9 +24,9 @@ export interface GipityConfig {
   tools?: string[];
 }
 
-const CONFIG_FILE = '.gipity.json';
+const CONFIG_FILE = BRAND.file.config;
 
-export const DEFAULT_API_BASE = 'https://a.gipity.ai';
+export const DEFAULT_API_BASE = BRAND.url.api;
 
 let cached: GipityConfig | null = null;
 let cachedPath: string | null = null;
@@ -54,7 +55,7 @@ export function isAllowedApiHost(url: string): boolean {
   try {
     const { protocol, hostname } = new URL(url);
     if (protocol !== 'https:') return false;
-    return hostname === 'gipity.ai' || hostname.endsWith('.gipity.ai');
+    return isBrandHost(hostname);
   } catch {
     return false;
   }
@@ -83,7 +84,7 @@ export function resolveApiBase(): string {
     if (!warnedHosts.has(fromConfig)) {
       warnedHosts.add(fromConfig);
       console.error(
-        `⚠ Ignoring untrusted apiBase "${fromConfig}" from .gipity.json — not a gipity.ai host. Using ${DEFAULT_API_BASE}.`,
+        `⚠ Ignoring untrusted apiBase "${fromConfig}" from ${CONFIG_FILE} — not a ${BRAND.host.apex} host. Using ${DEFAULT_API_BASE}.`,
       );
     }
   }
@@ -225,7 +226,7 @@ export function liveUrl(
   config: Pick<GipityConfig, 'accountSlug' | 'projectSlug'>,
   target: 'dev' | 'prod' = 'dev',
 ): string {
-  const host = target === 'prod' ? 'app.gipity.ai' : 'dev.gipity.ai';
+  const host = target === 'prod' ? BRAND.host.app : BRAND.host.dev;
   return `https://${host}/${config.accountSlug}/${config.projectSlug}/`;
 }
 

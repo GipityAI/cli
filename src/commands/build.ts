@@ -78,6 +78,7 @@ function reportSyncResult(result: SyncResult): void {
 }
 
 import { getProjectsRoot } from '../relay/paths.js';
+import { BRAND } from '../brand.js';
 
 interface ProjectData {
   short_guid: string;
@@ -467,7 +468,7 @@ async function runLaunch(
       // here". Ask, rather than silently adopting the parent. Flag-driven runs
       // (--project / --new-project) and headless (-p) runs are unambiguous.
       if (existing && !opts.newProject && !opts.project && !nonInteractive) {
-        const cwdHasConfig = existsSync(resolve(process.cwd(), '.gipity.json'));
+        const cwdHasConfig = existsSync(resolve(process.cwd(), BRAND.file.config));
         if (!cwdHasConfig && isLikelyEmpty(process.cwd())) {
           const ancestorRoot = dirname(getConfigPath()!);
           console.log(`  ${bold('You are inside an existing Gipity project.')}\n`);

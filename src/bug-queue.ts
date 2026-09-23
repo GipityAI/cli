@@ -12,8 +12,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlink
 import { join } from 'path';
 import { homedir } from 'os';
 import { post } from './api.js';
+import { BRAND } from './brand.js';
 
-const QUEUE_DIR = join(process.env.GIPITY_DIR || join(homedir(), '.gipity'), 'bug-queue');
+const QUEUE_DIR = join(process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir), 'bug-queue');
 
 export interface QueuedBugReport {
   projectGuid: string;

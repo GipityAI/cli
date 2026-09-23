@@ -8,6 +8,7 @@ import { resolveCommand, spawnSyncCommand } from './platform.js';
 import { SKILLS_CONTENT, BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
 import { DEFAULT_API_BASE, resolveApiBase, getConfig } from './config.js';
 import { ensureOpencodePluginInstalled, stagedPluginPath } from './opencode-setup.js';
+import { BRAND } from './brand.js';
 
 export { SKILLS_CONTENT };
 
@@ -63,10 +64,10 @@ export const AIDER_CONF_FILE = '.aider.conf.yml';
  *  `screenshots/` (page-screenshot.ts writes there; the server excludes both
  *  dirs from root deploys in s3-deploy.ts). Gitignore-glob form, matched by the
  *  `ignore` package in config.ts. */
-export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', '.gipityscratch/'];
+export const SCRATCH_IGNORE = ['tmp/', '.tmp/', '*_tmp/', `${BRAND.file.scratchDir}/`];
 
 export const DEFAULT_SYNC_IGNORE = [
-  'node_modules', '.git', '.gipity.json', '.gipity/', '.claude/', '.codex/', '.agents/', '.gitignore', AIDER_CONF_FILE,
+  'node_modules', '.git', BRAND.file.config, `${BRAND.file.homeDir}/`, '.claude/', '.codex/', '.agents/', '.gitignore', AIDER_CONF_FILE,
   // Home-directory junk: a project created inside a real home dir (or one that
   // shells out) sweeps in a cache dir + shell dotfiles that are never app
   // files. `.cache/` alone can be gigabytes (it was 2.4 GB on one project),
@@ -445,11 +446,11 @@ export function removeGrokPlugin(): boolean {
 // pre-trust, so we print a nudge on first write.
 
 export const AGENTS_SKILLS_DIR = join(homedir(), '.agents', 'skills');
-export const AGENT_HOOKS_DIR = join(homedir(), '.gipity', 'agent-hooks');
+export const AGENT_HOOKS_DIR = join(homedir(), BRAND.file.homeDir, 'agent-hooks');
 /** Records what ensureAgentSkillsInstalled() put on this machine: the plugin
  *  version and the exact skill names copied, so upgrades replace and uninstall
  *  removes precisely those. */
-export const AGENT_SKILLS_MANIFEST = join(homedir(), '.gipity', 'agent-skills.json');
+export const AGENT_SKILLS_MANIFEST = join(homedir(), BRAND.file.homeDir, 'agent-skills.json');
 
 // Antigravity (agy) reads skills from its own global customization root,
 // ~/.gemini/config/skills/ (confirmed against agy's own customization-system
@@ -457,7 +458,7 @@ export const AGENT_SKILLS_MANIFEST = join(homedir(), '.gipity', 'agent-skills.js
 // share. Same manifest pattern, separate directory + file so upgrades and
 // uninstall touch exactly the skills each tool actually reads.
 export const AGY_SKILLS_DIR = join(homedir(), '.gemini', 'config', 'skills');
-export const AGY_SKILLS_MANIFEST = join(homedir(), '.gipity', 'agy-skills.json');
+export const AGY_SKILLS_MANIFEST = join(homedir(), BRAND.file.homeDir, 'agy-skills.json');
 
 function skillsManifestState(manifestPath: string): { current: boolean; skills: string[] } {
   try {
@@ -907,7 +908,7 @@ export const GIPITY_BLOCK_END = '<!-- END GIPITY INTEGRATION -->';
  *  avoids stale values frozen into a file.
  *
  *  The one environment value that DOES live here is the API base. The baked
- *  knowledge text names `https://a.gipity.ai` as the app-services endpoint;
+ *  knowledge text names the public API base as the app-services endpoint;
  *  when this session runs against a different platform instance (GIPITY_API_BASE
  *  / --api-base, e.g. a local dev server), the project only exists there - an
  *  agent that copies the public host into app code gets 404s it can't explain.
@@ -919,7 +920,7 @@ function renderManagedBlock(apiBase: string): string {
   const base = apiBase.replace(/\/+$/, '');
   if (base !== DEFAULT_API_BASE) {
     body = body.replaceAll(DEFAULT_API_BASE, base);
-    const note = `> **Platform instance:** this project runs against the Gipity platform at \`${base}\`, not the public \`${DEFAULT_API_BASE}\`. The project and its data exist only on that instance; every API/service URL in this document already points there - never substitute \`a.gipity.ai\`.`;
+    const note = `> **Platform instance:** this project runs against the ${BRAND.name} platform at \`${base}\`, not the public \`${DEFAULT_API_BASE}\`. The project and its data exist only on that instance; every API/service URL in this document already points there - never substitute \`${BRAND.host.api}\`.`;
     const headingEnd = body.indexOf('\n');
     body = body.slice(0, headingEnd + 1) + '\n' + note + '\n' + body.slice(headingEnd + 1);
   }
@@ -1210,7 +1211,7 @@ export function setupGitignore(): void {
   const gitignorePath = resolve(process.cwd(), '.gitignore');
   // Sync already skips the scratch namespaces (DEFAULT_SYNC_IGNORE); ignore them
   // in git too so ephemeral conversion/staging work never gets committed.
-  const entries = ['.gipity/', '.gipity.json', ...SCRATCH_IGNORE];
+  const entries = [`${BRAND.file.homeDir}/`, BRAND.file.config, ...SCRATCH_IGNORE];
 
   if (existsSync(gitignorePath)) {
     let content = readFileSync(gitignorePath, 'utf-8');

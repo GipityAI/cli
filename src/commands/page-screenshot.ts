@@ -10,6 +10,7 @@ import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
 import { readScriptFile } from './page-eval.js';
 import { uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
+import { BRAND } from '../brand.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number; device?: string };
 
@@ -640,14 +641,14 @@ for (const f of ACTION_ALIAS_FLAGS) pageScreenshotCommand.addOption(new Option(`
 // --full + crop covers off-screen regions; `page eval` reads data, no picture.
 pageScreenshotCommand.addHelpText('after', `
 Examples:
-  gipity page screenshot "https://dev.gipity.ai/me/app/"
-  gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page (scroll-reveal sections triggered)
-  gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
-  gipity page screenshot "https://dev.gipity.ai/me/app/" \\
+  gipity page screenshot "https://${BRAND.host.dev}/me/app/"
+  gipity page screenshot "https://${BRAND.host.dev}/me/app/" --full          # whole scrollable page (scroll-reveal sections triggered)
+  gipity page screenshot "https://${BRAND.host.dev}/me/app/" --device mobile,desktop
+  gipity page screenshot "https://${BRAND.host.dev}/me/app/" \\
     --action "document.getElementById('play').click()"                   # capture an in-game frame
   # Camera / vision app: play a real frame in as the webcam and shoot once the app
   # says it's ready — same --camera / --wait-for flags as 'page eval', no guessed delay:
-  gipity page screenshot "https://dev.gipity.ai/me/app/" --camera fist.png \\
+  gipity page screenshot "https://${BRAND.host.dev}/me/app/" --camera fist.png \\
     --wait-for '[data-vision="ready"]'
 
 Waiting for the page to reach a state before the shot?
@@ -660,7 +661,7 @@ Capturing a state that needs an interaction (start a game, open a menu, dismiss 
   (and after any --wait-for gate), then settles again so the result has painted. For
   a multi-step driver (click, wait, click) pipe it as a heredoc with --file - (same
   as 'page eval') instead of cramming it into one inline string:
-    gipity page screenshot "https://dev.gipity.ai/me/app/" --file - <<'EOF'
+    gipity page screenshot "https://${BRAND.host.dev}/me/app/" --file - <<'EOF'
     document.getElementById('load-sample').click();
     await new Promise(r => setTimeout(r, 500));
     document.getElementById('run').click();

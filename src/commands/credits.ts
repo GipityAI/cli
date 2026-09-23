@@ -4,8 +4,9 @@ import { get, post, ApiError } from '../api.js';
 import { brand, dim, bold, muted, success } from '../colors.js';
 import type { RetentionData } from './storage.js';
 import { run, printList } from '../helpers/index.js';
+import { BRAND } from '../brand.js';
 
-const PRICING_URL = 'https://prompt.gipity.ai/pricing';
+const PRICING_URL = BRAND.url.pricing;
 
 function openInBrowser(url: string): void {
   // Windows `start` is a cmd.exe builtin, not an executable - spawn can't

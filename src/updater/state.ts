@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { BRAND } from '../brand.js';
 
-export const GIPITY_DIR = join(homedir(), '.gipity');
+export const GIPITY_DIR = join(homedir(), BRAND.file.homeDir);
 export const LOCAL_DIR = join(GIPITY_DIR, 'local');
 export const LOCAL_PKG_DIR = join(LOCAL_DIR, 'node_modules', 'gipity');
 export const LOCAL_ENTRY = join(LOCAL_PKG_DIR, 'dist', 'index.js');

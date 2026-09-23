@@ -7,6 +7,7 @@ import { getAuth } from '../auth.js';
 import { resolveProjectContext } from '../config.js';
 import { createCheckpoint, restoreCheckpoint, resolveDatabase } from '../db-checkpoint.js';
 import { uploadPublicFixture, uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
+import { BRAND } from '../brand.js';
 
 export interface EvalResult {
   url: string;
@@ -861,17 +862,17 @@ for (const f of JS_DECOY_FLAGS) pageEvalCommand.addOption(new Option(`${f} <valu
 // on error anyway, so nothing is lost by withholding the manual here.
 pageEvalCommand.addHelpText('after', (context) => context.error ? '' : `
 Examples:
-  gipity page eval "https://dev.gipity.ai/me/app/" "document.title"
+  gipity page eval "https://${BRAND.host.dev}/me/app/" "document.title"
   # Functionally test a page's own code paths: save a script that drives the UI
   # and returns a JSON-serializable result, then run it (no /tmp + shell quoting):
-  gipity page eval "https://dev.gipity.ai/me/app/" --file ./tests/draw-flow.js --json
+  gipity page eval "https://${BRAND.host.dev}/me/app/" --file ./tests/draw-flow.js --json
   # Verify a render/parse path against a REAL file: --fixture hosts it, injects a
   # fetch-able 'fixtureUrl', runs the eval, then deletes the hosted copy:
-  gipity page eval "https://dev.gipity.ai/me/app/" --fixture ./sample.mp3 \\
+  gipity page eval "https://${BRAND.host.dev}/me/app/" --fixture ./sample.mp3 \\
     "(async()=>{ const b = await fetch(fixtureUrl).then(r=>r.arrayBuffer()); return window.App.parseId3(b); })()"
   # Verify persisted state survives a reload (localStorage/sessionStorage kept):
   # run <expr>, reload the page in place, then run the --reload expression:
-  gipity page eval "https://dev.gipity.ai/me/app/" \\
+  gipity page eval "https://${BRAND.host.dev}/me/app/" \\
     "localStorage.setItem('todo','milk'); document.title" \\
     --reload "({ restored: localStorage.getItem('todo'), heading: document.querySelector('h1')?.textContent })"
 
@@ -881,16 +882,16 @@ Examples:
   # --camera waits ${CAMERA_DEFAULT_WAIT_MS / 1000}s before evaluating (model load + first frame); the script
   # itself then gets ${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s in the page (--timeout, max ${EVAL_SCRIPT_BUDGET_MAX_MS / 1000}s).
   gipity generate image "a hand making a closed fist, palm to camera, plain background" -o fist.png
-  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png \\
+  gipity page eval "https://${BRAND.host.dev}/me/app/" --camera fist.png \\
     "document.querySelector('#detected-gesture').textContent"
   # Camera app that only starts on a click? Start it on page load instead (a headless
   # run has no user), and expose a ready signal so the wait ends the moment it's up:
-  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png \\
+  gipity page eval "https://${BRAND.host.dev}/me/app/" --camera fist.png \\
     --wait-for "#detected-gesture:not(:empty)" --wait-timeout ${WAIT_FOR_MAX_MS} \\
     "document.querySelector('#detected-gesture').textContent"
   # Several assertions about the SAME page? Use --step, not several commands: a camera
   # page load pays for getUserMedia + the vision model ONCE and every step reuses it.
-  gipity page eval "https://dev.gipity.ai/me/app/" --camera fist.png \\
+  gipity page eval "https://${BRAND.host.dev}/me/app/" --camera fist.png \\
     --wait-for '[data-vision="ready"]' \\
     "window.__vision.gesture()" \\
     --step "document.getElementById('see').textContent" \\
@@ -900,7 +901,7 @@ Examples:
   # detector a known image and read back the labels - no deploying a throwaway asset into
   # the app tree (and no cleanup redeploy). crossOrigin='anonymous' keeps the canvas clean.
   gipity generate image "street scene: three people, two cars, one dog" -o street.jpg
-  gipity page eval "https://dev.gipity.ai/me/app/" --fixture street.jpg \\
+  gipity page eval "https://${BRAND.host.dev}/me/app/" --fixture street.jpg \\
     "const { createDetector } = await import('./packages/web-vision-detect/index.js'); \\
      const det = await createDetector({ model: 'nano' }); \\
      const img = new Image(); img.crossOrigin = 'anonymous'; img.src = fixtureUrl; await img.decode(); \\

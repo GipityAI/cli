@@ -3,6 +3,7 @@ import { post } from '../api.js';
 import { brand, bold, muted, warning, success, error as clrError } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { pollEvalResult } from './page-eval.js';
+import { BRAND } from '../brand.js';
 
 // Only the fields we read off the inspect bundle.
 interface DebugBundle {
@@ -356,14 +357,14 @@ export const pageTestCommand = new Command('test')
   .addHelpText('after', `
 Examples:
   # Passive: load in 3 staggered clients, flag console errors
-  gipity page test "https://dev.gipity.ai/me/app/" --clients 3 --stagger 8
+  gipity page test "https://${BRAND.host.dev}/me/app/" --clients 3 --stagger 8
 
   # Per-client URL params: each client joins under a distinct name (Bot0, Bot1, …)
-  gipity page test "https://dev.gipity.ai/me/app/?name=Bot{{i}}" --clients 2
+  gipity page test "https://${BRAND.host.dev}/me/app/?name=Bot{{i}}" --clients 2
 
   # Interactive: two concurrent clients each join with a name, then watch the
   # live presence count. The command confirms the clients actually overlapped.
-  gipity page test "https://dev.gipity.ai/me/app/" --clients 2 \\
+  gipity page test "https://${BRAND.host.dev}/me/app/" --clients 2 \\
     --action "document.querySelector('#name').value='{{label}}'; document.querySelector('form').requestSubmit();" \\
     --observe "document.querySelectorAll('.present').length" \\
     --labels Alice,Bob
@@ -371,7 +372,7 @@ Examples:
   # Asymmetric roles in ONE invocation: {{label}} in the URL routes client 0 to
   # host and client 1 to join. They overlap in time (verified), so the joiner
   # observes the live state the host is driving — no background-process dance.
-  gipity page test "https://dev.gipity.ai/me/app/?test-action={{label}}" --clients 2 \\
+  gipity page test "https://${BRAND.host.dev}/me/app/?test-action={{label}}" --clients 2 \\
     --labels host,join \\
     --observe "document.querySelector('[data-screen]')?.dataset.screen"`)
   .action((url: string, opts: TestOpts) => run('Page test', async () => {

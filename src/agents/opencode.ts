@@ -30,6 +30,7 @@ import {
   ensureOpencodeModelToken, opencodePluginState, removeOpencodePlugin,
 } from '../opencode-setup.js';
 import { ensureOpencodeSkillsInstalled, removeAgentSkills } from '../setup.js';
+import { BRAND } from '../brand.js';
 
 /** opencode's own built-in provider namespaces. A --model whose first segment
  *  is one of these is an opencode-native ref (BYO key) and passes through;
@@ -134,7 +135,7 @@ export const opencodeAdapter: RemoteAgentAdapter = {
     // without transcript_path still resolves.
     resolveTranscriptPath: (hook) => {
       if (!hook.session_id) return null;
-      const gipityDir = process.env.GIPITY_DIR || join(homedir(), '.gipity');
+      const gipityDir = process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir);
       return join(gipityDir, 'opencode', 'transcripts', `${hook.session_id}.jsonl`);
     },
   },

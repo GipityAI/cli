@@ -2,6 +2,7 @@ import { createInterface } from 'readline';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { bold, dim } from './colors.js';
+import { BRAND } from './brand.js';
 
 /** True inside Windows Subsystem for Linux (either env marker or kernel
  *  string). WSL ships without a systemd user session unless the user opts in
@@ -30,7 +31,7 @@ export function findWindowsTwinProject(projectRoot: string, usersBase = '/mnt/c/
     const realRoot = realpathSync(projectRoot);
     for (const user of readdirSync(usersBase)) {
       if (WINDOWS_PSEUDO_USERS.has(user)) continue;
-      const candidate = join(usersBase, user, 'GipityProjects', name);
+      const candidate = join(usersBase, user, BRAND.file.projectsDir, name);
       try {
         if (!statSync(candidate).isDirectory()) continue;
         if (realpathSync(candidate) === realRoot) continue; // the linked project itself lives on /mnt/c

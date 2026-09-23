@@ -5,6 +5,7 @@ import { get, post, del } from '../api.js';
 import { requireConfig, getConfigPath } from '../config.js';
 import { error as clrError, success, muted, bold } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
+import { BRAND } from '../brand.js';
 
 /**
  * True when this project is a Gipity-deployed app - i.e. it has a gipity.yaml
@@ -15,7 +16,7 @@ import { run, printList } from '../helpers/index.js';
 function hasDeployManifest(): boolean {
   const cfgPath = getConfigPath();
   if (!cfgPath) return false;
-  return existsSync(resolve(dirname(cfgPath), 'gipity.yaml'));
+  return existsSync(resolve(dirname(cfgPath), BRAND.file.manifest));
 }
 
 interface RealtimeRoom {

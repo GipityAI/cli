@@ -38,8 +38,9 @@ import {
 import { DEFAULT_SYNC_IGNORE, SCRATCH_IGNORE } from './setup.js';
 import type { ProgressReporter, SpinnerHandle } from './progress.js';
 
-const CONFIG_FILE = '.gipity.json';
+const CONFIG_FILE = BRAND.file.config;
 import * as tar from 'tar-stream';
+import { BRAND } from './brand.js';
 
 // ─── Tunables ──────────────────────────────────────────────────
 
@@ -182,12 +183,12 @@ export interface SyncResult {
 
 function syncStatePath(): string {
   const configPath = getConfigPath()!;
-  return join(dirname(configPath), '.gipity', 'sync-state.json');
+  return join(dirname(configPath), BRAND.file.homeDir, 'sync-state.json');
 }
 
 function lockPath(): string {
   const configPath = getConfigPath()!;
-  return join(dirname(configPath), '.gipity', 'sync.lock');
+  return join(dirname(configPath), BRAND.file.homeDir, 'sync.lock');
 }
 
 function projectDir(): string {
@@ -812,7 +813,7 @@ async function bulkDeleteGuard(
  *  matcher as the config `ignore` list (see shouldIgnore) and let research
  *  artifacts, scratch data, or vendored references live inside the project
  *  directory without being synced (and therefore without being deployed). */
-export const GIPITY_IGNORE_FILE = '.gipityignore';
+export const GIPITY_IGNORE_FILE = BRAND.file.ignore;
 
 export function readGipityIgnore(root: string): string[] {
   const path = join(root, GIPITY_IGNORE_FILE);
@@ -827,7 +828,7 @@ export function readGipityIgnore(root: string): string[] {
 /** The ignore list a sync/push actually runs with: the project config's
  *  `ignore` (falling back to DEFAULT_SYNC_IGNORE when empty, so an empty list
  *  never means "sync everything - node_modules, .git and all"), plus any
- *  `.gipityignore` patterns, plus - unconditionally - the scratch namespaces.
+ *  {@link GIPITY_IGNORE_FILE} patterns, plus - unconditionally - the scratch namespaces.
  *  The ignore file itself never syncs.
  *
  *  SCRATCH_IGNORE is unioned in even when the config has its own `ignore`

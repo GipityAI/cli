@@ -12,6 +12,7 @@
 import { openSync, writeSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { BRAND } from './brand.js';
 
 // Keyed on globalThis, not module state: the shim and the CLI entry are
 // separate esbuild bundles loaded into one process (shim dynamic-imports the
@@ -33,7 +34,7 @@ export function installOutputTrace(label: string): void {
       existing.emit({ event: 'reenter', label });
       return;
     }
-    const dir = join(process.env.GIPITY_DIR || join(homedir(), '.gipity'), 'trace');
+    const dir = join(process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir), 'trace');
     mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
     const fd = openSync(join(dir, `${stamp}-pid${process.pid}.jsonl`), 'a');

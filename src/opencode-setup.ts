@@ -27,6 +27,7 @@ import { AGENT_HOOKS_DIR } from './setup.js';
 import { post } from './api.js';
 import { getAuth } from './auth.js';
 import { resolveApiBase } from './config.js';
+import { BRAND } from './brand.js';
 
 export const OPENCODE_PACKAGE = 'opencode-ai';
 
@@ -51,7 +52,7 @@ export function stagedPluginPath(): string {
 /** The model-slot token file the plugin reads. Owner-only: it holds a
  *  long-lived agent API token. */
 export const OPENCODE_TOKEN_FILE = join(
-  process.env.GIPITY_DIR || join(homedir(), '.gipity'),
+  process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir),
   'opencode-token.json',
 );
 

@@ -18,6 +18,7 @@ import { createProgressReporter, withSpinner } from '../progress.js';
 // Templates install a whole app (blank wiring or a working starter demo).
 // Kits are reusable building blocks added into an existing app's src/packages/.
 import { STARTERS, BLANK, KITS, type CatalogEntry } from '../catalog.js';
+import { BRAND } from '../brand.js';
 
 // The catalog block, rendered once and reused by the full help output
 // (`gipity add` / `gipity add --help`) and the bare listing (`gipity add
@@ -59,7 +60,7 @@ function packNames(names: string[], width = 96): string[] {
 // wrote are printed, so this never points at a file that isn't there.
 const ORIENTATION_FILES = [
   'README.md',
-  'gipity.yaml',
+  BRAND.file.manifest,
   'src/index.html',
   'src/js/main.js',
   'src/css/styles.css',
@@ -102,7 +103,7 @@ const TEXT_EXTENSIONS = new Set([
 
 const SKIP_DIR_NAMES = new Set([
   'node_modules', '.git', 'dist', 'build', '__pycache__', '.next', '.vite',
-  '.gipity',  // local project state dir - never belongs in a template payload
+  BRAND.file.homeDir,  // local project state dir - never belongs in a template payload
 ]);
 const SKIP_FILE_NAMES = new Set(['.DS_Store', 'Thumbs.db']);
 

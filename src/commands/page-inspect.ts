@@ -6,6 +6,7 @@ import { run } from '../helpers/index.js';
 import { getAuth } from '../auth.js';
 import { capWaitMs } from './page-eval.js';
 import { TOUCH_DEVICES as INSPECT_DEVICES, resolveTouchDevice } from './page-screenshot.js';
+import { isBrandHost } from '../brand.js';
 
 interface DebugBundle {
   url: string;
@@ -167,7 +168,7 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
       const urlPart = entry.replace(/\s*\([^)]*\)\s*$/, '');
       try {
         const u = new URL(urlPart);
-        return /(^|\.)gipity\.ai$/.test(u.hostname) && /\/log\/(traffic|error)$/.test(u.pathname);
+        return isBrandHost(u.hostname) && /\/log\/(traffic|error)$/.test(u.pathname);
       } catch {
         return false;
       }

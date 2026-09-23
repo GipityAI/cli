@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * gipity-mcp - MCP server for the Gipity platform (https://gipity.ai).
+ * gipity-mcp - MCP server for the Gipity platform.
  *
- * Eight resource-grouped tools over the platform REST API at a.gipity.ai.
+ * Eight resource-grouped tools over the platform REST API (BRAND.url.api).
  * Deliberately smaller than the `gipity` CLI (30+ commands): interactive
  * flows (login, chat, log tailing) and admin ops stay CLI-only.
  *
@@ -17,16 +17,17 @@ import { createHash } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { BRAND } from './brand.js';
 
 const VERSION = '0.1.0';
-const API_BASE = process.env.GIPITY_API_BASE?.trim() || 'https://a.gipity.ai';
+const API_BASE = process.env.GIPITY_API_BASE?.trim() || BRAND.url.api;
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
 function resolveToken(): string {
   const env = process.env.GIPITY_TOKEN?.trim();
   if (env) return env;
-  const dir = process.env.GIPITY_DIR || join(homedir(), '.gipity');
+  const dir = process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir);
   try {
     const auth = JSON.parse(readFileSync(join(dir, 'auth.json'), 'utf8'));
     if (typeof auth.accessToken === 'string' && auth.accessToken) return auth.accessToken;

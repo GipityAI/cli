@@ -17,6 +17,7 @@
 // platform/docs/knowledge/*.md and regenerated into ./knowledge.ts. Edit the
 // markdown, not this file. See `just sync-knowledge`.
 import { BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE } from './knowledge.js';
+import { BRAND } from './brand.js';
 
 // ---------------------------------------------------------------------------
 // Canonical template catalog (CLI mirror). Keep in sync with TEMPLATES in
@@ -108,7 +109,7 @@ function humanBytes(n: number): string {
 
 function buildHeader(opts: ProjectContextOpts): string {
   const deployUrl = opts.accountSlug
-    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
+    ? `https://${BRAND.host.dev}/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
   // "Files" line is the agent's at-a-glance signal of project size and
   // shape. Counts are recursive (from the VFS DB), not just top-level -
@@ -134,7 +135,7 @@ const EMPTY_STATE_NOTE =
 
 const EXISTING_STATE_NOTE = [
   `Project already has files. Before making changes:`,
-  `- Read \`README.md\` / \`gipity.yaml\` if present to understand what's here.`,
+  `- Read \`README.md\` / \`${BRAND.file.manifest}\` if present to understand what's here.`,
   `- Load the relevant skill with \`gipity skill read <name>\` if you need the template's conventions.`,
   `- Edit in place. Don't add a template over an existing app.`,
   `- Exception: if the existing files are user content (media, data, notes) and the user wants to build an app around them, \`gipity add <template>\` is allowed - it refuses automatically if any file paths would collide.`,
@@ -200,7 +201,7 @@ const RESPONSE_DIRECTIVE =
  *  (Claude already has the context from the initial start dispatch). */
 export function buildResumeWrap(opts: ProjectIdentityOpts, userMsg: string): string {
   const deployUrl = opts.accountSlug
-    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
+    ? `https://${BRAND.host.dev}/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
   return [
     `Project: ${opts.projectName} (\`${opts.projectGuid}\`) - ${deployUrl}`,

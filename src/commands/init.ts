@@ -16,6 +16,7 @@ import {
   formatCwdLabel,
   ADOPT_THRESHOLDS,
 } from '../adopt-cwd.js';
+import { BRAND } from '../brand.js';
 
 const TOOL_KEYS = SUPPORTED_TOOLS.map(t => t.key);
 
@@ -117,7 +118,7 @@ Working with an existing Gipity project:
       // checks only cwd, never an ancestor: it is the explicit "make this
       // directory a project" verb (the `git init` analog) and must not be
       // shadowed by a parent project's config the way walk-up commands are.
-      if (existsSync(resolve(cwd, '.gipity.json'))) {
+      if (existsSync(resolve(cwd, BRAND.file.config))) {
         const existing = getConfig();
         console.log(`Already linked to ${info(`"${existing?.projectSlug ?? ''}"`)} ${muted(`(${existing?.projectGuid ?? ''})`)}`);
         // Re-run setup in case primers/hooks/skills are missing - each tool's
@@ -230,7 +231,7 @@ Working with an existing Gipity project:
       const pinnedFresh = pinnedToolKeys(opts.for, tools);
       if (opts.capture === false || pinnedFresh) {
         try {
-          const cfg = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8'));
+          const cfg = JSON.parse(readFileSync(resolve(cwd, BRAND.file.config), 'utf-8'));
           if (opts.capture === false) cfg.captureHooks = false;
           if (pinnedFresh) cfg.tools = pinnedFresh;
           saveConfigAt(cwd, cfg);

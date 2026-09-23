@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSy
 import { join } from 'path';
 import { homedir } from 'os';
 import { decodeJwtExp } from './utils.js';
+import { BRAND } from './brand.js';
 
 export interface AuthData {
   accessToken: string;
@@ -14,7 +15,7 @@ export interface AuthData {
 // the default ~/.gipity — e.g. GipRunner logging into a local dev server without
 // clobbering your real (prod) login. Only the auth dir moves; HOME is untouched,
 // so the `claude` subprocess and git/npm still use the real home.
-const AUTH_DIR = process.env.GIPITY_DIR || join(homedir(), '.gipity');
+const AUTH_DIR = process.env.GIPITY_DIR || join(homedir(), BRAND.file.homeDir);
 const AUTH_FILE = join(AUTH_DIR, 'auth.json');
 const AUTH_LOCK_FILE = join(AUTH_DIR, 'auth.lock');
 
