@@ -21,7 +21,6 @@ Templates:
     - \`3d-world\` - Multiplayer world, 3D sandbox, shooter, exploration, virtual showroom (Three.js + Rapier + Colyseus)
     - \`api\` - Backend service, webhook, data pipeline, chatbot, cron job - no frontend
     - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
-    - \`outreach-agent\` - AI outreach / drip-email / lifecycle funnel - move a list of people through stages (sign up, activate, pay) with personalized, human-approved emails on an auto-cadence and a self-improving agent that learns from your edits
     - \`paid-app\` - App that charges users money - SaaS subscription, paid membership, digital product store, "Pro" upgrade, paywalled content (Stripe one-time + subscriptions)
     - \`notify-demo\` - App that sends push notifications / alerts / reminders to users' phones or desktops - web push, PWA notifications, "notify me when..." features
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
@@ -29,7 +28,8 @@ Only skip this on a build request if the user explicitly says not to.
 
 Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):
     - \`app-itsm\` - IT Service Management app (helpdesk, ticketing, incident management).
-    - \`monitor\` - Account-wide observability dashboard - auto-installed; rarely picked manually.
+    - \`monitor\` - The Gipity account web app, served by Gipity itself - not something to install into a project.
+    - \`outreach-agent\` - AI outreach / drip-email / lifecycle funnel - move a list of people through stages (sign up, activate, pay) with personalized, human-approved emails on an auto-cadence and a self-improving agent that learns from your edits
 
 Kits are reusable building blocks added to an existing app, not whole templates - their files land in \`src/packages/<name>/\`:
     - \`gipity add realtime\` - Multiplayer / presence / shared state - channels, host election, server-persisted sync. Engine-agnostic; works in any app.
@@ -45,20 +45,19 @@ Kits are reusable building blocks added to an existing app, not whole templates 
 
 export const SKILLS_CONTENT = `# Gipity Integration
 
-Gipity is the cloud platform your project runs on - hosting, databases, deployment, file storage, code execution, workflows, and monitoring. Gip is the cloud agent that runs on Gipity.
+Gipity is the cloud platform your project runs on - hosting, databases, deployment, file storage, code execution, workflows, and monitoring.
 
-Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, \`gipity chat\` burns LLM tokens:
+Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, and a model call (\`gipity ask\`) costs tokens:
 
-1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, email, and more. All commands support \`--json\`. You can send email yourself - \`gipity email send\` goes out as the agent from \`gipity@gipity.ai\` with no setup or API keys (\`gipity skill read email\`); don't build a \`mailto:\` workaround or reach for an SMTP library.
+1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, browser, sync, memory, skill, email, and more. All commands support \`--json\`. You can send email yourself - \`gipity email send\` goes out from \`gipity@gipity.ai\` with no setup or API keys, and \`gipity gmail\` sends from the user's own Gmail (\`gipity skill read email\`); don't build a \`mailto:\` workaround or reach for an SMTP library.
 2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
-3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location, push notifications (Gipity Notify - \`gipity add notify\`, send from a function with the injected \`notify()\`; see \`app-notify\`). Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|sound|music>\` or \`gipity chat\` - direct generation always bills you (the owner), regardless of any service \`billing_mode\` (that setting only governs the deployed app's runtime calls; never flip it just to create assets). \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) - pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it.
-4. Delegate to Gip (\`gipity chat "<task>"\`) - only when the work genuinely needs agent reasoning or a tool not in the CLI, sandbox, or app services. Required for: Twitter/X search, Gmail, calendar, push notifications, video understanding, audio source isolation, cross-model second opinions, multi-step orchestration. Don't use \`gipity chat\` for anything the sandbox can do - it's slower and burns tokens.
+3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime, location, push notifications (Gipity Notify - \`gipity add notify\`, send from a function with the injected \`notify()\`; see \`app-notify\`). Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|sound|music>\` - direct generation always bills you (the owner), regardless of any service \`billing_mode\` (that setting only governs the deployed app's runtime calls; never flip it just to create assets). \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) - pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it. For a quick model answer while you work - summarize a log, extract fields, describe a screenshot, a second opinion from a different model - use \`gipity ask "<question>"\`: one call, no history or tools, any model (\`--model sonnet\`, \`--model openai\`), text files with \`--file <path>\` (\`--file -\` for stdin), images with \`--image <path>\`, and a JSON answer with \`--schema '<json schema>'\`.
 
 You are the developer. Write files in this directory - Gipity's editor hooks (installed by \`gipity init\` into Claude Code, Grok, Codex, and opencode) auto-sync them to Gipity. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
 
 ## Use first-party services before reaching outside
 
-Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, web push notifications (Gipity Notify - no VAPID keys, no Firebase/OneSignal; works on iOS home-screen web apps), and email (send as the agent via \`gipity email send\`, or from a deployed app's function with the injected \`email()\` service - \`services: ['email']\`, no SMTP/SendGrid/Nodemailer). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
+Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, web push notifications (Gipity Notify - no VAPID keys, no Firebase/OneSignal; works on iOS home-screen web apps), and email (send via \`gipity email send\`, or from a deployed app's function with the injected \`email()\` service - \`services: ['email']\`, no SMTP/SendGrid/Nodemailer). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
 
 ## Don't guess Gipity facts - look them up
 
@@ -108,8 +107,8 @@ mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <s
 
 ## CLI quick reference
 
-Key commands: \`gipity add <template|kit>\`, \`gipity brand set --emoji <e>|--color <hex>\` (regenerate the app's icons + social share card), \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` — never hardcode keys), \`gipity email send --to <addr> --subject <s> --body <b>\` (sends as \`gipity@gipity.ai\`; omit \`--to\` to self-send), \`gipity skill read <name>\`.
-Rename for findability: \`gipity project rename <name>\` renames the current project's display name (the slug and deployed URLs never change); \`gipity chat rename <title>\` renames the current chat's tab title. Both are the display label users scan to switch between tabs — retitle a chat when the conversation clearly shifts to a new topic (sparingly, not every turn), and keep every project/chat title SHORT: 2-4 words, ≤40 characters, no trailing punctuation (e.g. "Stripe checkout", "Tetris game").
+Key commands: \`gipity add <template|kit>\`, \`gipity brand set --emoji <e>|--color <hex>\` (regenerate the app's icons + social share card), \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` - never hardcode keys), \`gipity email send --to <addr> --subject <s> --body <b>\` (sends as \`gipity@gipity.ai\`; omit \`--to\` to self-send), \`gipity skill read <name>\`.
+Rename for findability: \`gipity project rename <name>\` renames the current project's display name (the slug and deployed URLs never change); it's the label users scan in Monitor and \`gipity project\`, so keep it SHORT: 2-4 words, at most 40 characters, no trailing punctuation (e.g. "Stripe checkout", "Tetris game").
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
 Move whole apps in/out: \`gipity save\` (export this project as a portable \`.gip\` bundle), \`gipity load <file.gip | github:owner/repo>\` (import as a NEW project; \`--inspect\` to preview), \`gipity github connect\` (1-2 click GitHub access for imports). Porting a Vercel/Replit/Lovable app? Load the \`app-import\` skill first.
 For deterministic text questions (letter/word counts, substring occurrences, nth word/char, anagrams), use \`gipity text analyze "<text>"\` - local and instant, no sandbox or LLM needed.
@@ -122,7 +121,7 @@ Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.f
 
 ## Hit friction on the platform? Report it in real time
 
-When *the Gipity platform itself* fights you — a CLI command errors or behaves unexpectedly, a doc/skill is wrong or missing, a deploy/template/kit/service/sandbox misbehaves — file a bug report the moment it happens, **even if you found a workaround and kept going.** Capturing it in the moment (with the real cause fresh) beats us mining it out of transcripts later.
+When *the Gipity platform itself* fights you - a CLI command errors or behaves unexpectedly, a doc/skill is wrong or missing, a deploy/template/kit/service/sandbox misbehaves - file a bug report the moment it happens, **even if you found a workaround and kept going.** Capturing it in the moment (with the real cause fresh) beats us mining it out of transcripts later.
 
 \`\`\`
 gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sandbox|other> \\
@@ -133,10 +132,10 @@ gipity bug report --category <cli|deploy|template|kit|db|docs|skill|service|sand
 
 - **Severity:** S1 blocker (no workaround) · S2 major (costly workaround) · S3 minor (easy workaround) · S4 friction (papercut).
 - **summary** ≤ 7 words; **detail** as succinct as possible (a few sentences, not a transcript).
-- **Never include PII or user data** (emails, names, secrets, tokens, prompt/file contents) — describe the platform problem in the abstract.
+- **Never include PII or user data** (emails, names, secrets, tokens, prompt/file contents) - describe the platform problem in the abstract.
 - File it for *platform* problems, not your own mistakes or the app's own bugs. One report per distinct problem.
 - Reports go to a review queue for the team to triage into fixes; see what you've filed with \`gipity bug list\`.
-- Filed one by mistake? Withdraw it yourself: \`gipity bug retract <report-id> [--reason "<why>"]\` — works while it's still queued (status new/triaged). Never file a second report asking a human to close the first.
+- Filed one by mistake? Withdraw it yourself: \`gipity bug retract <report-id> [--reason "<why>"]\` - works while it's still queued (status new/triaged). Never file a second report asking a human to close the first.
 
 ## Tool output is complete and synchronous
 
@@ -146,7 +145,7 @@ Every tool call returns its full output with that call. There is no output buffe
 
 This directory is the app root - it holds \`.gipity.json\` (and \`gipity.yaml\` for backends) and is already your cwd, so run app commands here. Don't \`cd\` to a git root (\`git rev-parse --show-toplevel\`): when the app is nested in a larger repo that resolves outside the app.
 
-Write files locally - Gipity's editor hooks (installed into Claude Code, Grok, Codex, and opencode by \`gipity init\`) auto-push every save to Gipity and auto-pull remote changes (images, audio from \`gipity chat\`) before each turn. Use \`gipity sync\` if things get out of sync (or if the hooks aren't installed - \`gipity status --repair-hooks\` re-enables them). Deletes are safe - use \`rollback\` with a datetime to undo, or \`file_version_restore\` for individual files.
+Write files locally - Gipity's editor hooks (installed into Claude Code, Grok, Codex, and opencode by \`gipity init\`) auto-push every save to Gipity and auto-pull remote changes (sandbox outputs, restored versions) before each turn. Use \`gipity sync\` if things get out of sync (or if the hooks aren't installed - \`gipity status --repair-hooks\` re-enables them). Deletes are safe - \`gipity file rollback <datetime>\` undoes a tree, \`gipity file restore <path> <version>\` a single file.
 
 To keep local-only material (research clones, scratch data, vendored references) in the project directory without syncing or deploying it, list it in a \`.gipityignore\` at the project root - gitignore-style, one pattern per line, \`#\` comments. Ignored paths are invisible to sync in both directions; anything that already synced before being ignored stays on the server until you delete it.
 
@@ -201,9 +200,8 @@ Kit skills (reusable building blocks - \`gipity add <kit>\`):
 - \`chatbot\` - the chatbot kit: persona + scope guardrails + static knowledge, bubble widget or headless engine
 
 Other key skills:
-- \`email\` - sending email as the agent from gipity@gipity.ai (no setup/keys) — plus Gmail-thread replies, HTML formatting, images
-- \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools
-- \`tts\` - agent-side speech tools (different from the \`app-tts\` HTTP service)`;
+- \`email\` - sending email from gipity@gipity.ai with gipity email send (no setup/keys), Gmail-thread replies, HTML formatting, images
+- \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools`;
 
 export const DEFINITION_OF_DONE = `## Definition of done (build tasks)
 1. \`gipity deploy dev\` succeeds and you have a live URL.

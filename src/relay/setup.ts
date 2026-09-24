@@ -81,9 +81,23 @@ export interface PairedDevice {
  * the user isn't logged in) — callers translate that into their own UX.
  */
 export async function pairDevice(opts: { name?: string; force?: boolean } = {}): Promise<PairedDevice> {
+  const device = await registerThisMachine(opts);
+  state.setRelayEnabled(true);
+  return device;
+}
+
+/**
+ * Register this machine as a device so its coding-agent sessions can be
+ * recorded (session capture needs a device token), WITHOUT turning on the
+ * relay daemon. Reuses an existing registration. Non-interactive.
+ */
+export async function ensureDevicePaired(): Promise<PairedDevice> {
+  return registerThisMachine({});
+}
+
+async function registerThisMachine(opts: { name?: string; force?: boolean }): Promise<PairedDevice> {
   const existing = state.getDevice();
   if (existing && !opts.force) {
-    state.setRelayEnabled(true);
     return {
       guid: existing.guid,
       name: existing.name,
@@ -124,7 +138,6 @@ export async function pairDevice(opts: { name?: string; force?: boolean } = {}):
     token: res.data.token,
     paired_at: new Date().toISOString(),
   });
-  state.setRelayEnabled(true);
   return { guid: res.data.short_guid, name, platform: plat, reused: false };
 }
 

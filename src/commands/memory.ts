@@ -12,18 +12,15 @@ interface MemorySummary {
 }
 
 export const memoryCommand = new Command('memory')
-  .description('Read or write memory');
+  .description("Read or write this project's memory: notes by topic that workflow llm steps read and write with the memory tool");
 
 memoryCommand
   .command('list')
   .description('List topics')
-  .option('--project', 'List project memory (default is agent memory)')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
     const { config } = await resolveProjectContext();
-    const endpoint = opts.project
-      ? `/projects/${config.projectGuid}/memory`
-      : `/agents/${config.agentGuid}/memory`;
+    const endpoint = `/projects/${config.projectGuid}/memory`;
 
     const res = await get<{ data: MemorySummary[] }>(endpoint);
     printList(res.data, opts, 'No memory topics.', m =>
@@ -34,13 +31,10 @@ memoryCommand
 memoryCommand
   .command('read <topic>')
   .description('Read a topic')
-  .option('--project', 'Read project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, opts) => run('Read', async () => {
     const { config } = await resolveProjectContext();
-    const endpoint = opts.project
-      ? `/projects/${config.projectGuid}/memory`
-      : `/agents/${config.agentGuid}/memory`;
+    const endpoint = `/projects/${config.projectGuid}/memory`;
 
     const res = await get<{ data: MemorySummary[] }>(endpoint);
     const match = res.data.find(m => m.topic === topic);
@@ -60,13 +54,10 @@ memoryCommand
 memoryCommand
   .command('write <topic> <content>')
   .description('Write a topic')
-  .option('--project', 'Write to project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, content: string, opts) => run('Write', async () => {
     const { config } = await resolveProjectContext();
-    const endpoint = opts.project
-      ? `/projects/${config.projectGuid}/memory/${encodeURIComponent(topic)}`
-      : `/agents/${config.agentGuid}/memory/${encodeURIComponent(topic)}`;
+    const endpoint = `/projects/${config.projectGuid}/memory/${encodeURIComponent(topic)}`;
 
     await put<{ success: boolean }>(endpoint, { content });
     printResult(`Wrote "${topic}".`, opts, { success: true, topic });
@@ -75,7 +66,6 @@ memoryCommand
 memoryCommand
   .command('delete <topic>')
   .description('Delete a topic')
-  .option('--project', 'Delete project memory')
   .option('--json', 'Output as JSON')
   .action((topic: string, opts) => run('Delete', async () => {
     if (!await confirm(`Delete memory "${topic}"?`)) {
@@ -83,9 +73,7 @@ memoryCommand
       return;
     }
     const { config } = await resolveProjectContext();
-    const endpoint = opts.project
-      ? `/projects/${config.projectGuid}/memory/${encodeURIComponent(topic)}`
-      : `/agents/${config.agentGuid}/memory/${encodeURIComponent(topic)}`;
+    const endpoint = `/projects/${config.projectGuid}/memory/${encodeURIComponent(topic)}`;
 
     await del<{ success: boolean }>(endpoint);
     printResult(`Deleted "${topic}".`, opts, { success: true, topic });

@@ -1,6 +1,9 @@
 import { Command, Option } from 'commander';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import { get, post, put, del } from '../api.js';
-import { getConfig, requireConfig } from '../config.js';
+import { getConfig, requireConfig, getProjectRoot } from '../config.js';
+import { pushFile } from '../sync.js';
 import { success, error as clrError, muted, bold } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
@@ -352,23 +355,57 @@ workflowCommand
     printResult(`Disabled "${wf.name}".`, opts, { disabled: wf.name, is_active: false });
   }));
 
+const HEARTBEAT_PATH = 'workflows/heartbeat.yaml';
+
+/** The `--heartbeat` starter: a daily llm step that keeps notes in project memory. */
+const HEARTBEAT_YAML = `# A heartbeat: once a day, look at this project and keep notes in project memory.
+# Edit the prompt and tools, then \`gipity deploy\` (or \`gipity workflow edit heartbeat --from ${HEARTBEAT_PATH}\`).
+name: heartbeat
+description: Daily check-in on this project, with notes kept in project memory.
+trigger: schedule
+cron: "0 9 * * *"
+steps:
+  - name: check_in
+    prompt: |
+      Check in on this project. Read the "heartbeat" memory topic for what you noted last time.
+      Look at what changed since then and anything that needs attention.
+      Write the "heartbeat" memory topic again with what you saw and what to watch next time,
+      then return { summary, needs_attention } where needs_attention is a list of short strings.
+    tools: [memory, db_query]
+`;
+
 workflowCommand
   .command('create')
   .description('Create a workflow from a YAML file in the project (e.g. workflows/foo.yaml)')
-  .requiredOption('--from <path>', 'Project-relative YAML file path')
+  .option('--from <path>', 'Project-relative YAML file path')
+  .option('--heartbeat', `Scaffold ${HEARTBEAT_PATH} (a daily check-in that keeps notes in project memory) and create it`)
   .option('--name <name>', 'Override the name in the YAML')
   .option('--json', 'Output as JSON')
   .action((_opts, cmd) => run('Create', async () => {
-    const opts = mergedOpts(cmd) as { from?: string; name?: string; json?: boolean };
+    const opts = mergedOpts(cmd) as { from?: string; heartbeat?: boolean; name?: string; json?: boolean };
     const config = requireConfig();
+    if (opts.from && opts.heartbeat) throw new Error('Pass --from <path> or --heartbeat, not both.');
+    if (!opts.from && !opts.heartbeat) throw new Error('Pass --from <path> (a workflows/*.yaml file), or --heartbeat to start from a daily check-in.');
+    let from = opts.from!;
+    if (opts.heartbeat) {
+      from = HEARTBEAT_PATH;
+      const root = getProjectRoot()!;
+      const local = join(root, HEARTBEAT_PATH);
+      // Never overwrite: an existing heartbeat.yaml is the user's edited copy.
+      if (!existsSync(local)) {
+        mkdirSync(join(root, 'workflows'), { recursive: true });
+        writeFileSync(local, HEARTBEAT_YAML);
+      }
+      await pushFile(local);
+    }
     const body: Record<string, unknown> = {
-      config_yaml_path: opts.from,
+      config_yaml_path: from,
       project_guid: config.projectGuid,
     };
     if (opts.name) body.name = opts.name;
     const res = await post<{ data: { short_guid?: string; guid?: string } }>('/workflows', body);
     const guid = res.data.short_guid ?? res.data.guid;
-    printResult(`Workflow created (${guid}).`, opts, { created: true, guid });
+    printResult(`Workflow created from ${from} (${guid}).`, opts, { created: true, guid, from });
   }));
 
 workflowCommand

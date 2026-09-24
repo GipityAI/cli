@@ -8,7 +8,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { AddressInfo } from 'net';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runCliAsync } from './helpers/spawn-cli.js';
@@ -111,8 +111,18 @@ before(async () => {
   apiBase = `http://127.0.0.1:${port}`;
 });
 
+// Every throwaway $HOME this file creates, removed in after(): a daemon run
+// can populate one with agent-CLI caches, and leaking them filled /tmp.
+const homes: string[] = [];
+function tempHome(prefix: string): string {
+  const home = mkdtempSync(join(tmpdir(), prefix));
+  homes.push(home);
+  return home;
+}
+
 after(async () => {
   await new Promise<void>(resolve => server.close(() => resolve()));
+  for (const home of homes) rmSync(home, { recursive: true, force: true });
 });
 
 // ─── Fixture - a fresh $HOME with a paired device + pre-seeded project dir ─
@@ -122,7 +132,7 @@ function freshHome(opts: { paused?: boolean; preseedProject?: boolean } = {}): {
   projectsRoot: string;
   projectCwd: string;
 } {
-  const home = mkdtempSync(join(tmpdir(), 'gipity-daemon-'));
+  const home = tempHome('gipity-daemon-');
   const projectsRoot = join(home, 'GipityProjects');
   const projectCwd = join(projectsRoot, 'test');
 
@@ -193,7 +203,7 @@ async function runDaemon(home: string, claudeCmd: string, opts: { maxRunMs?: num
 
 describe('daemon: not paired', () => {
   it('errors immediately when no device is paired and user is not logged in', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gipity-daemon-unpaired-'));
+    const home = tempHome('gipity-daemon-unpaired-');
     const r = await runCliAsync(['--api-base', apiBase, 'relay', 'run'], {
       env: { HOME: home },
       cwd: home,

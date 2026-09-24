@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 
 let mock: MockServer;
 let home: string;
@@ -262,4 +264,47 @@ test('gipity workflow delete <name> calls DELETE', async () => {
   const r = await fresh(['workflow', 'delete', 'Daily']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Deleted "Daily"/);
+});
+
+test('gipity workflow create needs --from or --heartbeat, not neither and not both', async () => {
+  mock.reset();
+  const none = await fresh(['workflow', 'create']);
+  assert.notEqual(none.status, 0);
+  assert.match(none.stderr + none.stdout, /--from <path>.*--heartbeat/s);
+  const both = await fresh(['workflow', 'create', '--from', 'workflows/x.yaml', '--heartbeat']);
+  assert.notEqual(both.status, 0);
+  assert.match(both.stderr + both.stdout, /not both/);
+  assert.equal(mock.requests().some(q => q.method === 'POST' && q.url === '/workflows'), false);
+});
+
+test('gipity workflow create --heartbeat scaffolds workflows/heartbeat.yaml, pushes it, and creates from it', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/files/upload-init', { body: { data: { already_current: true, guid: 'f_Heart001', server_version: 1 } } });
+  mock.on('POST /workflows', { status: 201, body: { data: { short_guid: 'wf_Heart001' } } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'workflow', 'create', '--heartbeat'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+
+  const yaml = readFileSync(join(dir, 'workflows', 'heartbeat.yaml'), 'utf8');
+  assert.match(yaml, /^name: heartbeat$/m);
+  assert.match(yaml, /^trigger: schedule$/m);
+  assert.match(yaml, /tools: \[memory, db_query\]/);
+
+  const init = mock.requests().find(q => q.url === '/projects/p_TestProj/files/upload-init');
+  assert.equal((init?.body as { path?: string })?.path, 'workflows/heartbeat.yaml');
+  const create = mock.requests().find(q => q.method === 'POST' && q.url === '/workflows');
+  assert.deepEqual(create?.body, { config_yaml_path: 'workflows/heartbeat.yaml', project_guid: 'p_TestProj' });
+  assert.match(r.stdout, /wf_Heart001/);
+});
+
+test('gipity workflow create --heartbeat never overwrites an existing heartbeat.yaml', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/files/upload-init', { body: { data: { already_current: true, guid: 'f_Heart002', server_version: 3 } } });
+  mock.on('POST /workflows', { status: 201, body: { data: { short_guid: 'wf_Heart002' } } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(dir, 'workflows'));
+  writeFileSync(join(dir, 'workflows', 'heartbeat.yaml'), 'name: heartbeat\n# my edits\n');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'workflow', 'create', '--heartbeat'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(dir, 'workflows', 'heartbeat.yaml'), 'utf8'), 'name: heartbeat\n# my edits\n');
 });

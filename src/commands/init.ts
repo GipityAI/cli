@@ -6,7 +6,7 @@ import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
 import { getAuth } from '../auth.js';
 import { slugify, setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE, resolveProjectTools, type SupportedTool } from '../setup.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
-import { success, error as clrError, info, muted, bold, brand } from '../colors.js';
+import { success, error as clrError, info, muted, bold, brand, warning } from '../colors.js';
 import { confirm } from '../utils.js';
 import {
   scanForAdoption,
@@ -17,6 +17,7 @@ import {
   ADOPT_THRESHOLDS,
 } from '../adopt-cwd.js';
 
+import { ensureDevicePaired } from '../relay/setup.js';
 const TOOL_KEYS = SUPPORTED_TOOLS.map(t => t.key);
 
 /** The tool keys to pin in .gipity.json, or null to leave the project on
@@ -50,12 +51,23 @@ function resolveTools(forFlag: string | undefined): SupportedTool[] {
   );
 }
 
+/** Recording sessions needs this machine registered as a device. Best-effort:
+ *  a failure only means sessions aren't recorded yet, so say so and move on. */
+async function pairForCapture(): Promise<void> {
+  try {
+    await ensureDevicePaired();
+  } catch (err: any) {
+    console.log(warning(`Couldn't register this machine for session recording (${err.message}); run \`gipity init --capture\` again to retry.`));
+  }
+}
+
 export const initCommand = new Command('init')
   .description('Link this directory to a project')
   .addHelpText('after', `\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks. By default it only sets up the tools actually installed here (${AGENT_ADAPTERS.map(a => a.displayName).join(', ')}, …) - use --for to choose explicitly.`)
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
   .option('--agent <guid>', 'Agent GUID to use')
-  .option('--no-capture', 'Don\'t record Claude Code sessions in this directory to your Gipity project (sets captureHooks: false in .gipity.json)')
+  .option('--capture', 'Record Claude Code sessions in this directory to your Gipity project (sets captureHooks: true in .gipity.json; new projects start with it off)')
+  .option('--no-capture', 'Stop recording sessions in this directory (sets captureHooks: false in .gipity.json)')
   .option(
     '--for <tools>',
     `Which AI tool primer files to write (comma-separated). Default: the tools detected on this machine. An explicit --for is remembered in .gipity.json, so later commands don't re-add the others. Choices: ${TOOL_KEYS.join(', ')}, all`,
@@ -134,12 +146,10 @@ Working with an existing Gipity project:
             cur.push(...missing);
             changed = true;
           }
-          // `--no-capture` on a re-init is the documented way to opt an
-          // existing project out of session recording. One-way from flags:
-          // a bare re-run never silently reverses an explicit opt-out
-          // (delete the key or set it true in .gipity.json to re-enable).
-          if (opts.capture === false && existing.captureHooks !== false) {
-            existing.captureHooks = false;
+          // `--capture` / `--no-capture` on a re-init switch session
+          // recording; a bare re-run never changes it.
+          if (opts.capture !== undefined && existing.captureHooks !== opts.capture) {
+            existing.captureHooks = opts.capture;
             changed = true;
           }
           // An explicit --for re-pins the project. Without persisting it,
@@ -154,8 +164,9 @@ Working with an existing Gipity project:
         }
         console.log(success(`Refreshed primer files: ${primerSummary}.`));
         if (skippedNote) console.log(skippedNote);
-        if (opts.capture === false) {
-          console.log(success('Session recording disabled for this project (captureHooks: false in .gipity.json).'));
+        if (opts.capture !== undefined) {
+          if (opts.capture) await pairForCapture();
+          console.log(success(`Session recording ${opts.capture ? 'enabled' : 'disabled'} for this project (captureHooks: ${opts.capture} in .gipity.json).`));
         }
         return;
       }
@@ -225,29 +236,29 @@ Working with an existing Gipity project:
       }
       if (adopted.applied > 0) console.log(`Synced ${adopted.applied} change${adopted.applied > 1 ? 's' : ''} with Gipity.`);
 
-      // Session recording opt-out. Written after adopt so it lands in the
+      // Session recording choice. Written after adopt so it lands in the
       // freshly created .gipity.json regardless of how the link happened.
       const pinnedFresh = pinnedToolKeys(opts.for, tools);
-      if (opts.capture === false || pinnedFresh) {
+      if (opts.capture !== undefined || pinnedFresh) {
         try {
           const cfg = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8'));
-          if (opts.capture === false) cfg.captureHooks = false;
+          if (opts.capture !== undefined) cfg.captureHooks = opts.capture;
           if (pinnedFresh) cfg.tools = pinnedFresh;
           saveConfigAt(cwd, cfg);
         } catch { /* config missing/unreadable - nothing to record */ }
       }
+      if (opts.capture) await pairForCapture();
 
       console.log(success(`Wrote primer files: ${primerSummary}.`));
       if (skippedNote) console.log(skippedNote);
       if (wantsClaude) {
         console.log(success(`Ready! Run your coding agent here (${AGENT_ADAPTERS.map(a => a.key).join(', ')}), or \`gipity build\` to launch one with a picker.`));
-        // Recording happens by default (however Claude Code is launched), so
-        // say so up front - consent should be explicit, not discovered later.
-        if (opts.capture === false) {
-          console.log(muted('Session recording is off for this project (captureHooks: false in .gipity.json).'));
-        } else {
-          console.log(muted('Claude Code sessions here are recorded to your Gipity project (view at prompt.gipity.ai). Opt out: gipity init --no-capture.'));
-        }
+        // Say which way session recording is set - consent should be
+        // explicit, not discovered later.
+        const recording = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8')).captureHooks !== false;
+        console.log(muted(recording
+          ? 'Claude Code sessions here are recorded to your Gipity project (Chats in your Gipity dashboard). Turn off: gipity init --no-capture.'
+          : 'Claude Code sessions here are not recorded. To keep them in your Gipity project (Chats in your dashboard): gipity init --capture.'));
       } else {
         console.log(success('Ready! Open this directory in your AI coding tool.'));
       }

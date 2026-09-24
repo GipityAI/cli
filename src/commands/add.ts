@@ -15,9 +15,9 @@ import { createProgressReporter, withSpinner } from '../progress.js';
 // workspace. The hand-mirrored copy that used to live here silently dropped
 // every new catalog entry; edit constants.ts + `just build-knowledge` instead.
 //
-// Templates install a whole app (blank wiring or a working starter demo).
+// Templates and apps install a whole app (blank wiring or a complete working app).
 // Kits are reusable building blocks added into an existing app's src/packages/.
-import { STARTERS, BLANK, KITS, type CatalogEntry } from '../catalog.js';
+import { APPS, TEMPLATES, KITS, type CatalogEntry } from '../catalog.js';
 
 // The catalog block, rendered once and reused by the full help output
 // (`gipity add` / `gipity add --help`) and the bare listing (`gipity add
@@ -25,14 +25,14 @@ import { STARTERS, BLANK, KITS, type CatalogEntry } from '../catalog.js';
 // column-aligned. No leading/trailing blank lines - callers add surrounding
 // whitespace.
 function catalogText(): string {
-  const width = Math.max(...[...STARTERS, ...BLANK, ...KITS].map(e => e.key.length));
+  const width = Math.max(...[...TEMPLATES, ...APPS, ...KITS].map(e => e.key.length));
   const row = (e: CatalogEntry) => `  ${e.key.padEnd(width)}  ${muted(e.hint)}`;
   const section = (title: string, blurb: string, entries: CatalogEntry[]) =>
     [`${bold(title)}  ${muted('- ' + blurb)}`, ...entries.map(row)].join('\n');
   return [
     'Names to pass to `gipity add <name>`:',
-    section('Templates (working demos)', 'complete apps to run, then extend or replace', STARTERS),
-    section('Templates (blank wiring)', 'minimal framework setup - build your app on top', BLANK),
+    section('Templates', 'blank framework wiring for a new app - build on top', TEMPLATES),
+    section('Apps', 'complete working apps to run, then extend or replace', APPS),
     section('Kits', 'building blocks to add into an app you already scaffolded', KITS),
   ].join('\n\n');
 }
@@ -83,8 +83,8 @@ interface AddResponse {
 // `gipity add ./path/to/template` walks a directory and ships the contents to
 // the server as a JSON payload, instead of asking the server to look the name
 // up in its bundled catalog. This is the dev loop for template authors: you
-// can iterate on `registry/templates/<name>/` and push to a real app without
-// having to redeploy the server.
+// can iterate on `registry/templates/<name>/` or `registry/apps/<name>/` and
+// push to a real app without having to redeploy the server.
 //
 // The server-side wire shape this builds matches addSchema.files in
 // platform/server/src/routes/projects/add.ts (same field names, same encoding
@@ -193,7 +193,7 @@ export const addCommand = new Command('add')
     // `--list` is a bare catalog dump; no project/config needed.
     if (opts.list) {
       if (opts.json) {
-        console.log(JSON.stringify({ templates: { starters: STARTERS, blank: BLANK }, kits: KITS }));
+        console.log(JSON.stringify({ templates: TEMPLATES, apps: APPS, kits: KITS }));
       } else {
         console.log(catalogText());
       }

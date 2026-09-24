@@ -4,7 +4,7 @@
  *
  * Eight resource-grouped tools over the platform REST API at a.gipity.ai.
  * Deliberately smaller than the `gipity` CLI (30+ commands): interactive
- * flows (login, chat, log tailing) and admin ops stay CLI-only.
+ * flows (login, log tailing) and admin ops stay CLI-only.
  *
  * Auth: GIPITY_TOKEN env var (a long-lived agent token from
  * `gipity token create`, recommended), else the session token in

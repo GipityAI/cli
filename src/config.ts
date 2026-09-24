@@ -236,7 +236,7 @@ export function clearConfigCache(): void {
 
 export function saveConfig(data: GipityConfig): void {
   // saveConfig only ever *updates* an existing project config. It must never
-  // create a new `.gipity.json`: a one-off command (e.g. `gipity chat`) run
+  // create a new `.gipity.json`: a one-off command (e.g. `gipity ask`) run
   // in an unrelated folder resolves to the server's Home project, and a
   // create-on-save here would silently turn that folder - in the wild, often
   // `$HOME` itself - into a Gipity project. Creating a config is always an
@@ -258,9 +258,26 @@ export function saveConfig(data: GipityConfig): void {
  *  accidentally rewrite a parent project's config file. */
 export function saveConfigAt(dir: string, data: GipityConfig): void {
   const path = resolve(dir, CONFIG_FILE);
+  // A new project starts with session capture OFF: recording someone's coding
+  // sessions is opt-in (`gipity init --capture`). Existing configs keep what
+  // they have - an absent key there still means on, as it always has.
+  if (!existsSync(path) && data.captureHooks === undefined) data = { ...data, captureHooks: false };
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
   cached = data;
   cachedPath = path;
+}
+
+/**
+ * Whether this project's coding-agent sessions are recorded to Gipity.
+ * GIPITY_CAPTURE=off always wins (the relay daemon owns capture for its
+ * dispatches), GIPITY_CAPTURE=on forces it (GipRunner scores builds from the
+ * recording), otherwise `.gipity.json` decides: new projects are created with
+ * `captureHooks: false`, and an older config without the key records.
+ */
+export function captureEnabled(config: Pick<GipityConfig, 'captureHooks'> | null): boolean {
+  if (process.env.GIPITY_CAPTURE === 'off') return false;
+  if (process.env.GIPITY_CAPTURE === 'on') return true;
+  return config?.captureHooks !== false;
 }
 
 /** Compiled matchers cached by their pattern set so the per-file `shouldIgnore`

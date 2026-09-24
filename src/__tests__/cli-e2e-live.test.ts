@@ -132,23 +132,10 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.match(r.stdout, /"n"\s*:\s*1/);
   });
 
-  it('7. chat "what is 2+2?" returns a 4', () => {
-    const r = cli(['chat', 'what is 2+2? respond with only the number.'], { timeout: 60000 });
-    assert.equal(r.status, 0, `chat failed: ${r.stderr || r.stdout}`);
+  it('7. ask "what is 2+2?" returns a 4', () => {
+    const r = cli(['ask', 'what is 2+2? respond with only the number.'], { timeout: 60000 });
+    assert.equal(r.status, 0, `ask failed: ${r.stderr || r.stdout}`);
     assert.match(r.stdout, /\b4\b/);
-  });
-
-  it('7b. chat generates music via the music_generate tool', () => {
-    const r = cli([
-      'chat',
-      'Use your music generation tool to create a 5 second instrumental lo-fi beat. Just generate it now; do not ask any questions.',
-      '--json',
-    ], { timeout: 180000 });
-    assert.equal(r.status, 0, `chat failed: ${r.stderr || r.stdout}`);
-    const res = JSON.parse(r.stdout) as { toolsUsed?: { tool: string; success: boolean; output: string }[] };
-    const music = (res.toolsUsed || []).find((t) => t.tool === 'music_generate');
-    assert.ok(music, `expected music_generate in toolsUsed: ${JSON.stringify(res.toolsUsed)}`);
-    assert.equal(music.success, true, `music_generate failed: ${music.output}`);
   });
 
   it('8. memory write/read/delete round-trip', () => {

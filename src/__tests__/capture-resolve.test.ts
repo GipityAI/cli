@@ -166,6 +166,20 @@ describe('resolveConvGuid: self-arm gates', () => {
     assert.equal(calls.length, 0);
   });
 
+  it('GIPITY_CAPTURE=on self-arms even when the project has captureHooks:false (how GipRunner records its builds)', async () => {
+    const { resolveConvGuid } = await mod();
+    writeProjectConfig({ captureHooks: false });
+    writeDevice();
+    const calls = stubFetch();
+    process.env.GIPITY_CAPTURE = 'on';
+    try {
+      assert.equal(await resolveConvGuid(HOOK), 'c_resolved1');
+      assert.equal(calls.length, 1);
+    } finally {
+      delete process.env.GIPITY_CAPTURE;
+    }
+  });
+
   it('machine not paired (no relay.json) → null', async () => {
     const { resolveConvGuid } = await mod();
     writeProjectConfig();

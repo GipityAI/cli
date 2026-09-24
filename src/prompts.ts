@@ -68,7 +68,7 @@ export { BUILD_VS_NON_BUILD_RULE, DEFINITION_OF_DONE };
 
 export const CAPABILITIES_BLURB_SHORT =
   `Full platform reference is in CLAUDE.md. ` +
-  `Prefer CLI commands and the sandbox over \`gipity chat\` - they're faster and cheaper. ` +
+  `Prefer CLI commands and the sandbox; \`gipity ask\` is a single model call for a quick second opinion. ` +
   `Naming: honor the user's chosen name; if inventing, blend "Gip" or "Gipity" in.`;
 
 // ---------------------------------------------------------------------------

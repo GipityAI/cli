@@ -36,7 +36,9 @@
  *   - GIPITY_CAPTURE=off - the relay daemon owns capture for this run
  *     (it parses stream-json from stdout), or the caller opted out.
  *   - No binding resolvable: not a Gipity project, `captureHooks: false`
- *     in .gipity.json, or the resolve call failed.
+ *     in .gipity.json (new projects start that way; GIPITY_CAPTURE=on
+ *     overrides it, which is how GipRunner records its builds), or the
+ *     resolve call failed.
  *   - The machine isn't paired - no device token available.
  *   - Anything unexpected (parse error, network error, etc.). We must
  *     not break the user's interactive session.
@@ -60,7 +62,7 @@ import { join } from 'path';
 import { getDevice } from '../relay/state.js';
 import { deviceFetch } from '../relay/device-http.js';
 import { ImageBlockRewriter } from '../relay/media-upload.js';
-import { getConfig } from '../config.js';
+import { getConfig, captureEnabled } from '../config.js';
 import type { IngestEntry } from '../capture/sources/claude-code.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
 import type { CaptureHookInput, CaptureParseResult, RemoteAgentAdapter } from '../agents/index.js';
@@ -299,7 +301,7 @@ export async function resolveConvGuid(
   // (main() already checked the device, but resolveConvGuid is also the
   // unit-tested entry - keep it self-sufficient).
   const config = getConfig();
-  if (!config?.projectGuid || config.captureHooks === false) return null;
+  if (!config?.projectGuid || !captureEnabled(config)) return null;
   if (!getDevice()) return null;
 
   const release = acquireLock(safeSessionKey(sessionId));

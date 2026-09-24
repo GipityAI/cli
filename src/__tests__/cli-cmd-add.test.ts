@@ -68,3 +68,22 @@ test('gipity add realtime installs a kit', async () => {
   assert.match(r.stdout, /Added the "realtime" kit/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
+
+test('gipity add --list groups the catalog as templates, apps and kits', async () => {
+  mock.reset();
+  const text = await fresh(['add', '--list']);
+  assert.equal(text.status, 0, text.stderr);
+  const ti = text.stdout.indexOf('Templates'), ai = text.stdout.indexOf('Apps'), ki = text.stdout.indexOf('Kits');
+  assert.ok(ti >= 0 && ai > ti && ki > ai, text.stdout);
+  assert.match(text.stdout.slice(ti, ai), /web-simple/);
+  assert.match(text.stdout.slice(ai, ki), /3d-world/);
+  assert.doesNotMatch(text.stdout, /outreach-agent/); // incomplete: installable by key, not listed
+
+  const json = await fresh(['add', '--list', '--json']);
+  const out = JSON.parse(json.stdout);
+  assert.deepEqual(Object.keys(out), ['templates', 'apps', 'kits']);
+  assert.ok(out.templates.some((e: { key: string }) => e.key === 'api'));
+  assert.ok(out.apps.some((e: { key: string }) => e.key === 'paid-app'));
+  assert.ok(out.kits.some((e: { key: string }) => e.key === 'realtime'));
+  assert.equal(mock.requests().length, 0);
+});

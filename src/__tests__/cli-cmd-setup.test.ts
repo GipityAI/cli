@@ -75,11 +75,11 @@ test('gipity connect --help describes the machine connect', async () => {
   assert.match(r.stdout, /Connect this computer to gipity\.ai/);
 });
 
-test('gipity --help lists connect (not setup) in the Connect & setup group', async () => {
+test('gipity --help hides the parked relay commands (connect, relay) and the legacy claude name', async () => {
   const home = makeAuthedHome();
   const r = await run(['--help'], home);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Connect & setup:[\s\S]*\bconnect\b/);
-  // The legacy names are hidden from top-level help.
-  assert.doesNotMatch(r.stdout, /Connect & setup:[\s\S]*\bclaude\b {2}/);
+  assert.match(r.stdout, /Connect & setup:[\s\S]*\bbuild\b/);
+  assert.doesNotMatch(r.stdout, /^\s+(connect|relay|claude)\s{2}/m);
+  assert.doesNotMatch(r.stdout, /gipity connect/);
 });

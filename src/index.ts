@@ -21,9 +21,7 @@ import { deployCommand } from './commands/deploy.js';
 import { dbCommand } from './commands/db.js';
 import { memoryCommand } from './commands/memory.js';
 import { sandboxCommand } from './commands/sandbox.js';
-import { chatCommand } from './commands/chat.js';
 import { projectCommand } from './commands/project.js';
-import { agentCommand } from './commands/agent.js';
 import { workflowCommand } from './commands/workflow.js';
 import { creditsCommand } from './commands/credits.js';
 import { fileCommand } from './commands/file.js';
@@ -49,6 +47,7 @@ import { rbacCommand } from './commands/rbac.js';
 import { auditCommand } from './commands/audit.js';
 import { emailCommand } from './commands/email.js';
 import { generateCommand } from './commands/generate.js';
+import { askCommand } from './commands/ask.js';
 import { skillCommand } from './commands/skill.js';
 import { domainCommand } from './commands/domain.js';
 import { realtimeCommand } from './commands/realtime.js';
@@ -146,12 +145,11 @@ program.enablePositionalOptions();
 // actually use them - orient, build, wire the backend, then everything else.
 const startGroup     = [statusCommand, initCommand, skillCommand, projectCommand];
 const buildGroup     = [addCommand, removeCommand, brandCommand, saveCommand, loadCommand, deployCommand, pageCommand, testCommand];
-const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCommand, jobCommand, workflowCommand];
-const servicesGroup  = [serviceCommand, generateCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
+const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCommand, jobCommand, workflowCommand, approvalCommand, memoryCommand];
+const servicesGroup  = [serviceCommand, generateCommand, askCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
-const gipGroup       = [chatCommand, memoryCommand, agentCommand, approvalCommand, gmailCommand];
-const utilitiesGroup = [sandboxCommand, emailCommand, locationCommand, textCommand, bugCommand];
-const connectGroup   = [loginCommand, logoutCommand, buildCommand, connectCommand, relayCommand, githubCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
+const utilitiesGroup = [sandboxCommand, emailCommand, gmailCommand, locationCommand, textCommand, bugCommand];
+const connectGroup   = [loginCommand, logoutCommand, buildCommand, githubCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Start here',        cmds: startGroup },
@@ -159,7 +157,6 @@ const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'App backend',       cmds: backendGroup },
   { title: 'App services',      cmds: servicesGroup },
   { title: 'Files',             cmds: filesGroup },
-  { title: 'Gip (cloud agent)', cmds: gipGroup },
   { title: 'Utilities',         cmds: utilitiesGroup },
   { title: 'Connect & setup',   cmds: connectGroup },
 ];
@@ -180,18 +177,19 @@ const SKILL_DOCS: Record<string, string> = {
   test: 'app-testing',
   db: 'app-database',
   fn: 'app-development',
-  service: 'service-call',
   notify: 'app-notify',
   payments: 'app-payments',
   records: 'app-records',
   key: 'app-auth',
   realtime: 'app-realtime',
   job: 'jobs',
+  workflow: 'workflow',
+  memory: 'workflow',
   upload: 'jobs',
   sandbox: 'sandbox-tools',
-  gmail: 'google-services',
+  gmail: 'email',
   email: 'email',
-  location: 'location',
+  location: 'app-location',
 };
 
 program
@@ -237,7 +235,6 @@ program.configureHelp({
     lines.push(bold('Quick start:'));
     lines.push(`  ${brand('gipity login')}    ${dim('- authenticate first if you haven\'t already')}`);
     lines.push(`  ${brand('gipity init')}     ${dim('- link this dir + wire up every coding agent on this machine')}`);
-    lines.push(`  ${brand('gipity connect')}  ${dim('- connect this computer to gipity.ai so the web CLI can drive it')}`);
     lines.push(`  ${brand('gipity build')}    ${dim('- or start from anywhere: pick a project, pick your agent, go')}`);
     lines.push('');
 
@@ -283,6 +280,14 @@ for (const cmd of HELP_SECTIONS.flatMap(s => s.cmds)) {
 // but is no longer advertised - not in help, not in the manifest, not in docs.
 configureHelp(claudeCommand);
 program.addCommand(claudeCommand, { hidden: true });
+
+// Relay (driving this machine from the web, cloud devboxes) is parked: the
+// commands still work where the server has the `relay` feature on, but they
+// aren't advertised.
+for (const cmd of [connectCommand, relayCommand]) {
+  configureHelp(cmd);
+  program.addCommand(cmd, { hidden: true });
+}
 
 // ── `gipity help [command]` + `help --json` machine-readable manifest ───
 // The JSON manifest is generated from the SAME commander registry that

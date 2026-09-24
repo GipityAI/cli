@@ -8,7 +8,7 @@ import { resolveCommand, spawnCommand, spawnSyncCommand } from '../platform.js';
 import { getAuth, sessionExpired, accessTokenExpired, refreshTokenIfNeeded } from '../auth.js';
 import { get, post, ApiError, getAccountSlug } from '../api.js';
 import { interactiveLogin } from '../login-flow.js';
-import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath } from '../config.js';
+import { getConfig, saveConfigAt, clearConfigCache, getApiBaseOverride, DEFAULT_API_BASE, getConfigPath, captureEnabled } from '../config.js';
 import { sync, type SyncResult } from '../sync.js';
 import { slugify, ensureGipityPluginInstalled, setupProjectTools, setupToolForAgent, DEFAULT_SYNC_IGNORE, isSyncIgnored } from '../setup.js';
 import {
@@ -18,7 +18,6 @@ import {
   buildFreshWrap,
 } from '../prompts.js';
 import * as relayState from '../relay/state.js';
-import { maybeOfferRelayOn, ensureDaemonRunning } from '../relay/onboarding.js';
 import { prompt, promptBoxed, pickOne, confirm } from '../utils.js';
 import { brand, bold, faint, info, success, warning, error as clrError, muted } from '../colors.js';
 import { createProgressReporter } from '../progress.js';
@@ -79,6 +78,7 @@ function reportSyncResult(result: SyncResult): void {
 
 import { getProjectsRoot } from '../relay/paths.js';
 
+import { ensureDevicePaired } from '../relay/setup.js';
 interface ProjectData {
   short_guid: string;
   name: string;
@@ -186,10 +186,9 @@ async function buildProjectContextBlock(opts: LocalCtxOpts): Promise<string> {
 // `gipity setup`). Used on first login and when the server returns 401
 // mid-command (session expired).
 
-// First-run relay onboarding now lives in `relay/onboarding.ts`
-// (`maybeOfferRelayOn`). `gipity claude` invokes it after project
-// selection, and also calls `ensureDaemonRunning` unconditionally before
-// launching Claude Code so a paired user doesn't have to think about it.
+// Relay (driving this machine from the web) is parked: `gipity build` no
+// longer offers it or starts its daemon. `gipity relay` still works where the
+// server has the `relay` feature on. See relay/onboarding.ts.
 
 /** Format a millisecond duration as hh:mm:ss.s (one decimal on seconds). */
 function formatElapsed(ms: number): string {
@@ -440,14 +439,6 @@ async function runLaunch(
       }
 
       console.log('');
-
-      // ── Step 1b: Relay first-run onboarding (account-scoped, runs before project) ──
-      if (!nonInteractive) {
-        await maybeOfferRelayOn();
-      }
-      if (!nonInteractive && relayState.isRelayEnabled() && !relayState.isPaused()) {
-        ensureDaemonRunning();
-      }
 
       // ── Step 2: Project ───────────────────────────────────────────────
       let initialPrompt = '';
@@ -840,8 +831,11 @@ async function runLaunch(
       // empty forever (the qwen-flight zero-message bug, 2026-07-07).
       const inheritedConvGuid = Boolean(process.env.GIPITY_CONVERSATION_GUID);
       let convGuidForHooks: string | null = process.env.GIPITY_CONVERSATION_GUID ?? null;
-      if (!convGuidForHooks) {
-        const device = relayState.getDevice();
+      // Session recording is opt-in per project (captureEnabled): with it off
+      // no conversation is created and the hooks have nothing to post to.
+      if (!convGuidForHooks && captureEnabled(getConfig())) {
+        // Recording needs this machine registered; do it quietly the first time.
+        const device = relayState.getDevice() ?? await ensureDevicePaired().catch(() => null);
         if (device) {
           const cfg = getConfig();
           const resumeIdx = process.argv.indexOf('--resume');

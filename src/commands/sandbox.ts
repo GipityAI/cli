@@ -531,8 +531,7 @@ GCC/Rust).
     // Pull sandbox-written outputs down to the local cwd automatically. The
     // server has already mirrored them into the project (VFS) and handed back
     // the exact list, so honoring it here means files land locally without a
-    // manual `gipity sync` - same auto-pull contract `gipity chat` uses on its
-    // `filesChanged` flag. Skip in one-off mode (no local project to sync into).
+    // manual `gipity sync`. Skip in one-off mode (no local project to sync into).
     const pulledLocal = !!(res.data.outputFiles?.length && getConfigPath());
     if (pulledLocal) {
       await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });

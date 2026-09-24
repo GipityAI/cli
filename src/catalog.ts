@@ -8,30 +8,30 @@
 
 export interface CatalogEntry { key: string; hint: string; }
 
-/** Visible starter templates (complete working demos). */
-export const STARTERS: CatalogEntry[] = [
+/** Visible apps (registry/apps/): complete working apps to run, then extend. */
+export const APPS: CatalogEntry[] = [
   { key: 'web-vision-cam', hint: 'fullscreen camera app with on-device vision (MediaPipe)' },
   { key: 'object-spotter', hint: 'camera app that boxes, labels, and counts objects (YOLOX on-device)' },
   { key: '2d-game', hint: '2D games with Phaser 3 - platformer, arcade, puzzle' },
   { key: '3d-world', hint: 'playable 3D multiplayer rocket-launcher demo' },
   { key: 'karaoke-captions', hint: 'audio + lyrics -> word-synced karaoke captions (GPU job)' },
-  { key: 'outreach-agent', hint: 'AI-run outreach funnel - import contacts, draft + auto-send staged emails' },
   { key: 'paid-app', hint: 'storefront that charges real money - Stripe checkout, members area, billing' },
   { key: 'notify-demo', hint: 'web-push demo - enable notifications, send a real ping' },
 ];
 
-/** Visible blank-wiring templates. */
-export const BLANK: CatalogEntry[] = [
+/** Visible templates (registry/templates/): blank framework wiring. */
+export const TEMPLATES: CatalogEntry[] = [
   { key: 'web-simple', hint: 'static frontend-only site - pages, dashboards, simple games' },
   { key: 'web-fullstack', hint: 'backend API + database wiring - frontend, functions, migrations; deploys green empty' },
   { key: '3d-engine', hint: '3D multiplayer wiring - Three.js + Rapier + Gipity Realtime' },
   { key: 'api', hint: 'pure API backend, no frontend - functions + tests, deploys green' },
 ];
 
-/** Hidden templates - installable by exact key, omitted from listings. */
+/** Hidden templates and apps - installable by exact key, omitted from listings. */
 export const HIDDEN: CatalogEntry[] = [
   { key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' },
-  { key: 'monitor', hint: 'account observability dashboard (auto-installed per account)' },
+  { key: 'monitor', hint: 'the Gipity account web app (projects, deploys, logs, billing)' },
+  { key: 'outreach-agent', hint: 'incomplete: AI-run outreach funnel (needs porting to workflow tools)' },
 ];
 
 /** Kits - building blocks added into an existing app. */

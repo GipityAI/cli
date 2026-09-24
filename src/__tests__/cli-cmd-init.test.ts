@@ -123,7 +123,7 @@ test('gipity init creates a new project in an empty directory', async () => {
   assert.ok(existsSync(join(dir, '.gipity.json')), 'init should write .gipity.json into cwd');
 });
 
-test('gipity init --no-capture writes captureHooks:false and says recording is off', async () => {
+test('gipity init --no-capture writes captureHooks:false and says sessions are not recorded', async () => {
   mock.reset();
   mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
   mock.on('GET /projects', { body: { data: [], totalCount: 0 } });
@@ -136,34 +136,47 @@ test('gipity init --no-capture writes captureHooks:false and says recording is o
   assert.equal(r.status, 0, r.stderr);
   const cfg = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
   assert.equal(cfg.captureHooks, false, 'opt-out persisted in .gipity.json');
-  assert.match(r.stdout, /Session recording is off/);
+  assert.match(r.stdout, /sessions here are not recorded/i);
 });
 
-test('gipity init announces session recording by default; --no-capture on re-init opts out', async () => {
+test('gipity init leaves session recording off; --capture turns it on and pairs this machine; a bare re-run keeps it', async () => {
   mock.reset();
   mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
   mock.on('GET /projects', { body: { data: [], totalCount: 0 } });
   mock.on('POST /projects', { body: { data: { short_guid: 'p_CapDef0000', name: 'cap-def', slug: 'cap-def' } } });
   mock.on('GET /projects/p_CapDef0000/agents', { body: { data: [] } });
   mock.on('GET /projects/p_CapDef0000/files/tree', { body: { data: [] } });
+  mock.on('POST /remote-devices', { status: 201, body: { data: { short_guid: 'rd_CapDev000', name: 'Linux PC', platform: 'linux', token: 'tok_cap' } } });
 
   const dir = freshDir();
-  const first = await runCliAsync(['--api-base', mock.apiBase, 'init', 'cap-def'], { env: { HOME: home }, cwd: dir });
+  const capHome = makeAuthedHome();
+  const first = await runCliAsync(['--api-base', mock.apiBase, 'init', 'cap-def'], { env: { HOME: capHome }, cwd: dir });
   assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /sessions here are recorded/i, 'recording announced up front');
-  const cfg = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
-  assert.notEqual(cfg.captureHooks, false, 'no opt-out written by default');
+  assert.match(first.stdout, /sessions here are not recorded[\s\S]*gipity init --capture/i, 'says how to turn it on');
+  assert.equal(JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8')).captureHooks, false, 'new projects start with capture off');
+  assert.equal(mock.requests().some(q => q.url === '/remote-devices'), false, 'no device registered without capture');
 
-  // Re-init with --no-capture is the documented way to turn recording off.
-  const second = await runCliAsync(['--api-base', mock.apiBase, 'init', '--no-capture'], { env: { HOME: home }, cwd: dir });
+  const second = await runCliAsync(['--api-base', mock.apiBase, 'init', '--capture'], { env: { HOME: capHome }, cwd: dir });
   assert.equal(second.status, 0, second.stderr);
-  assert.match(second.stdout, /Session recording disabled/);
-  const after = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
-  assert.equal(after.captureHooks, false);
+  assert.match(second.stdout, /Session recording enabled/);
+  assert.equal(JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8')).captureHooks, true);
+  assert.equal(mock.requests().filter(q => q.method === 'POST' && q.url === '/remote-devices').length, 1, 'machine registered for capture');
 
-  // A bare re-run must NOT silently reverse the explicit opt-out.
-  const third = await runCliAsync(['--api-base', mock.apiBase, 'init'], { env: { HOME: home }, cwd: dir });
+  const third = await runCliAsync(['--api-base', mock.apiBase, 'init'], { env: { HOME: capHome }, cwd: dir });
   assert.equal(third.status, 0, third.stderr);
-  const still = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
-  assert.equal(still.captureHooks, false, 'bare re-init keeps the opt-out');
+  assert.equal(JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8')).captureHooks, true, 'bare re-init keeps the choice');
+});
+
+test('gipity init on an older project with no captureHooks key leaves it recording', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
+  mock.on('GET /projects/p_Legacy0000/files/tree', { body: { data: [] } });
+  const dir = freshDir();
+  writeFileSync(join(dir, '.gipity.json'), JSON.stringify({
+    projectGuid: 'p_Legacy0000', projectSlug: 'legacy', accountSlug: 'test-acct', agentGuid: '',
+    conversationGuid: null, apiBase: mock.apiBase, ignore: [],
+  }));
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal('captureHooks' in JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8')), false);
 });

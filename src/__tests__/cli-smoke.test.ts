@@ -27,7 +27,7 @@ describe('cli-smoke: --version and --help', () => {
     // Cross-agent positioning line surfaces in top-level help.
     assert.match(out, /no MCP server needed/);
 
-    const sections = ['Start here:', 'App build & ship:', 'App backend:', 'App services:', 'Files:', 'Gip (cloud agent):', 'Utilities:', 'Connect & setup:'];
+    const sections = ['Start here:', 'App build & ship:', 'App backend:', 'App services:', 'Files:', 'Utilities:', 'Connect & setup:'];
     let lastIdx = -1;
     for (const s of sections) {
       const idx = out.indexOf(s);
@@ -154,12 +154,22 @@ describe('cli-smoke: error behavior', () => {
 });
 
 describe('cli-smoke: subcommand --help wiring', () => {
-  for (const cmd of ['chat', 'deploy', 'db', 'fn', 'memory', 'add', 'login', 'doctor', 'update']) {
+  for (const cmd of ['ask', 'deploy', 'db', 'fn', 'memory', 'add', 'login', 'doctor', 'update']) {
     it(`gipity ${cmd} --help exits 0`, () => {
       const r = runCli([cmd, '--help']);
       assert.equal(r.status, 0, `${cmd} --help failed: ${r.stderr}`);
     });
   }
+
+  it('gipity chat and gipity agent are gone (Gip is archived)', () => {
+    for (const cmd of ['chat', 'agent']) {
+      const r = runCli([cmd, 'hello']);
+      assert.notEqual(r.status, 0, `${cmd} should no longer be a command`);
+      assert.match(r.stderr, new RegExp(`unknown command '${cmd}'`));
+    }
+    const help = runCli(['--help']);
+    assert.doesNotMatch(help.stdout, /Gip \(cloud agent\)/);
+  });
 
   it('page eval --help DOES show the full examples/realtime narrative', () => {
     // The narrative is withheld only on the error path; an explicit --help is

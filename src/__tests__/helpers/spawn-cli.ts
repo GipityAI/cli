@@ -23,6 +23,10 @@ export interface SpawnOptions {
   timeout?: number;
   /** If true, do NOT set DISABLE_AUTOUPDATER (Tier C wants normal startup). */
   enableUpdater?: boolean;
+  /** Written to the child's stdin, which is then closed. Without it stdin stays an open pipe. */
+  input?: string;
+  /** Run this shell command line (via sh -c) instead of the CLI with `args`. */
+  shell?: string;
 }
 
 /**
@@ -76,10 +80,11 @@ export async function runCliAsync(args: string[], opts: SpawnOptions = {}): Prom
   if (!opts.enableUpdater) baseEnv['DISABLE_AUTOUPDATER'] = '1';
   const env = { ...baseEnv, ...opts.env };
 
-  const child = spawn(process.execPath, [CLI_ENTRY, ...args], {
-    cwd: opts.cwd ?? process.cwd(),
-    env,
-  });
+  const child = opts.shell
+    ? spawn('sh', ['-c', opts.shell], { cwd: opts.cwd ?? process.cwd(), env })
+    : spawn(process.execPath, [CLI_ENTRY, ...args], { cwd: opts.cwd ?? process.cwd(), env });
+
+  if (opts.input !== undefined) child.stdin.end(opts.input);
 
   let stdout = '';
   let stderr = '';
