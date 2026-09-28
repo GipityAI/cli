@@ -46,5 +46,5 @@ export const KITS: CatalogEntry[] = [
   { key: 'stripe', hint: 'charge your users - Stripe checkout, subscriptions, brokered webhooks' },
   { key: 'notify', hint: 'web push notifications - platform-owned keys, works on iOS home screen' },
   { key: 'servicenow', hint: 'ServiceNow tables as a data source - OAuth pull/write-back/real-time sync' },
-  { key: 'leaderboard', hint: 'game leaderboards - personal bests, weekly boards, ghosts, cheat checks, bans' },
+  { key: 'leaderboard', hint: 'leaderboards for any game - scores or times, daily/weekly/season boards, tiebreaks, replays, bans' },
 ];
