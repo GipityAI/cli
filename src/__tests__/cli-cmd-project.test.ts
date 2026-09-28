@@ -7,8 +7,8 @@ import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 let mock: MockServer;
 let home: string;
 
-const PROJ_A = { short_guid: 'p_ProjA00n0', name: 'Alpha', slug: 'alpha', description: null, is_default: 0, created_at: '2026-01-01T00:00:00Z' };
-const PROJ_B = { short_guid: 'p_ProjB00n0', name: 'Beta',  slug: 'beta',  description: 'Beta project', is_default: 0, created_at: '2026-02-01T00:00:00Z' };
+const PROJ_A = { short_guid: 'p_ProjA00n0', name: 'Alpha', slug: 'alpha', description: null, is_default: 0, auth_mode: 'gipity', created_at: '2026-01-01T00:00:00Z' };
+const PROJ_B = { short_guid: 'p_ProjB00n0', name: 'Beta',  slug: 'beta',  description: 'Beta project', is_default: 0, auth_mode: 'app', created_at: '2026-02-01T00:00:00Z' };
 
 before(async () => {
   mock = await startMockServer();
@@ -65,7 +65,27 @@ test('gipity project info shows fields from /projects/:guid', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Name:\s+Alpha/);
   assert.match(r.stdout, /Slug:\s+alpha/);
+  assert.match(r.stdout, /Sign-in:\s+gipity/);
   assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity project auth shows the mode, sets a valid one, and refuses junk', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0', { body: { data: PROJ_A } });
+  const shown = await inProject(['project', 'auth']);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /Sign-in: gipity/);
+
+  mock.on('PUT /projects/p_ProjA00n0', { body: { data: { success: true } } });
+  const set = await inProject(['project', 'auth', 'app']);
+  assert.equal(set.status, 0, set.stderr);
+  assert.match(set.stdout, /Sign-in set to "app"/);
+  const put = mock.requests().find(c => c.method === 'PUT' && c.url === '/projects/p_ProjA00n0');
+  assert.deepEqual(put?.body, { auth_mode: 'app' });
+
+  const bad = await inProject(['project', 'auth', 'steam']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /Unknown mode "steam"/);
 });
 
 test('gipity project delete --yes calls DELETE', async () => {

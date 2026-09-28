@@ -11,12 +11,16 @@ import { getProjectsRoot } from '../relay/paths.js';
 import { finalizeLocalProject } from '../project-setup.js';
 import * as relayState from '../relay/state.js';
 
+type AuthMode = 'gipity' | 'app' | 'both';
+const AUTH_MODES: AuthMode[] = ['gipity', 'app', 'both'];
+
 interface ProjectData {
   short_guid: string;
   name: string;
   slug: string;
   description: string | null;
   is_default: number;
+  auth_mode: AuthMode;
   created_at: string;
 }
 
@@ -201,6 +205,37 @@ projectCommand
       console.log(`GUID:    ${p.short_guid}`);
       console.log(`Live:    ${liveUrl(config)}`);
       console.log(`Created: ${new Date(p.created_at).toLocaleDateString()}`);
+      console.log(`Sign-in: ${p.auth_mode}`);
       if (p.description) console.log(`Desc:    ${p.description}`);
     }
+  }));
+
+projectCommand
+  .command('auth [mode]')
+  .description('Show or set who can sign in to the deployed app: gipity, app (Steam / guest players), or both')
+  .addHelpText('after', `
+Modes:
+  gipity  Sign in with Gipity only (default)
+  app     Players sign in to this app alone, without a Gipity account:
+          Steam (POST /api/<guid>/auth/steam) or a guest device (POST /api/<guid>/auth/guest)
+  both    Either
+
+Steam also needs the Steamworks publisher key and AppID:
+  gipity secrets set STEAM_WEB_API_KEY <key>
+  gipity secrets set STEAM_APP_ID <appid>
+See: gipity skill read steam-game`)
+  .option('--json', 'Output as JSON')
+  .action((mode: string | undefined, opts) => run('Auth', async () => {
+    const config = requireConfig();
+    if (mode === undefined) {
+      const res = await get<{ data: ProjectData }>(`/projects/${config.projectGuid}`);
+      printResult(`Sign-in: ${res.data.auth_mode}`, opts, { auth_mode: res.data.auth_mode });
+      return;
+    }
+    if (!AUTH_MODES.includes(mode as AuthMode)) {
+      console.error(clrError(`Unknown mode "${mode}". Use one of: ${AUTH_MODES.join(', ')}.`));
+      process.exit(1);
+    }
+    await put(`/projects/${config.projectGuid}`, { auth_mode: mode });
+    printResult(success(`Sign-in set to "${mode}".`), opts, { auth_mode: mode });
   }));
