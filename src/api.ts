@@ -165,6 +165,17 @@ function with401Hint(status: number, message: string): string {
     : message;
 }
 
+/** Build the ApiError for a non-2xx response from its parsed JSON body (null
+ *  when the body wasn't JSON). A non-JSON error (an HTML 404 from a retired
+ *  route, a proxy 502) has no message of its own, and over HTTP/2 statusText is
+ *  always empty, so name the status and the request instead of printing a
+ *  blank error. */
+function apiErrorFrom(res: Response, json: any, label: string, hint = true): ApiError {
+  const err = json?.error ?? {};
+  const message = err.message || `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''} from ${label}`;
+  return new ApiError(res.status, err.code || 'UNKNOWN', hint ? with401Hint(res.status, message) : message, json?.data);
+}
+
 async function getHeaders(): Promise<Record<string, string>> {
   return {
     ...clientHeaders(),
@@ -205,9 +216,8 @@ async function request<T>(method: string, path: string, body?: unknown, retrying
   }
 
   if (!res.ok) {
-    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
-    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
+    const json = await res.json().catch(() => null);
+    throw apiErrorFrom(res, json, `${method} ${path}`);
   }
 
   return res.json() as Promise<T>;
@@ -244,9 +254,8 @@ export async function postForTarEntries(
     return postForTarEntries(path, body, true);
   }
   if (!res.ok) {
-    const json = await read(r => r.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } })));
-    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
+    const json = await read(r => r.json().catch(() => null));
+    throw apiErrorFrom(res, json, `POST ${path}`);
   }
   if (!res.body) {
     await read(async () => null);  // clear the body timer before bailing out
@@ -304,7 +313,7 @@ export async function download(path: string, retried = false): Promise<Buffer> {
   }
   if (!res.ok) {
     await read(async () => null);
-    throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: ${res.statusText}`));
+    throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}`));
   }
 
   return read(async r => Buffer.from(await r.arrayBuffer()));
@@ -330,9 +339,8 @@ export async function downloadWithHeaders(
     return downloadWithHeaders(path, true);
   }
   if (!res.ok) {
-    const json = await read(r => r.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } })));
-    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
+    const json = await read(r => r.json().catch(() => null));
+    throw apiErrorFrom(res, json, `GET ${path}`);
   }
 
   return read(async r => ({ buffer: Buffer.from(await r.arrayBuffer()), headers: r.headers }));
@@ -365,9 +373,8 @@ export async function postBinary<T>(
     return postBinary<T>(path, body, contentType, true);
   }
   if (!res.ok) {
-    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
-    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, with401Hint(res.status, err.message), json.data);
+    const json = await res.json().catch(() => null);
+    throw apiErrorFrom(res, json, `POST ${path}`);
   }
 
   return { status: res.status, json: await res.json() as T };
@@ -402,7 +409,7 @@ export async function downloadStream(path: string, retried = false): Promise<imp
     return downloadStream(path, true);
   }
   if (!res.ok) {
-    throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: ${res.statusText}`));
+    throw new ApiError(res.status, 'DOWNLOAD_ERROR', with401Hint(res.status, `Download failed: HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}`));
   }
 
   return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
@@ -496,9 +503,8 @@ export async function publicRequest<T>(
   }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
 
   if (!res.ok) {
-    const json = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }));
-    const err = json.error || { code: 'UNKNOWN', message: res.statusText };
-    throw new ApiError(res.status, err.code, err.message, json.data);
+    const json = await res.json().catch(() => null);
+    throw apiErrorFrom(res, json, `${method} ${path}`, false);
   }
 
   return res.json() as Promise<T>;
