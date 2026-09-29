@@ -1,5 +1,6 @@
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { Command, Option } from 'commander';
 import { get, post, del, getBaseUrl } from '../api.js';
 import { requireConfig, getConfigPath } from '../config.js';
@@ -136,6 +137,19 @@ interface BenchReportShape {
   rttMs: { p50: number; p95: number; p99: number; max: number } | null;
 }
 
+/**
+ * dist/realtime-bench.js, found from wherever this code runs: inlined into the
+ * dist/index.js bundle, or as the unbundled dist/commands/realtime.js. Loaded
+ * by URL so esbuild leaves it out of the main bundle.
+ */
+export function benchModulePath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [resolve(here, 'realtime-bench.js'), resolve(here, '..', 'realtime-bench.js')]) {
+    if (existsSync(candidate)) return pathToFileURL(candidate).href;
+  }
+  throw new Error('realtime-bench.js is missing from this CLI build; reinstall the gipity CLI');
+}
+
 const benchCommand = new Command('bench')
   .description('Measure controller-to-host latency in a live room: 1 host + N simulated controllers')
   .argument('<room>', 'a provisioned room of this project (joins a fresh scope, so real players are never disturbed)')
@@ -168,9 +182,7 @@ Example: gipity realtime bench couch --clients 8 --rate 20 --latency 30 --jitter
       }
       return n;
     };
-    // Kept out of the main bundle: a variable specifier stops esbuild inlining it.
-    const benchModule = './realtime-bench.js';
-    const { runBench } = await import(benchModule) as { runBench: (o: Record<string, unknown>) => Promise<BenchReportShape> };
+    const { runBench } = await import(benchModulePath()) as { runBench: (o: Record<string, unknown>) => Promise<BenchReportShape> };
     const report = await runBench({
       apiBase: getBaseUrl(),
       wsUrl: opts.wsUrl,

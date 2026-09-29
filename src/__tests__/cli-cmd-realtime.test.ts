@@ -87,3 +87,11 @@ test('gipity realtime bench validates its options before connecting', async () =
   assert.match(r.stderr, /--drop must be between 0 and 1/);
 });
 
+test('the bench module resolves and loads from both the bundle and the unbundled build', async () => {
+  const bundled = await fresh(['realtime', 'bench', 'couch', '--duration', '0']);
+  assert.doesNotMatch(bundled.stderr, /Cannot find module|is missing/);
+  const { benchModulePath } = await import('../commands/realtime.js');
+  const mod = await import(benchModulePath());
+  assert.equal(typeof mod.runBench, 'function');
+});
+

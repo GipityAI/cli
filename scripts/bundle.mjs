@@ -23,6 +23,7 @@
 // calls, which is exactly what we want.
 import { build } from 'esbuild';
 import { execFileSync } from 'child_process';
+import { readFileSync } from 'fs';
 
 const ENTRIES = [
   ['src/index.ts', 'dist/index.js'],
@@ -62,4 +63,11 @@ if (!/Gipity/.test(out)) {
   console.error('bundle smoke failed: unexpected --version output:\n' + out);
   process.exit(1);
 }
-console.log('✓ bundled dist/index.js, dist/updater/{shim,check}.js');
+// The bench bundle must CARRY the Colyseus client: it is a devDependency, so
+// an npm-installed CLI has no node_modules/colyseus.js to import at runtime.
+const bench = readFileSync('dist/realtime-bench.js', 'utf-8');
+if (/from\s+["']colyseus\.js["']|require\(["']colyseus\.js["']\)/.test(bench)) {
+  console.error('bundle check failed: dist/realtime-bench.js imports colyseus.js instead of bundling it');
+  process.exit(1);
+}
+console.log('✓ bundled dist/index.js, dist/updater/{shim,check}.js, dist/realtime-bench.js');
