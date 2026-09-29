@@ -7,6 +7,7 @@ import { requireConfig } from '../config.js';
 import { sync } from '../sync.js';
 import { success, muted, bold, warning, error as clrError } from '../colors.js';
 import { run } from '../helpers/index.js';
+import { syncBeforeAction } from '../helpers/sync.js';
 import { createProgressReporter, withSpinner } from '../progress.js';
 
 // Catalog GENERATED from platform/packages/shared (TEMPLATES + KITS cliHint
@@ -210,6 +211,11 @@ export const addCommand = new Command('add')
       return;
     }
     const config = requireConfig();
+    // Push local edits first, like deploy does: the install merges into the
+    // project's files on the server (a kit edits index.html's import map and
+    // gipity.yaml), so an unsynced local edit would otherwise collide with the
+    // server's version and come back as a conflict copy.
+    await syncBeforeAction({ json: opts.json });
 
     // Local-path payload mode kicks in when `name` looks like a path - bare
     // names still go through the server's bundled catalog like before.
@@ -263,7 +269,7 @@ export const addCommand = new Command('add')
     const data = res.data;
 
     if (opts.json) {
-      console.log(JSON.stringify({ ...data, synced: syncResult.applied }));
+      console.log(JSON.stringify({ ...data, synced: syncResult.applied, conflicts: syncResult.plan.conflicts }));
       return;
     }
 
@@ -305,5 +311,8 @@ export const addCommand = new Command('add')
     }
     if (syncResult.applied > 0) {
       console.log(`\nPulled ${syncResult.applied} files to local.`);
+    }
+    if (syncResult.plan.conflicts > 0) {
+      console.log(warning(`${syncResult.plan.conflicts} file(s) changed both here and on the server; the server's version is in place and yours was kept as "<name> (conflict from ...)". Merge your changes back and delete the copy.`));
     }
   }));

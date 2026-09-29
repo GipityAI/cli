@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
 
 let mock: MockServer;
 let home: string;
@@ -87,3 +89,19 @@ test('gipity add --list groups the catalog as templates, apps and kits', async (
   assert.ok(out.kits.some((e: { key: string }) => e.key === 'realtime'));
   assert.equal(mock.requests().length, 0);
 });
+
+test('gipity add syncs local edits BEFORE the server-side install, so the install merges into them', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/add', { body: { data: { kind: 'kit', files: ['src/packages/realtime/index.js'], kit: 'realtime', notes: [] } } });
+  mock.on('GET /projects/p_TestProj/files/tree', { body: { data: [] } });
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'src'), { recursive: true });
+  writeFileSync(join(d, 'src', 'index.html'), '<html><!-- my unsynced edit --></html>');
+  await runCliAsync(['--api-base', mock.apiBase, 'add', 'realtime'], { env: { HOME: home }, cwd: d });
+  const order = mock.requests().map((q) => `${q.method} ${q.url.split('?')[0]}`);
+  const firstSync = order.findIndex((r) => r.includes('/files'));
+  const install = order.indexOf('POST /projects/p_TestProj/add');
+  assert.ok(install > 0, `the install ran (${order.join(', ')})`);
+  assert.ok(firstSync >= 0 && firstSync < install, `local changes were synced before the install: ${order.join(', ')}`);
+});
+
