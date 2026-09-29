@@ -55,3 +55,35 @@ test('gipity realtime room delete confirms', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Deleted room 'arena'/);
 });
+
+test('gipity realtime room create passes seat holds; info shows them and never names internal infrastructure', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/realtime-rooms', { body: { data: {
+    name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, config: { seat_hold_seconds: 30, host_hold_seconds: 90 },
+  } } });
+  const c = await fresh(['realtime', 'room', 'create', 'couch', '--max-clients', '9', '--seat-hold', '30', '--host-hold', '90']);
+  assert.equal(c.status, 0, c.stderr);
+  const post = mock.requests().find((q) => q.method === 'POST');
+  assert.deepEqual(post?.body, { name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, seat_hold_seconds: 30, host_hold_seconds: 90 });
+
+  mock.on('GET /projects/p_TestProj/realtime-rooms/couch', { body: { data: {
+    room: { name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, config: { host_hold_seconds: 90 } },
+    live: null,
+  } } });
+  const i = await fresh(['realtime', 'room', 'info', 'couch']);
+  assert.equal(i.status, 0, i.stderr);
+  assert.match(i.stdout, /Seat hold:\s+30s \(host 90s\)/);
+  assert.match(i.stdout, /Gipity Realtime unreachable/);
+  assert.doesNotMatch(i.stdout, /Colyseus/);
+});
+
+test('gipity realtime bench validates its options before connecting', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/realtime-rooms/couch', { body: { data: {
+    room: { name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, config: {} }, live: null,
+  } } });
+  const r = await fresh(['realtime', 'bench', 'couch', '--drop', '2']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--drop must be between 0 and 1/);
+});
+

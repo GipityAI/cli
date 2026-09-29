@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { Command, Option } from 'commander';
-import { get, post, del } from '../api.js';
+import { get, post, del, getBaseUrl } from '../api.js';
 import { requireConfig, getConfigPath } from '../config.js';
 import { error as clrError, success, muted, bold } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
@@ -40,6 +40,8 @@ const roomCommand = new Command('room')
   .addOption(new Option('--type <type>', 'Room type for create').choices(['state', 'relay']).default('state'))
   .addOption(new Option('--auth <level>', 'Auth level for create').choices(['public', 'user']).default('public'))
   .option('--max-clients <n>', 'max clients for create (1-200)')
+  .option('--seat-hold <seconds>', 'create: how long a dropped client keeps its seat (0-300, default 30)')
+  .option('--host-hold <seconds>', 'create: how long the host role waits for a dropped or reloading host (0-600, default 60)')
   .option('--json', 'Output as JSON')
   .action((action: string, name: string | undefined, opts) => run('Realtime room', async () => {
     const config = requireConfig();
@@ -62,6 +64,8 @@ const roomCommand = new Command('room')
         }
         const body: Record<string, unknown> = { name, room_type: opts.type, auth_level: opts.auth };
         if (opts.maxClients !== undefined) body.max_clients = Number(opts.maxClients);
+        if (opts.seatHold !== undefined) body.seat_hold_seconds = Number(opts.seatHold);
+        if (opts.hostHold !== undefined) body.host_hold_seconds = Number(opts.hostHold);
         const res = await post<{ data: RealtimeRoom }>(base, body);
         if (opts.json) {
           console.log(JSON.stringify(res.data));
@@ -111,7 +115,8 @@ const roomCommand = new Command('room')
           console.log(`Type:        ${room.room_type}`);
           console.log(`Auth:        ${room.auth_level}`);
           console.log(`Max clients: ${room.max_clients}`);
-          console.log(`Live:        ${live ? `${live.instances} instance(s), ${live.clients} client(s)` : muted('Colyseus server unreachable')}`);
+          console.log(`Seat hold:   ${room.config?.seat_hold_seconds ?? 30}s (host ${room.config?.host_hold_seconds ?? 60}s)`);
+          console.log(`Live:        ${live ? `${live.instances} instance(s), ${live.clients} client(s)` : muted('Gipity Realtime unreachable')}`);
         }
         break;
       }
@@ -123,6 +128,77 @@ const roomCommand = new Command('room')
     }
   }));
 
+interface BenchReportShape {
+  room: string; scope: string; controllers: number; sent: number; simulatedDrops: number;
+  delivered: number; lost: number; outOfOrder: number;
+  inputAgeMs: { p50: number; p95: number; p99: number; max: number } | null;
+  serverToHostMs: { p50: number; p95: number; p99: number; max: number } | null;
+  rttMs: { p50: number; p95: number; p99: number; max: number } | null;
+}
+
+const benchCommand = new Command('bench')
+  .description('Measure controller-to-host latency in a live room: 1 host + N simulated controllers')
+  .argument('<room>', 'a provisioned room of this project (joins a fresh scope, so real players are never disturbed)')
+  .option('--clients <n>', 'simulated controllers', '8')
+  .option('--rate <n>', 'inputs per second per controller', '20')
+  .option('--duration <seconds>', 'how long to send', '10')
+  .option('--latency <ms>', 'added one-way delay per input', '0')
+  .option('--jitter <ms>', 'random +/- extra delay per input', '0')
+  .option('--drop <fraction>', 'share of inputs never sent (0-1), to simulate loss', '0')
+  .option('--ws-url <url>', 'realtime endpoint', 'wss://rt.gipity.ai')
+  .option('--json', 'Output as JSON')
+  .addHelpText('after', `
+Each controller syncs its clock with the server, then sends small inputs to the
+host (the screen). The host measures each input's age on arrival: controller ->
+Gipity Realtime -> host, end to end. Needs Node 22+ (built-in WebSocket).
+
+Example: gipity realtime bench couch --clients 8 --rate 20 --latency 30 --jitter 15`)
+  .action((roomName: string, opts) => run('Realtime bench', async () => {
+    const config = requireConfig();
+    if (typeof (globalThis as { WebSocket?: unknown }).WebSocket !== 'function') {
+      console.error(clrError('gipity realtime bench needs Node 22 or newer (built-in WebSocket).'));
+      process.exit(1);
+    }
+    const info = await get<{ data: RoomInfo }>(`/projects/${config.projectGuid}/realtime-rooms/${encodeURIComponent(roomName)}`);
+    const num = (v: string, name: string, min: number, max: number) => {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < min || n > max) {
+        console.error(clrError(`--${name} must be between ${min} and ${max}`));
+        process.exit(1);
+      }
+      return n;
+    };
+    // Kept out of the main bundle: a variable specifier stops esbuild inlining it.
+    const benchModule = './realtime-bench.js';
+    const { runBench } = await import(benchModule) as { runBench: (o: Record<string, unknown>) => Promise<BenchReportShape> };
+    const report = await runBench({
+      apiBase: getBaseUrl(),
+      wsUrl: opts.wsUrl,
+      appGuid: config.projectGuid,
+      room: roomName,
+      roomType: info.data.room.room_type === 'relay' ? 'relay' : 'state',
+      clients: num(opts.clients, 'clients', 1, 199),
+      rate: num(opts.rate, 'rate', 1, 100),
+      durationMs: num(opts.duration, 'duration', 1, 120) * 1000,
+      latencyMs: num(opts.latency, 'latency', 0, 5000),
+      jitterMs: num(opts.jitter, 'jitter', 0, 5000),
+      dropRate: num(opts.drop, 'drop', 0, 1),
+      onProgress: opts.json ? undefined : (line: string) => console.log(muted(line)),
+    });
+    if (opts.json) { console.log(JSON.stringify(report)); return; }
+    const fmt = (p: BenchReportShape['inputAgeMs']) => p ? `p50 ${p.p50}  p95 ${p.p95}  p99 ${p.p99}  max ${p.max} ms` : 'no samples';
+    console.log('');
+    console.log(bold(`${report.room}: ${report.controllers} controllers`));
+    console.log(`Input age (controller -> host): ${fmt(report.inputAgeMs)}`);
+    console.log(`Server -> host leg:             ${fmt(report.serverToHostMs)}`);
+    console.log(`Round trip to the server:       ${fmt(report.rttMs)}`);
+    console.log(`Delivered ${report.delivered}/${report.sent} sent`
+      + (report.simulatedDrops ? `, ${report.simulatedDrops} dropped by --drop` : '')
+      + `, lost ${report.lost}, out of order ${report.outOfOrder}`);
+    if (report.lost || report.outOfOrder) process.exitCode = 1;
+  }));
+
 export const realtimeCommand = new Command('realtime')
-  .description('Manage realtime (multiplayer) rooms')
-  .addCommand(roomCommand);
+  .description('Manage realtime (multiplayer) rooms and measure their latency')
+  .addCommand(roomCommand)
+  .addCommand(benchCommand);

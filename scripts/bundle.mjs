@@ -28,6 +28,9 @@ const ENTRIES = [
   ['src/index.ts', 'dist/index.js'],
   ['src/updater/shim.ts', 'dist/updater/shim.js'],
   ['src/updater/check.ts', 'dist/updater/check.js'],
+  // Loaded lazily by `gipity realtime bench` only; carries the Colyseus client
+  // (pinned to the realtime server's version) so no other command pays for it.
+  ['src/realtime-bench.ts', 'dist/realtime-bench.js'],
 ];
 
 for (const [entry, outfile] of ENTRIES) {
