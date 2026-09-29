@@ -61,10 +61,13 @@ test('gipity realtime room create passes seat holds; info shows them and never n
   mock.on('POST /projects/p_TestProj/realtime-rooms', { body: { data: {
     name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, config: { seat_hold_seconds: 30, host_hold_seconds: 90 },
   } } });
-  const c = await fresh(['realtime', 'room', 'create', 'couch', '--max-clients', '9', '--seat-hold', '30', '--host-hold', '90']);
+  const c = await fresh(['realtime', 'room', 'create', 'couch', '--max-clients', '9', '--seat-hold', '30', '--host-hold', '90', '--host-handoff', '--host-grace', '3']);
   assert.equal(c.status, 0, c.stderr);
   const post = mock.requests().find((q) => q.method === 'POST');
-  assert.deepEqual(post?.body, { name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, seat_hold_seconds: 30, host_hold_seconds: 90 });
+  assert.deepEqual(post?.body, {
+    name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9,
+    seat_hold_seconds: 30, host_hold_seconds: 90, host_handoff: true, host_grace_seconds: 3,
+  });
 
   mock.on('GET /projects/p_TestProj/realtime-rooms/couch', { body: { data: {
     room: { name: 'couch', room_type: 'state', auth_level: 'public', max_clients: 9, config: { host_hold_seconds: 90 } },
@@ -73,6 +76,7 @@ test('gipity realtime room create passes seat holds; info shows them and never n
   const i = await fresh(['realtime', 'room', 'info', 'couch']);
   assert.equal(i.status, 0, i.stderr);
   assert.match(i.stdout, /Seat hold:\s+30s \(host 90s\)/);
+  assert.match(i.stdout, /Handoff:\s+off/);
   assert.match(i.stdout, /Gipity Realtime unreachable/);
   assert.doesNotMatch(i.stdout, /Colyseus/);
 });
