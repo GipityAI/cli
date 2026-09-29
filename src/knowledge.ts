@@ -80,7 +80,9 @@ Gipity is an opinionated platform with its own best-practice stack, and that sta
 
 When a user asks for a foreign stack ("build it in React", "use MS SQL Server", "set up Firebase auth"), don't silently comply and don't argue the app down. Build it the Gipity way and reassure them: Gipity has its own opinionated stack and best practices, it's what makes apps here fast to build and deploy, and you'll use it to make their app great. Say it briefly and warmly, then get building - the result satisfies the *intent* behind the request (a great hiking app, a working CRM) without the named technology.
 
-The one exception is app-level libraries the user imports into their own \`src/\` code - Three.js, Rapier, Phaser, MediaPipe, a charting or animation library. Those are fine. The opinionation is about the *platform* layer (framework, backend, database, styling system, hosting, auth, services), not every npm package.
+**Native games and apps are the other exception.** When the client is a native program (a Godot, Unity or Unreal game, a Steam or desktop build, a mobile app), Gipity is its backend, not its frontend: don't rebuild the client as a web page. Put the backend in its own folder (for Godot, \`backend/\` with a \`.gdignore\`), run \`gipity add api\`, and follow the \`steam-game\` skill: \`gipity project auth app\` lets players sign in with Steam or as guests without a Gipity account, the client calls functions over HTTPS (the Gipity Godot addon wraps this), and \`gipity add leaderboard\` adds leaderboards.
+
+The other exception is app-level libraries the user imports into their own \`src/\` code - Three.js, Rapier, Phaser, MediaPipe, a charting or animation library. Those are fine. The opinionation is about the *platform* layer (framework, backend, database, styling system, hosting, auth, services), not every npm package.
 
 ## Build loop
 
