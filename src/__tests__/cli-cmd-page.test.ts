@@ -14,6 +14,7 @@ import {
   EVAL_SCRIPT_BUDGET_MIN_MS,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
+import { parseAtSpecs } from '../commands/page-test.js';
 
 let mock: MockServer;
 let home: string;
@@ -1070,6 +1071,139 @@ test('page test --observe warns on an unrecognized {{token}} instead of sending 
   assert.match(r.stderr, /Unrecognized placeholder/);
   assert.match(r.stderr, /\{\{index\}\}/);
   assert.match(r.stderr, /\{\{label\}\}/);
+});
+
+// ── page test --at (lifecycle actions: freeze / hide / offline one client) ──
+
+test('parseAtSpecs routes each step to the clients it names, by label or index', () => {
+  const steps = parseAtSpecs(
+    ['host:freeze@5000', 'phone:hide@2000', '2:show@4000', 'host:wake@12000'],
+    ['host', 'phone', 'phone'], 15000,
+  );
+  assert.deepEqual(steps[0], [{ atMs: 5000, action: 'freeze' }, { atMs: 12000, action: 'wake' }]);
+  assert.deepEqual(steps[1], [{ atMs: 2000, action: 'hide' }]);
+  assert.deepEqual(steps[2], [{ atMs: 2000, action: 'hide' }, { atMs: 4000, action: 'show' }]);
+});
+
+test('parseAtSpecs rejects bad syntax, unknown clients/actions, late times, and impossible sequences', () => {
+  const labels = ['host', 'phone'];
+  const bad: Array<[string[], RegExp]> = [
+    [['host-freeze-5000'], /expected "<label\|index>:<action>@<ms>"/],
+    [['tv:freeze@5000'], /no client "tv".*host, phone.*0-1/],
+    [['5:freeze@5000'], /no client "5"/],
+    [['host:sleep@5000'], /unknown action "sleep".*freeze, wake, hide, show, offline, online/],
+    [['host:freeze@15000'], /15000ms is past the end of the 15000ms --hold window/],
+    [['host:wake@5000'], /client 0 \(host\): wake@5000: not frozen/],
+    [['host:freeze@1000', 'host:freeze@2000'], /already frozen/],
+    [['host:hide@1000', 'host:freeze@2000'], /show it first/],
+    [['phone:online@1000'], /client 1 \(phone\): online@1000: not offline/],
+  ];
+  for (const [specs, msg] of bad) {
+    assert.throws(() => parseAtSpecs(specs, labels, 15000), msg, specs.join(' '));
+  }
+});
+
+test('page test --at sends the steps to the targeted client only and shows its timeline', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', (req) => {
+    const url = String((req.body as { url?: string }).url ?? '');
+    return { body: { data: { evalJobId: url.includes('role=host') ? 'job-host' : 'job-phone', status: 'queued' } } };
+  });
+  mock.on('GET /tools/browser/eval/job-host', { body: { data: {
+    status: 'done', url: 'https://app.example/', truncated: false,
+    result: JSON.stringify({ label: 'host', startedAt: 1000, endedAt: 9000, samples: ['me', '(paused)', 'me'] }),
+    lifecycle: { events: [
+      { action: 'freeze', atMs: 3000, appliedAt: 4050 },
+      { action: 'wake', atMs: 8000, appliedAt: 9020, auto: true },
+    ] },
+  } } });
+  mock.on('GET /tools/browser/eval/job-phone', evalDone({ label: 'phone', startedAt: 1100, endedAt: 9100, samples: ['host', 'host', 'phone'] }));
+  const r = await run([
+    'page', 'test', 'https://app.example/?role={{label}}',
+    '--clients', '2', '--labels', 'host,phone', '--samples', '3', '--hold', '8000',
+    '--at', 'host:freeze@3000',
+    '--observe', 'window.hostId',
+  ]);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const posts = mock.requests().filter((q) => q.url === '/tools/browser/eval');
+  const host = posts.find((q) => (q.body as { url: string }).url.includes('role=host'))!.body as { lifecycle?: unknown };
+  const phone = posts.find((q) => (q.body as { url: string }).url.includes('role=phone'))!.body as { lifecycle?: unknown };
+  assert.deepEqual(host.lifecycle, { steps: [{ atMs: 3000, action: 'freeze' }], untilMs: 8000 });
+  assert.equal(phone.lifecycle, undefined);
+  assert.match(r.stdout, /lifecycle \(ms into each client's hold\): host:freeze@3000/);
+  assert.match(r.stdout, /timeline:.*freeze \+3\.0s → wake \+8\.0s.*auto, end of hold/);
+  assert.match(r.stdout, /me → \(paused\) → me/);
+});
+
+test('page test --at --json includes the spec list and each client timeline', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', (req) => {
+    const url = String((req.body as { url?: string }).url ?? '');
+    return { body: { data: { evalJobId: url.includes('role=host') ? 'job-host' : 'job-phone', status: 'queued' } } };
+  });
+  mock.on('GET /tools/browser/eval/job-host', { body: { data: {
+    status: 'done', url: 'https://app.example/', truncated: false,
+    result: JSON.stringify({ label: 'host', startedAt: 1000, endedAt: 9000, samples: [1, 2] }),
+    lifecycle: { events: [{ action: 'offline', atMs: 2000, appliedAt: 3000 }, { action: 'online', atMs: 4000, appliedAt: 5000 }] },
+  } } });
+  mock.on('GET /tools/browser/eval/job-phone', evalDone({ label: 'phone', startedAt: 1100, endedAt: 9100, samples: [1, 2] }));
+  const r = await run([
+    'page', 'test', 'https://app.example/?role={{label}}',
+    '--clients', '2', '--labels', 'host,phone', '--samples', '2',
+    '--at', '0:offline@2000', '--at', 'host:online@4000',
+    '--observe', 'window.hostId', '--json',
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim());
+  assert.deepEqual(out.at, ['0:offline@2000', 'host:online@4000']);
+  assert.deepEqual(out.results[0].lifecycle, [
+    { action: 'offline', atMs: 2000, appliedMs: 2000 },
+    { action: 'online', atMs: 4000, appliedMs: 4000 },
+  ]);
+  assert.equal(out.results[1].lifecycle, undefined);
+});
+
+test('page test --at fails the client when a step did not apply (never a silent pass)', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-x', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-x', { body: { data: {
+    status: 'done', url: 'https://app.example/', truncated: false,
+    result: JSON.stringify({ label: 'client-0', startedAt: 1000, endedAt: 9000, samples: [1, 2] }),
+    lifecycle: { events: [], error: 'could not find the browser to control (no CDP endpoint)' },
+  } } });
+  const r = await run([
+    'page', 'test', 'https://app.example/', '--clients', '1', '--samples', '2',
+    '--at', '0:freeze@1000', '--observe', '1',
+  ]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /lifecycle actions failed: could not find the browser/);
+});
+
+test('page test --at fails the client when the server reports no lifecycle at all', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-x', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-x', evalDone({ label: 'client-0', startedAt: 1000, endedAt: 9000, samples: [1, 2] }));
+  const r = await run([
+    'page', 'test', 'https://app.example/', '--clients', '1', '--samples', '2',
+    '--at', '0:hide@1000', '--observe', '1',
+  ]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /lifecycle actions were not applied/);
+});
+
+test('page test --at validates before launching any client', async () => {
+  mock.reset();
+  const cases: Array<[string[], RegExp]> = [
+    [['--at', 'host:freeze@5000'], /--at needs interactive mode/],
+    [['--observe', '1', '--at', 'tv:freeze@1000'], /no client "tv"/],
+    [['--observe', '1', '--hold', '4000', '--at', '0:freeze@5000'], /past the end of the 4000ms --hold window/],
+  ];
+  for (const [extra, msg] of cases) {
+    const r = await run(['page', 'test', 'https://app.example/', '--clients', '2', '--labels', 'host,phone', ...extra]);
+    assert.notEqual(r.status, 0, extra.join(' '));
+    assert.match(r.stderr, msg);
+  }
+  assert.equal(mock.requests().filter((q) => q.url.startsWith('/tools/browser')).length, 0);
 });
 
 // ── screenshot --wait / --post-load-delay (request-body) ───────────────────

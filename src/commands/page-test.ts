@@ -44,11 +44,105 @@ interface ObserveResult {
   samples: unknown[];
   startedAt: number; // epoch ms, from inside the browser
   endedAt: number;
-  error?: string; // poll/eval failure, action error, or non-JSON result
+  error?: string; // poll/eval failure, action error, lifecycle failure, or non-JSON result
+  lifecycle?: TimelineEvent[]; // --at steps as the browser applied them
 }
+
+/** One applied --at step. `appliedMs` is when it actually happened, relative to
+ *  the client's observe-window start (null when it failed). */
+interface TimelineEvent { action: string; atMs: number; appliedMs: number | null; auto?: boolean; error?: string }
 
 const MAX_HOLD_MS = 15_000; // keep each in-page await under the ~20s browser action timeout
 const MIN_HOLD_MS = 1_000;
+
+// ── lifecycle actions (--at) ───────────────────────────────────────────────
+// Freeze, hide, or take one client offline partway through the hold window, so
+// an app can test what its peers do when a phone locks (host handoff) instead
+// of only a clean leave. The server applies them in the browser over CDP; the
+// CLI parses and validates the specs and shows the timeline.
+
+export const LIFECYCLE_ACTIONS = ['freeze', 'wake', 'hide', 'show', 'offline', 'online'] as const;
+export type LifecycleAction = typeof LIFECYCLE_ACTIONS[number];
+export interface AtStep { atMs: number; action: LifecycleAction }
+
+/** Sample value recorded for an observe slot the page's JS never got to run
+ *  (it was frozen, or blocked, when the sample was due). */
+export const PAUSED_SAMPLE = '(paused)';
+
+const AT_SYNTAX = '"<label|index>:<action>@<ms>", e.g. --at host:freeze@5000';
+
+/** Parse the repeatable --at specs into per-client step lists (index-aligned
+ *  with `labels`, one entry per client). A target matches every client with
+ *  that label (so `phone:hide@3000` hides every phone), else a 0-based index.
+ *  Throws a caller-facing error on bad syntax, an unknown client or action, a
+ *  time outside the hold window, or an impossible sequence (wake without a
+ *  freeze, ...). The server re-checks the sequence; this is the early error. */
+export function parseAtSpecs(specs: string[], labels: string[], holdMs: number): AtStep[][] {
+  const perClient: AtStep[][] = labels.map(() => []);
+  for (const raw of specs) {
+    const m = /^\s*([^:@\s]+)\s*:\s*([A-Za-z]+)\s*@\s*(\d+)\s*(?:ms)?\s*$/.exec(raw);
+    if (!m) throw new Error(`--at "${raw}": expected ${AT_SYNTAX}`);
+    const [, target, rawAction, rawMs] = m;
+    const action = rawAction.toLowerCase() as LifecycleAction;
+    if (!LIFECYCLE_ACTIONS.includes(action)) {
+      throw new Error(`--at "${raw}": unknown action "${rawAction}". Use one of: ${LIFECYCLE_ACTIONS.join(', ')}`);
+    }
+    const atMs = parseInt(rawMs, 10);
+    if (atMs >= holdMs) {
+      throw new Error(`--at "${raw}": ${atMs}ms is past the end of the ${holdMs}ms --hold window. Actions must happen inside it (raise --hold, max ${MAX_HOLD_MS}ms, or move the action earlier).`);
+    }
+    let targets = labels.flatMap((l, i) => (l === target ? [i] : []));
+    if (targets.length === 0 && /^\d+$/.test(target) && Number(target) < labels.length) targets = [Number(target)];
+    if (targets.length === 0) {
+      throw new Error(`--at "${raw}": no client "${target}". Use a label (${[...new Set(labels)].join(', ')}) or an index 0-${labels.length - 1}.`);
+    }
+    for (const i of targets) perClient[i].push({ atMs, action });
+  }
+  perClient.forEach((steps, i) => {
+    steps.sort((a, b) => a.atMs - b.atMs);
+    const err = sequenceError(steps);
+    if (err) throw new Error(`--at for client ${i} (${labels[i]}): ${err}`);
+  });
+  return perClient;
+}
+
+/** First impossible transition in a time-ordered step list, or null. Freeze
+ *  already hides the page (as a locking phone does), so hide/freeze don't stack. */
+function sequenceError(steps: AtStep[]): string | null {
+  const on = { frozen: false, hidden: false, offline: false };
+  for (const { action, atMs } of steps) {
+    const at = `${action}@${atMs}`;
+    if (action === 'freeze') {
+      if (on.frozen) return `${at}: already frozen`;
+      if (on.hidden) return `${at}: the page is hidden; show it first (freeze hides the page on its own)`;
+      on.frozen = true;
+    } else if (action === 'wake') {
+      if (!on.frozen) return `${at}: not frozen (wake undoes freeze)`;
+      on.frozen = false;
+    } else if (action === 'hide') {
+      if (on.hidden || on.frozen) return `${at}: already ${on.frozen ? 'frozen, which hides the page' : 'hidden'}`;
+      on.hidden = true;
+    } else if (action === 'show') {
+      if (!on.hidden) return `${at}: not hidden (show undoes hide)`;
+      on.hidden = false;
+    } else if (action === 'offline') {
+      if (on.offline) return `${at}: already offline`;
+      on.offline = true;
+    } else {
+      if (!on.offline) return `${at}: not offline (online undoes offline)`;
+      on.offline = false;
+    }
+  }
+  return null;
+}
+
+function fmtTimeline(events: TimelineEvent[]): string {
+  return events.map((e) => {
+    const when = e.appliedMs === null ? `@${e.atMs}ms` : `+${(e.appliedMs / 1000).toFixed(1)}s`;
+    const note = e.error ? clrError(` (failed: ${e.error})`) : e.auto ? muted(' (auto, end of hold)') : '';
+    return `${e.action} ${when}${note}`;
+  }).join(' → ');
+}
 
 /** Splice per-client values into a user string (URL, --action, or --observe).
  *  `{{label}}` → the client's label, `{{i}}` → its 0-based index. Plain string
@@ -83,7 +177,7 @@ function warnUnknownTokens(unknown: string[]): void {
 /** Build the statement-body script one client runs: do the one-time action,
  *  then sample `observe` `samples` times across `holdMs`, stamping in-page
  *  start/end so the caller can confirm the clients overlapped. */
-function buildHarness(action: string | undefined, observe: string, label: string, holdMs: number, samples: number): string {
+export function buildHarness(action: string | undefined, observe: string, label: string, holdMs: number, samples: number): string {
   const n = Math.max(2, samples);
   const interval = Math.max(0, Math.floor(holdMs / (n - 1)));
   const lines: string[] = [
@@ -95,12 +189,19 @@ function buildHarness(action: string | undefined, observe: string, label: string
       `try{ ${action} }catch(__e){ return {label:__label,startedAt:__t0,endedAt:Date.now(),samples:[],actionError:String((__e&&__e.message)||__e)}; }`,
     );
   }
+  // Samples are due on a fixed schedule from the first one. A page that could
+  // not run when a sample was due (frozen by --at, or blocked) records
+  // PAUSED_SAMPLE for each slot it slept through instead of bursting stale
+  // readings the moment it resumes. The 1s slack keeps a hidden page's
+  // throttled (about 1/s) timers from reading as paused.
   lines.push(
-    `const __s=[];`,
+    `const __s=[]; const __ts=Date.now();`,
     `for(let __k=0;__k<${n};__k++){`,
+    `  const __w=__ts+__k*${interval}-Date.now();`,
+    `  if(__w>0) await new Promise(function(r){setTimeout(r,__w);});`,
+    `  if(__k<${n - 1}&&Date.now()>=__ts+(__k+1)*${interval}+1000){ __s.push(${JSON.stringify(PAUSED_SAMPLE)}); continue; }`,
     `  let __v; try{ __v=(${observe}); }catch(__e){ __v='ObserveError: '+String((__e&&__e.message)||__e); }`,
     `  __s.push(__v);`,
-    `  if(__k<${n - 1}) await new Promise(function(r){setTimeout(r,${interval});});`,
     `}`,
     `return {label:__label,startedAt:__t0,endedAt:Date.now(),samples:__s};`,
   );
@@ -116,6 +217,7 @@ async function observeClient(
   settleMs: number,
   holdMs: number,
   waitForSelector?: string,
+  lifecycle?: AtStep[],
 ): Promise<ObserveResult> {
   const base: ObserveResult = { i, label, samples: [], startedAt: 0, endedAt: 0 };
   try {
@@ -125,6 +227,9 @@ async function observeClient(
       waitMs: settleMs,
       waitForSelector: waitForSelector || undefined,
       waitForTimeoutMs: waitForSelector ? 5000 : undefined,
+      // Timed from the start of the observe window; the server restores
+      // anything still applied at the end of the hold so the harness finishes.
+      lifecycle: lifecycle?.length ? { steps: lifecycle, untilMs: holdMs } : undefined,
     });
     // Server work ≈ nav + settle + the in-page hold; pollEvalResult adds 60s headroom.
     const d = await pollEvalResult(kickoff.data.evalJobId, settleMs + holdMs);
@@ -141,13 +246,31 @@ async function observeClient(
     if (parsed.actionError) {
       return { ...base, error: `action failed: ${parsed.actionError}` };
     }
-    return {
+    const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : 0;
+    const out: ObserveResult = {
       i,
       label: typeof parsed.label === 'string' ? parsed.label : label,
       samples: Array.isArray(parsed.samples) ? parsed.samples : [],
-      startedAt: typeof parsed.startedAt === 'number' ? parsed.startedAt : 0,
+      startedAt,
       endedAt: typeof parsed.endedAt === 'number' ? parsed.endedAt : 0,
     };
+    if (lifecycle?.length) {
+      // A step that silently didn't happen would make "the handoff works" a
+      // false positive, so a missing or failed step fails the client.
+      const report = d.lifecycle;
+      out.lifecycle = (report?.events ?? []).map((e) => ({
+        action: e.action,
+        atMs: e.atMs,
+        appliedMs: typeof e.appliedAt === 'number' && startedAt > 0 ? e.appliedAt - startedAt : null,
+        ...(e.auto ? { auto: true } : {}),
+        ...(e.error ? { error: e.error } : {}),
+      }));
+      const failed = out.lifecycle.find((e) => e.error);
+      if (!report) out.error = 'lifecycle actions were not applied (the server did not report them; it may need updating)';
+      else if (report.error) out.error = `lifecycle actions failed: ${report.error}`;
+      else if (failed) out.error = `lifecycle ${failed.action}@${failed.atMs} failed: ${failed.error}`;
+    }
+    return out;
   } catch (err) {
     return { ...base, error: err instanceof Error ? err.message : String(err) };
   }
@@ -192,9 +315,13 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
   // every client — the silent wrong-behavior trap of identical clients.
   warnUnknownTokens(unknownTokens(url, opts.action, observe));
 
+  const atSpecs = opts.at ?? [];
+  const lifecycle = parseAtSpecs(atSpecs, Array.from({ length: clients }, (_, i) => labelFor(i)), hold);
+
   if (!opts.json) {
     console.log(`${brand('Page test')} ${muted('(interactive)')} ${bold(url)}`);
     console.log(muted(`${clients} client(s), stagger ${stagger}s, hold ${hold}ms, ${samples} samples each`));
+    if (atSpecs.length) console.log(muted(`lifecycle (ms into each client's hold): ${atSpecs.map((s) => s.trim()).join(', ')}`));
   }
 
   const runs: Promise<ObserveResult>[] = [];
@@ -213,7 +340,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
         hold,
         samples,
       );
-      return observeClient(clientUrl, expr, i, labelFor(i), settle, hold, opts.waitFor);
+      return observeClient(clientUrl, expr, i, labelFor(i), settle, hold, opts.waitFor, lifecycle[i]);
     })());
   }
   const results = (await Promise.all(runs)).sort((a, b) => a.i - b.i);
@@ -225,6 +352,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
   if (opts.json) {
     console.log(JSON.stringify({
       url, mode: 'interactive', clients, stagger, hold, samples,
+      ...(atSpecs.length ? { at: atSpecs.map((s) => s.trim()) } : {}),
       overlapMs: ovl, overlapped, results,
     }));
     if (errored.length > 0 || (clients > 1 && !overlapped)) process.exitCode = 1;
@@ -233,6 +361,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
 
   for (const r of results) {
     console.log(`\n${bold(`=== client ${r.i} (${r.label}) ===`)}`);
+    if (r.lifecycle?.length) console.log(`${muted('timeline:')} ${fmtTimeline(r.lifecycle)}`);
     if (r.error) { console.log(clrError(`✗ ${r.error}`)); continue; }
     console.log(`${muted('samples:')} ${fmtSamples(r.samples)}`);
   }
@@ -269,6 +398,7 @@ interface TestOpts {
   action?: string;
   observe?: string;
   waitFor?: string;
+  at?: string[];
   json?: boolean;
 }
 
@@ -352,6 +482,7 @@ export const pageTestCommand = new Command('test')
   .option('--hold <ms>', `Interactive: total observe window per client (${MIN_HOLD_MS}-${MAX_HOLD_MS}ms)`, '8000')
   .option('--samples <k>', 'Interactive: number of observations across the hold window (2-30)', '6')
   .option('--wait-for <selector>', 'Interactive: wait for this CSS selector before running --action (deterministic readiness gate)')
+  .option('--at <spec>', `Interactive: lifecycle action on one client mid-run, "<label|index>:<action>@<ms>" (ms into that client's hold window). Actions: freeze|wake (locked phone: JS stops, socket stays open), hide|show (backgrounded tab), offline|online (network drop). Repeatable; anything still applied at the end of --hold is restored.`, (v: string, prev: string[] = []) => [...prev, v])
   .option('--json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
@@ -373,8 +504,27 @@ Examples:
   # observes the live state the host is driving — no background-process dance.
   gipity page test "https://dev.gipity.ai/me/app/?test-action={{label}}" --clients 2 \\
     --labels host,join \\
-    --observe "document.querySelector('[data-screen]')?.dataset.screen"`)
+    --observe "document.querySelector('[data-screen]')?.dataset.screen"
+
+  # Host handoff: lock the host's phone 5s in (its JS stops, its socket stays
+  # open, so nobody sees a leave) and watch who the phones think is host.
+  gipity page test "https://dev.gipity.ai/me/app/?role={{label}}" --clients 3 \\
+    --labels host,phone,phone --hold 15000 --at host:freeze@5000 --at host:wake@12000 \\
+    --observe "window.game?.hostId"
+
+freeze: the page's JS stops (timers, rendering, message handlers) and it fires
+visibilitychange (hidden) then freeze, like a phone locking. Its WebSocket stays
+open, so the server sees no leave. On wake the page resumes and Chrome drops that
+socket (close code 1006), so the app's reconnect path runs. Samples due while a
+client was frozen read (paused).
+hide: backgrounded tab (document.hidden, rAF stops, timers throttle to ~1/s); JS
+and the socket keep running.
+offline: navigator.onLine false, new requests fail, and an open WebSocket stalls
+without closing; online delivers the held traffic.`)
   .action((url: string, opts: TestOpts) => run('Page test', async () => {
+    if (opts.at?.length && !opts.observe) {
+      throw new Error('--at needs interactive mode: add --observe "<expr>" to watch what the other clients do while one is frozen, hidden, or offline');
+    }
     if (opts.observe) {
       await runInteractive(url, opts.observe, opts);
     } else {

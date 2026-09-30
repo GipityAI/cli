@@ -24,6 +24,12 @@ export interface EvalResult {
   // Present only when the page painted below the server's slow-render
   // threshold, which makes wall-clock waits under-advance its rAF-driven clock.
   slowRender?: { fps: number };
+  // `page test --at`: the lifecycle steps as the browser applied them.
+  // `appliedAt` is epoch ms on the page's clock; `auto` marks an end-of-window restore.
+  lifecycle?: {
+    events: Array<{ action: string; atMs: number; appliedAt?: number; auto?: boolean; error?: string }>;
+    error?: string;
+  };
 }
 
 // Shown when an eval runs cleanly but returns nothing serializable. Turns a
