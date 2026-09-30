@@ -8,7 +8,7 @@ This CLI connects your coding agent - [Claude Code](https://claude.ai/claude-cod
 
 ## Getting Started
 
-**Step 1 - install.** One line installs everything. It sets up Node 18+ (if you don't already have it) and the Gipity CLI, with no sudo required:
+**Step 1 - install.** One line installs everything. It sets up Node 22+ (if you don't already have it) and the Gipity CLI, with no sudo required:
 
 ```bash
 # macOS / Linux / WSL
@@ -57,7 +57,7 @@ It logs you in, pairs the machine, starts the Gipity relay in the background, an
 
 ### Prefer npm
 
-If you already have **Node.js 18+** you can install directly:
+If you already have **Node.js 22+** you can install directly:
 
 ```bash
 npm install -g gipity
