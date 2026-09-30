@@ -2,40 +2,19 @@
  * Wrap-format contract for relay-dispatched `gipity claude -p` messages.
  *
  * The user's actual message must sit between the `USER_MSG_OPEN` /
- * `USER_MSG_CLOSE` tags with no trailing instructions, and the client-side
- * `stripPreamble` in `platform/client/src/ts/commands/claude-text.ts`
- * must use identical tag strings - otherwise the web CLI renders the full
- * wrap as a `claude>` turn (the historical bug: duplicate user turns
- * rendered as walls of preamble text).
+ * `USER_MSG_CLOSE` tags with no trailing instructions, so a reader can strip
+ * the wrap back to the message (the round-trip below). The web terminal that
+ * used to render these turns is archived (archive/web-client in platform), so
+ * there is no longer a live client copy of the tags to guard against.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
 import {
   USER_MSG_OPEN,
   USER_MSG_CLOSE,
   buildFreshWrap,
   buildResumeWrap,
 } from '../prompts.js';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-// dist/__tests__/ → repo root depends on build layout. These tests also run
-// against the source tree via tsx in CI - handle both by walking up until we
-// find the platform/ sibling.
-function repoRoot(): string {
-  let p = HERE;
-  for (let i = 0; i < 8; i++) {
-    try {
-      const probe = resolve(p, 'platform/client/src/ts/commands/claude-text.ts');
-      readFileSync(probe, 'utf-8');
-      return p;
-    } catch { /* keep walking */ }
-    p = resolve(p, '..');
-  }
-  throw new Error('could not locate repo root from test file');
-}
 
 describe('buildFreshWrap', () => {
   it('wraps the user message between USER_MSG_OPEN / USER_MSG_CLOSE', () => {
@@ -90,28 +69,8 @@ describe('buildResumeWrap', () => {
   });
 });
 
-describe('tag constant drift guard', () => {
-  it('client-side claude-text.ts uses identical tag strings', () => {
-    const root = repoRoot();
-    const clientSrc = readFileSync(
-      resolve(root, 'platform/client/src/ts/commands/claude-text.ts'),
-      'utf-8',
-    );
-    const openMatch = clientSrc.match(/USER_MSG_OPEN\s*=\s*'([^']+)'/);
-    const closeMatch = clientSrc.match(/USER_MSG_CLOSE\s*=\s*'([^']+)'/);
-    assert.ok(openMatch, 'claude-text.ts must define USER_MSG_OPEN as a single-quoted string literal');
-    assert.ok(closeMatch, 'claude-text.ts must define USER_MSG_CLOSE as a single-quoted string literal');
-    assert.equal(openMatch![1], USER_MSG_OPEN, 'open tag drift');
-    assert.equal(closeMatch![1], USER_MSG_CLOSE, 'close tag drift');
-  });
-});
-
-// Local replica of the client-side stripPreamble, used here to round-trip
-// the CLI's own buildFreshWrap/buildResumeWrap output. The client file lives
-// in a different package so it can't be imported directly; the replica plus
-// the drift-guard above (identical tag strings) keeps this in step. The
-// client has its own direct coverage in claude-text.test.ts - if the
-// algorithm shape changes in claude-text.ts, update both here and there.
+// Replica of the (now archived) web client's stripPreamble, used here to
+// round-trip the CLI's own buildFreshWrap/buildResumeWrap output.
 function stripPreambleReplica(s: string): string {
   if (!s) return s;
   const m1 = s.match(/The user's first message:\s*"([\s\S]+?)"(?:\s*\n|\s*$)/);
