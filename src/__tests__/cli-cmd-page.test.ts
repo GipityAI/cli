@@ -14,7 +14,7 @@ import {
   EVAL_SCRIPT_BUDGET_MIN_MS,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
-import { parseAtSpecs } from '../commands/page-test.js';
+import { parseAtSpecs, buildHarness, PAUSED_SAMPLE } from '../commands/page-test.js';
 
 let mock: MockServer;
 let home: string;
@@ -2110,4 +2110,14 @@ test('gipity page eval sends a no-return body verbatim (server owns auto-return)
   const sent = (mock.requests().find((q) => q.url === '/tools/browser/eval')!.body as { expr: string }).expr;
   assert.equal(sent, script, 'the script must reach the server unrewritten');
   assert.match(r.stdout, /\{"n":2\}/);
+});
+
+test('page test harness: a slot the page reached late (frozen) reads (paused); later slots read live values', async () => {
+  // Due at 0, 1000, 2000, 3000, 4000 ms. The first reading blocks the page
+  // for 2800 ms (like a freeze): slot 1 is reached 1800 ms late -> paused;
+  // slot 2 only 800 ms late -> a live reading, as is the always-read last slot.
+  const body = buildHarness(undefined, `(globalThis.__calls = (globalThis.__calls || 0) + 1, globalThis.__calls === 1 ? (() => { const e = Date.now() + 2800; while (Date.now() < e) {} return 'first'; })() : 'live')`, 'host', 4000, 5);
+  const run = new Function(`return (async () => {\n${body}\n})();`) as () => Promise<{ samples: unknown[] }>;
+  const out = await run();
+  assert.deepEqual(out.samples, ['first', PAUSED_SAMPLE, 'live', 'live', 'live']);
 });

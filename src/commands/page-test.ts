@@ -68,6 +68,8 @@ export interface AtStep { atMs: number; action: LifecycleAction }
 /** Sample value recorded for an observe slot the page's JS never got to run
  *  (it was frozen, or blocked, when the sample was due). */
 export const PAUSED_SAMPLE = '(paused)';
+/** How late a sample may run before it counts as slept through. */
+export const PAUSE_SLACK_MS = 1500;
 
 const AT_SYNTAX = '"<label|index>:<action>@<ms>", e.g. --at host:freeze@5000';
 
@@ -191,15 +193,16 @@ export function buildHarness(action: string | undefined, observe: string, label:
   }
   // Samples are due on a fixed schedule from the first one. A page that could
   // not run when a sample was due (frozen by --at, or blocked) records
-  // PAUSED_SAMPLE for each slot it slept through instead of bursting stale
-  // readings the moment it resumes. The 1s slack keeps a hidden page's
-  // throttled (about 1/s) timers from reading as paused.
+  // PAUSED_SAMPLE for each slot it reached more than PAUSE_SLACK_MS late,
+  // instead of a stale reading taken the moment it resumes. The slack keeps a
+  // hidden page's throttled (about 1/s) timers from reading as paused. The
+  // last slot always takes a reading.
   lines.push(
     `const __s=[]; const __ts=Date.now();`,
     `for(let __k=0;__k<${n};__k++){`,
     `  const __w=__ts+__k*${interval}-Date.now();`,
     `  if(__w>0) await new Promise(function(r){setTimeout(r,__w);});`,
-    `  if(__k<${n - 1}&&Date.now()>=__ts+(__k+1)*${interval}+1000){ __s.push(${JSON.stringify(PAUSED_SAMPLE)}); continue; }`,
+    `  if(__k<${n - 1}&&Date.now()>__ts+__k*${interval}+${PAUSE_SLACK_MS}){ __s.push(${JSON.stringify(PAUSED_SAMPLE)}); continue; }`,
     `  let __v; try{ __v=(${observe}); }catch(__e){ __v='ObserveError: '+String((__e&&__e.message)||__e); }`,
     `  __s.push(__v);`,
     `}`,
