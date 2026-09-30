@@ -7,8 +7,8 @@ import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 let mock: MockServer;
 let home: string;
 
-const PROJ_A = { short_guid: 'p_ProjA00n0', name: 'Alpha', slug: 'alpha', description: null, is_default: 0, auth_mode: 'gipity', created_at: '2026-01-01T00:00:00Z' };
-const PROJ_B = { short_guid: 'p_ProjB00n0', name: 'Beta',  slug: 'beta',  description: 'Beta project', is_default: 0, auth_mode: 'app', created_at: '2026-02-01T00:00:00Z' };
+const PROJ_A = { short_guid: 'p_ProjA00n0', name: 'Alpha', slug: 'alpha', description: null, is_default: 0, auth_mode: 'gipity', unique_player_names: false, created_at: '2026-01-01T00:00:00Z' };
+const PROJ_B = { short_guid: 'p_ProjB00n0', name: 'Beta',  slug: 'beta',  description: 'Beta project', is_default: 0, auth_mode: 'app', unique_player_names: true, created_at: '2026-02-01T00:00:00Z' };
 
 before(async () => {
   mock = await startMockServer();
@@ -86,6 +86,33 @@ test('gipity project auth shows the mode, sets a valid one, and refuses junk', a
   const bad = await inProject(['project', 'auth', 'steam']);
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /Unknown mode "steam"/);
+});
+
+test('gipity project auth --unique-names shows, sets, reports shared names, and refuses junk', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0', { body: { data: PROJ_A } });
+  const shown = await inProject(['project', 'auth']);
+  assert.match(shown.stdout, /Unique names: off/);
+
+  mock.on('PUT /projects/p_ProjA00n0', { body: { data: { success: true, players_sharing_names: 3 } } });
+  const on = await inProject(['project', 'auth', '--unique-names', 'on']);
+  assert.equal(on.status, 0, on.stderr);
+  assert.match(on.stdout, /Unique names on/);
+  assert.match(on.stdout, /3 existing players share a name/);
+  const put = mock.requests().find(c => c.method === 'PUT' && c.url === '/projects/p_ProjA00n0');
+  assert.deepEqual(put?.body, { unique_player_names: true });
+
+  mock.reset();
+  mock.on('PUT /projects/p_ProjA00n0', { body: { data: { success: true, players_sharing_names: 0 } } });
+  const both = await inProject(['project', 'auth', 'app', '--unique-names', 'off', '--json']);
+  assert.equal(both.status, 0, both.stderr);
+  assert.deepEqual(JSON.parse(both.stdout), { auth_mode: 'app', unique_player_names: false, players_sharing_names: 0 });
+  const put2 = mock.requests().find(c => c.method === 'PUT');
+  assert.deepEqual(put2?.body, { auth_mode: 'app', unique_player_names: false });
+
+  const bad = await inProject(['project', 'auth', '--unique-names', 'yes']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /--unique-names takes "on" or "off"/);
 });
 
 test('gipity project delete --yes calls DELETE', async () => {
