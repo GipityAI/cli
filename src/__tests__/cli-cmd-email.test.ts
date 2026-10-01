@@ -15,25 +15,6 @@ function fresh(args: string[]) {
   return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: d });
 }
 
-test('gipity email send --subject --body sends and prints recap', async () => {
-  mock.reset();
-  mock.on('POST /agent-email/send', { body: { data: {
-    to: ['someone@example.com'], cc: [], bcc: [], subject: 'Hi',
-  } } });
-  const r = await fresh(['email', 'send', '--to', 'someone@example.com', '--subject', 'Hi', '--body', 'Hello there']);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Email sent to someone@example\.com: Hi/);
-  assert.doesNotMatch(r.stdout, /undefined/);
-});
-
-test('gipity email send omits --to and self-sends (subject/body still required)', async () => {
-  mock.reset();
-  mock.on('POST /agent-email/send', { body: { data: { to: ['self@example.com'], cc: [], bcc: [], subject: 'Hi' } } });
-  const r = await fresh(['email', 'send', '--subject', 'Hi', '--body', 'Hello there']);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Email sent to self@example\.com: Hi/);
-});
-
 // --- app email() subcommands (test / log) ---
 
 test('gipity email test <to> posts to the app email() path and reports the send', async () => {

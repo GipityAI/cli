@@ -179,7 +179,7 @@ gipity push <file>   # Push one or more files
 | `gipity sync` / `gipity push` | Sync files between local and Gipity |
 | `gipity upload <file>` | Upload a file and print a durable public URL |
 | `gipity domain` | Manage custom domains for deployed apps |
-| `gipity email` | Send email from gipity@gipity.ai, or test your app's `email()` sends |
+| `gipity email` | Test and inspect your app's `email()` sends (`email test`, `email log`) |
 | `gipity credits` | Check your plan, balance, and usage |
 | `gipity doctor` | Check install + environment health |
 

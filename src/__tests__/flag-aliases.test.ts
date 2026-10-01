@@ -12,7 +12,7 @@ function buildProgram(): Command {
   wf.command('create').requiredOption('--from <path>', 'yaml path');
   const fn = program.command('fn');
   fn.command('call <name> [body]').option('--data <json>', 'request body');
-  program.command('email').command('send').requiredOption('--body <body>', 'email body');
+  program.command('gmail').command('send').requiredOption('--body <text>', 'email body');
   return program;
 }
 
@@ -109,11 +109,11 @@ describe('normalizeAliases', () => {
       );
     });
 
-    it('leaves --body alone for email send, which declares it for real', () => {
+    it('leaves --body alone for gmail send, which declares it for real', () => {
       const program = buildProgram();
       assert.deepEqual(
-        normalizeAliases(['node', 'gipity', 'email', 'send', '--body', 'hello'], program),
-        ['node', 'gipity', 'email', 'send', '--body', 'hello'],
+        normalizeAliases(['node', 'gipity', 'gmail', 'send', '--body', 'hello'], program),
+        ['node', 'gipity', 'gmail', 'send', '--body', 'hello'],
       );
     });
   });

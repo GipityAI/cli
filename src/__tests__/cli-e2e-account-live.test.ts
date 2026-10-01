@@ -15,10 +15,9 @@
 //   - build                        interactive TUI
 // Project/app/backend commands live in cli-e2e-surface-live.test.ts.
 //
-// Cost profile: effectively free. One agent `email send` and one app
-// `email test` to an `ec-` @914-6.com address, which the platform suppresses
-// before the mail provider; everything else is reads and tiny CRUD. Uses
-// dev-bypass auth (magic code 914914).
+// Cost profile: effectively free. One app `email test` to an `ec-` @914-6.com
+// address, which the platform suppresses before the mail provider; everything
+// else is reads and tiny CRUD. Uses dev-bypass auth (magic code 914914).
 //
 //   GIPITY_E2E=1                     enable the suite
 //   GIPITY_E2E_API_BASE=...          default https://a.gipity.ai
@@ -232,12 +231,6 @@ describe('cli-e2e-account-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to ru
   });
 
   // ── email ────────────────────────────────────────────────────────────
-
-  it('email send delivers (suppressed) mail to an ec- address', () => {
-    const d = cliJson(['email', 'send', '--to', MAIL_TO, '--subject', `E2E ${RUN_ID}`, '--body', 'CLI e2e test mail.', '--json']);
-    assert.deepEqual(d.to, [MAIL_TO]);
-    assert.equal(d.subject, `E2E ${RUN_ID}`);
-  });
 
   it('email test sends through the app email() path', () => {
     const d = cliJson(['email', 'test', MAIL_TO, '--subject', `E2E app ${RUN_ID}`, '--json']);
