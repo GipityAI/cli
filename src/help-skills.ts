@@ -21,11 +21,11 @@ export async function fetchAndPrintSkill(skillName: string): Promise<void> {
     const config = getConfig();
     if (!config) return;
 
-    const listRes = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
+    const listRes = await get<{ data: SkillSummary[] }>('/skills');
     const match = listRes.data.find(s => s.name.toLowerCase() === skillName.toLowerCase());
     if (!match) return;
 
-    const res = await get<{ data: SkillDetail }>(`/skills/${match.guid}?agent=${config.agentGuid}`);
+    const res = await get<{ data: SkillDetail }>(`/skills/${match.guid}`);
     if (res.data.content) {
       console.log(muted(`\n── Skill: ${skillName} (auto-loaded from server) ──\n`));
       console.log(res.data.content);

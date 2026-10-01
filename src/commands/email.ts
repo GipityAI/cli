@@ -15,13 +15,13 @@ function collect(value: string, prev: string[]): string[] {
 // parent/subcommand `--subject` option collision — and matches the `email`
 // skill doc, which documents the CLI verb as `gipity email send`.)
 export const emailCommand = new Command('email')
-  .description("Send email as the agent (send), or test/inspect a deployed app's email() sends (test/log)");
+  .description("Send email from gipity@gipity.ai (send), or test/inspect a deployed app's email() sends (test/log)");
 
 // --- gipity email send ---
-// Agent email from gipity@gipity.ai (omit --to to self-send).
+// Email from gipity@gipity.ai (omit --to to send to yourself).
 emailCommand
   .command('send')
-  .description('Send an email as the agent (from gipity@gipity.ai; omit --to to self-send)')
+  .description('Send an email from gipity@gipity.ai (omit --to to send to yourself)')
   .requiredOption('--subject <subject>', 'Email subject')
   .requiredOption('--body <body>', 'Email body (plain text)')
   .option('--to <email>', 'Recipient (repeatable; omit for self-send)', collect, [] as string[])
@@ -86,7 +86,7 @@ emailCommand
     if (sent > 0) console.log(success(`✓ Sent to ${sent} recipient${sent === 1 ? '' : 's'}.`));
     else console.log(warning(`Nothing sent (${skipped} skipped).`));
     for (const r of results) {
-      console.log(muted(`  ${r.to} — ${r.status}${r.reason ? `: ${r.reason}` : ''}`));
+      console.log(muted(`  ${r.to} - ${r.status}${r.reason ? `: ${r.reason}` : ''}`));
     }
   }));
 
@@ -113,7 +113,7 @@ emailCommand
     console.log(bold(`${totals.n} attempt${totals.n === 1 ? '' : 's'} · ${totals.credits} credit${totals.credits === 1 ? '' : 's'}`));
     for (const r of items) {
       const when = new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 16);
-      const to = r.detail?.to ?? '—';
+      const to = r.detail?.to ?? '-';
       const subj = r.detail?.subject ? ` · ${r.detail.subject}` : '';
       const status = r.detail?.status ? ` [skipped: ${r.detail.status}]` : '';
       console.log(`  ${muted(when)}  ${to}${status ? warning(status) : ''}${muted(subj)}`);

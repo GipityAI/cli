@@ -128,7 +128,7 @@ approvalCommand
 
 approvalCommand
   .command('cancel <guid>')
-  .description('Cancel a pending approval (unblocks agent without a decision)')
+  .description('Cancel a pending approval without a decision (anything waiting on it stops waiting)')
   .option('--json', 'Output as JSON')
   .action((guid: string, opts) => run('Cancel', async () => {
     if (!guid.startsWith('ap_')) {

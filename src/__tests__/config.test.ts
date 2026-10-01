@@ -114,7 +114,6 @@ const SAMPLE: GipityConfig = {
   projectGuid: 'p_Test00000',
   projectSlug: 'test-proj',
   accountSlug: 'test-acct',
-  agentGuid: 'a_Test00000',
   conversationGuid: null,
   apiBase: 'https://a.gipity.ai',
   ignore: [],

@@ -55,11 +55,11 @@ export function assertLocalAsset(flag: string, localPath: string): void {
   const root = getProjectRoot() ?? process.cwd();
   const elsewhere = findByBasename(root, basename(localPath)).filter(p => p !== abs);
   const found = elsewhere.length
-    ? `\nThat file DOES exist here — pass this path instead:\n${elsewhere.map(p => `  ${flag} ${relative(process.cwd(), p) || p}`).join('\n')}`
+    ? `\nThat file DOES exist here. Pass this path instead:\n${elsewhere.map(p => `  ${flag} ${relative(process.cwd(), p) || p}`).join('\n')}`
     : `\nNothing named "${basename(localPath)}" under ${root} either. Generate a frame with \`gipity generate image "<description>" -o ${localPath}\`, or check the path.`;
 
   throw new Error(
-    `${flag} ${localPath}: no such file — looked for ${abs} (relative paths resolve against the current directory, ${process.cwd()}).${found}`,
+    `${flag} ${localPath}: no such file. Looked for ${abs} (relative paths resolve against the current directory, ${process.cwd()}).${found}`,
   );
 }
 
@@ -141,7 +141,7 @@ export function assertCameraFile(localPath: string): void {
   const ext = localPath.slice(localPath.lastIndexOf('.')).toLowerCase();
   if (CAMERA_EXTS.includes(ext)) return;
   throw new Error(
-    `--camera ${basename(localPath)}: unsupported file type "${ext || '(none)'}" — the camera feed must be an image or video (${CAMERA_EXTS.join(', ')}).\n` +
+    `--camera ${basename(localPath)}: unsupported file type "${ext || '(none)'}": the camera feed must be an image or video (${CAMERA_EXTS.join(', ')}).\n` +
     `A still image is played as a looping single-frame feed, which is what a gesture/pose/object model needs.\n` +
     `No frame to hand? Generate one: gipity generate image "a hand making a closed fist, palm to camera, plain background"`,
   );

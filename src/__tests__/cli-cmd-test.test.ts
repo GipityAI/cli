@@ -281,3 +281,24 @@ test('gipity test history shows recent runs', async () => {
   assert.match(r.stdout, /Test History/);
   assert.match(r.stdout, /3\/3 passed/);
 });
+
+test('gipity test status "" is rejected locally, never sent to the server', async () => {
+  for (const blank of ['', '   ']) {
+    mock.reset();
+    const r = await fresh(['test', 'status', blank]);
+    assert.notEqual(r.status, 0, `blank ${JSON.stringify(blank)} should fail`);
+    assert.match(r.stderr, /argument 'runGuid' must not be empty/);
+    assert.deepEqual(mock.requests(), [], 'no request may reach the server');
+  }
+});
+
+test('the blank-id guard covers every identifier arg (job status, key revoke)', async () => {
+  mock.reset();
+  const job = await fresh(['job', 'status', '']);
+  assert.notEqual(job.status, 0);
+  assert.match(job.stderr, /argument 'runGuid' must not be empty/);
+  const key = await fresh(['key', 'revoke', '']);
+  assert.notEqual(key.status, 0);
+  assert.match(key.stderr, /argument 'short_guid' must not be empty/);
+  assert.deepEqual(mock.requests(), []);
+});

@@ -328,7 +328,7 @@ export const testCommand = new Command('test')
 testCommand
   .command('status')
   .alias('results')
-  .description('Fetch a finished (or running) test run by GUID — full per-test results, no re-run')
+  .description('Fetch a finished (or running) test run by GUID: full per-test results, no re-run')
   .argument('<runGuid>', 'Test run GUID (e.g. tr_abc123)')
   .option('--json', 'Output as JSON')
   .option('--follow', 'Follow until complete (poll)')
@@ -377,7 +377,7 @@ testCommand
 
 testCommand
   .command('list')
-  .description('List the test files that would run — no run, optional path filter')
+  .description('List the test files that would run: no run, optional path filter')
   .argument('[path]', 'Test path filter (e.g. "api", "e2e/portal")')
   .option('--json', 'Output as JSON')
   // optsWithGlobals: see the status subcommand — `--json` lands on the parent.

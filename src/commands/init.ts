@@ -63,9 +63,8 @@ async function pairForCapture(): Promise<void> {
 
 export const initCommand = new Command('init')
   .description('Link this directory to a project')
-  .addHelpText('after', `\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks. By default it only sets up the tools actually installed here (${AGENT_ADAPTERS.map(a => a.displayName).join(', ')}, …) - use --for to choose explicitly.`)
+  .addHelpText('after', `\nWrites CLAUDE.md/AGENTS.md primer files so your AI coding tool understands Gipity, and installs the Gipity skills + file-sync hooks. By default it only sets up the tools actually installed here (${AGENT_ADAPTERS.map(a => a.displayName).join(', ')}, ...) - use --for to choose explicitly.`)
   .argument('[name]', 'Project name/slug (defaults to current directory name)')
-  .option('--agent <guid>', 'Agent GUID to use')
   .option('--capture', 'Record Claude Code sessions in this directory to your Gipity project (sets captureHooks: true in .gipity.json; new projects start with it off)')
   .option('--no-capture', 'Stop recording sessions in this directory (sets captureHooks: false in .gipity.json)')
   .option(
@@ -225,7 +224,6 @@ Working with an existing Gipity project:
         projectSlug,
         accountSlug,
         confirmDeletions: true,
-        agentOverride: opts.agent || undefined,
         tools,
       });
 

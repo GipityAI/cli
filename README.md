@@ -1,10 +1,10 @@
 # Gipity CLI
 
-The full-stack platform tuned for AI agents.
+The cloud backend for your coding agent.
 
-[Gipity](https://gipity.ai) is the platform: hosting, databases, file storage, deployment, workflows, code execution, and monitoring. Agent-tuned from idea to deploy. Use standalone, or pair with your coding agent - Claude Code, Codex, or Grok - to give it cloud superpowers. Any model, any infra, always your code.
+[Gipity](https://gipity.ai) is the backend your coding agent gets by installing one CLI and one skill: hosting, databases, serverless functions, file storage, a code sandbox, CPU/GPU jobs, AI models and media services, workflows, and a quick LLM call (`gipity ask`), plus templates and kits that give you a running start.
 
-This CLI connects your coding agent - [Claude Code](https://claude.ai/claude-code), Codex, or Grok - to Gipity's cloud platform: databases, deployment, browser testing, image gen, and 50+ other capabilities your local agent doesn't have. It also syncs files so your local agent and the Gipity web agent share the same project.
+This CLI connects your coding agent ([Claude Code](https://claude.ai/claude-code), Codex, Grok, or opencode) to Gipity: deploy, query the database, call functions, test pages in a real browser, generate images and audio, and keep your local files in sync with your Gipity project.
 
 ## Getting Started
 
@@ -18,13 +18,12 @@ curl -fsSL https://gipity.ai/install.sh | bash
 irm https://gipity.ai/install.ps1 | iex
 ```
 
-**Step 2 - pick your path.** There are three, and they mix freely:
+**Step 2 - pick your path.** There are two, and they mix freely:
 
 | You want to... | Run |
 |----------------|-----|
 | Start building right now, from anywhere | `gipity build` |
 | Use your own workflow in your own directory | `gipity init`, then `claude` / `codex` / `grok` / `opencode` |
-| Drive this computer from gipity.ai (phone, browser) | `gipity connect` |
 
 ### `gipity build` - start from anywhere
 
@@ -44,16 +43,6 @@ claude        # or codex, grok, or opencode - whatever you use
 ```
 
 `init` links the directory to a Gipity project, writes CLAUDE.md/AGENTS.md primers so your agent understands Gipity, and installs the Gipity skills + file-sync hooks into the agent CLIs found on your machine (Claude Code, Codex, Grok; Cursor and Gemini get primer files too).
-
-### `gipity connect` - drive it from the web
-
-Want to start chats from gipity.ai (including your phone) and have them run the coding agent on this computer? Connect it once:
-
-```bash
-gipity connect
-```
-
-It logs you in, pairs the machine, starts the Gipity relay in the background, and installs the login service so it survives reboots - then stops, without launching anything. From then on, open gipity.ai and start a chat to drive your agent here. Manage it with `gipity relay status` / `pause` / `resume` / `revoke`.
 
 ### Prefer npm
 
@@ -135,16 +124,14 @@ This is the good part. When you run `gipity init` (or `gipity build`) in a proje
 
 **Auto-push** - Every time your agent writes or edits a file, it gets pushed to Gipity in the background. No extra steps.
 
-**Auto-pull** - Before each turn, your agent pulls any changes that happened remotely (like if your Gipity agent built something via chat). It sees what changed and can pick up where things left off.
+**Auto-pull** - Before each turn, your agent pulls any changes that happened remotely (files written by a sandbox run, a workflow, or another machine). It sees what changed and can pick up where things left off.
 
-That means your local agent and your Gipity agent share the same files, same project, same context. You get the best of both - hands-on coding locally, autonomous agent work on Gipity.
-
-Sessions are also recorded to your Gipity project so you can watch them live at prompt.gipity.ai. Opt out per project with `gipity init --no-capture`.
+Session recording is off by default. To keep your Claude Code sessions in your Gipity project (the Chats tab in your dashboard), run `gipity init --capture`; turn it off again with `gipity init --no-capture`.
 
 ### What gets set up
 
 ```
-.gipity.json          # Project config (which project, which agent)
+.gipity.json          # Project config (which project)
 .gipity/              # Local sync state (gitignored)
 .claude/settings.json # Hooks for auto-push and auto-pull (per-agent equivalents for Codex/Grok)
 CLAUDE.md / AGENTS.md # Gipity commands reference for your agent
@@ -155,9 +142,9 @@ CLAUDE.md / AGENTS.md # Gipity commands reference for your agent
 If you ever need to sync manually:
 
 ```bash
-gipity sync check    # See what's different
-gipity sync up       # Push local changes
-gipity sync down     # Pull remote changes
+gipity sync --plan   # See what would change, without applying it
+gipity sync          # Sync both ways
+gipity push <file>   # Push one or more files
 ```
 
 ## Commands
@@ -166,38 +153,37 @@ gipity sync down     # Pull remote changes
 |---------|-------------|
 | `gipity build` | Log in, pick a project, pick your coding agent, and launch it - all in one |
 | `gipity init` | Link this directory to a project and set up your coding agent |
-| `gipity connect` | Connect this computer to gipity.ai so the web CLI can drive it |
-| `gipity relay` | Manage the relay (status, pause, resume, revoke) |
-| `gipity login` | Authenticate with email + verification code |
-| `gipity status` | Show project, agent, and auth info |
-| `gipity sync` | Sync files between local and Gipity |
-| `gipity push <file>` | Push a single file |
+| `gipity login` / `gipity logout` | Authenticate with email + verification code / sign out |
+| `gipity status` | Show project and login status |
+| `gipity skill list` / `skill read <name>` | Task docs: read the matching skill before building |
+| `gipity project` | List, create, switch, rename, or delete projects |
+| `gipity add <template\|kit>` | Add a template (web-simple, web-fullstack, api, 2d-game, 3d-world, ...) or a kit (realtime, stripe, i18n, ...) |
 | `gipity deploy [dev\|prod]` | Deploy your project to the web |
-| `gipity chat <message>` | Send a message to your Gipity agent |
-| `gipity db` | Query, list, create, or drop project databases |
-| `gipity memory` | Read/write agent and project memory |
-| `gipity sandbox run <code> --lang <js\|py\|bash>` | Execute code in a sandboxed container (language is required) |
-| `gipity project` | List, create, switch, or delete projects |
-| `gipity agent` | List, create, switch, or configure agents |
-| `gipity approval` | List, create, answer, or cancel pending approvals |
-| `gipity workflow` | Manage and trigger automated workflows |
-| `gipity file` | Browse remote files (ls, cat, tree) |
-| `gipity add <template>` | Add a template (web-simple, 2d-game, 3d-world, web-fullstack, api) |
+| `gipity page inspect\|eval\|screenshot <url>` | Check a page in a real browser: console errors, failed resources, DOM, screenshots |
 | `gipity test` | Run project tests in sandboxed containers |
-| `gipity logs fn <name>` | View function execution logs |
-| `gipity page inspect <url>` | Inspect a URL: console errors, performance, failed resources |
+| `gipity db` | Query, list, create, or drop project databases |
+| `gipity fn` | List, call, and delete serverless functions |
+| `gipity logs fn <name>` / `logs app` | Function logs / recent app activity and errors |
+| `gipity secrets` | Manage app secrets (encrypted, never echoed back) |
+| `gipity job` | Run long CPU/GPU jobs |
+| `gipity workflow` | Create, run, and schedule workflows |
+| `gipity approval` | List, create, answer, or cancel pending approvals |
+| `gipity memory` | Read/write project memory used by workflow llm steps |
+| `gipity ask "<question>"` | Ask a model one question and print the answer |
+| `gipity generate` | Generate images, video, speech, sound effects, or music |
+| `gipity service` | Call an app service (llm, tts, image, transcribe, ...) |
+| `gipity sandbox run` | Execute code in a sandboxed container |
 | `gipity records` | Query and manage Records API tables |
-| `gipity fn` | Manage and call serverless functions |
-| `gipity rbac` | Manage RBAC policies |
-| `gipity audit` | Query audit logs |
-| `gipity credits` | Check your balance and usage |
-| `gipity skill` | List and manage agent skills |
-| `gipity chat [list\|rename\|archive\|delete]` | Manage chats (or `gipity chat <message>` to send) |
-| `gipity gmail [send\|reply\|search\|read]` | Send/read via your own Gmail (different from `gipity email`) |
+| `gipity rbac` / `gipity audit` | Access policies / audit logs |
+| `gipity file` | Browse remote files, versions, and rollbacks |
+| `gipity sync` / `gipity push` | Sync files between local and Gipity |
+| `gipity upload <file>` | Upload a file and print a durable public URL |
 | `gipity domain` | Manage custom domains for deployed apps |
-| `gipity email [send]` | Send emails from the platform (gipity@gipity.ai) |
-| `gipity generate` | Generate images, audio, or video via your agent |
-| `gipity logout` | Sign out and clear local tokens |
+| `gipity email` | Send email from gipity@gipity.ai, or test your app's `email()` sends |
+| `gipity credits` | Check your plan, balance, and usage |
+| `gipity doctor` | Check install + environment health |
+
+Run `gipity --help` for the full list, and `gipity <command> --help` for details.
 
 Every command supports `--json` for scripted/programmatic use.
 
@@ -210,13 +196,16 @@ gipity deploy prod     # Deploy to production (app.gipity.ai)
 
 Your project gets a live URL at `https://dev.gipity.ai/{account}/{project}/`.
 
-### chat
+### ask
 
-Talk to your Gipity agent from the terminal. If the agent creates or modifies files (including generated images, audio, video, and sandbox outputs), they sync back automatically.
+One question, one answer: no chat history, no tools. Handy for summarizing a log or getting a second opinion while you work.
 
 ```bash
-gipity chat "Build me a landing page"
-gipity chat "Add a contact form" --new    # Start a fresh conversation
+gipity ask "summarize this" --file notes.md
+cat errors.log | gipity ask "group these by root cause" --file -
+cat prompt.txt | gipity ask                      # piped stdin is the whole prompt
+gipity ask "what's in this image" --image shot.png --model haiku
+gipity ask "list the causes" --schema '{"type":"array","items":{"type":"string"}}'
 ```
 
 ### db
@@ -232,41 +221,35 @@ gipity db drop old_db --project my-old-app  # Drop from another project (no cd n
 
 ### memory
 
-Agent memory persists across all conversations. Project memory is scoped to one project.
+Project memory is notes by topic, scoped to one project. Workflow llm steps read and write it with the `memory` tool, so it carries context from one run to the next. You can read and edit it from the CLI.
 
 ```bash
 gipity memory list
-gipity memory read preferences
-gipity memory write api_keys "stripe: sk_live_..."
-gipity memory write design_notes "use dark theme" --project
+gipity memory read design_notes
+gipity memory write design_notes "use dark theme"
+gipity memory delete design_notes
 ```
+
+Don't put secrets in memory. Use `gipity secrets set STRIPE_KEY ...` instead: secrets are encrypted at rest and never echoed back.
 
 ### sandbox
 
 Run code in a sandboxed Docker container with no network access. JavaScript, Python, and Bash.
 
 ```bash
-gipity sandbox run "console.log('Hello')" --lang js
-gipity sandbox run "import pandas; print(pandas.__version__)" --lang py
-gipity sandbox run "echo hello" --lang bash
+gipity sandbox run "console.log('Hello')" --language js
+gipity sandbox run "import pandas; print(pandas.__version__)" --language py
+gipity sandbox run --file scripts/report.py
 ```
 
 ### workflow
 
 ```bash
 gipity workflow                        # List workflows
-gipity workflow run daily_report       # Trigger manually
-gipity workflow enable daily_report    # Turn on cron schedule
+gipity workflow create workflows/daily_report.yaml
+gipity workflow run daily_report       # Run now and print each step's output
+gipity workflow enable daily_report    # Turn on its schedule
 gipity workflow runs daily_report      # View recent runs
-```
-
-### agent
-
-```bash
-gipity agent                           # List agents
-gipity agent create "Research Bot"     # Create a new agent
-gipity agent set model claude-opus     # Change the model
-gipity agent "Research Bot"            # Switch active agent
 ```
 
 ### project
@@ -275,6 +258,7 @@ gipity agent "Research Bot"            # Switch active agent
 gipity project                         # List projects
 gipity project create "My App"         # Create new project
 gipity project my-app                  # Switch active project
+gipity project rename "My Great App"   # Rename (display name only)
 ```
 
 ## Project Config
@@ -288,7 +272,6 @@ Created by `gipity init`. Links your local directory to a Gipity project.
   "projectGuid": "prj-a1b2c3d4",
   "projectSlug": "my-app",
   "accountSlug": "steve",
-  "agentGuid": "agt-x1y2z3w4",
   "apiBase": "https://a.gipity.ai",
   "ignore": ["node_modules", ".git", "dist", ".env"]
 }

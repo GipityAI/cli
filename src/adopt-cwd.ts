@@ -25,11 +25,6 @@ export interface ProjectData {
   slug: string;
 }
 
-interface AgentData {
-  short_guid: string;
-  name: string;
-}
-
 export type AdoptTier = 'easy' | 'moderate' | 'refuse';
 
 export interface AdoptScan {
@@ -184,7 +179,6 @@ export function formatBytes(n: number): string {
 export interface AdoptResult {
   project: ProjectData;
   isNew: boolean;
-  agentGuid: string;
   accountSlug: string;
   applied: number;
 }
@@ -194,7 +188,7 @@ export interface AdoptResult {
  *       validate/prompt as needed).
  *    2. Try to match an existing server project by slug; adopt if found.
  *    3. Otherwise POST /projects with relay-device wiring.
- *    4. Fetch agent + account, then `finalizeLocalProject` to write config,
+ *    4. `finalizeLocalProject` to write config,
  *       sync, and install hooks/skills/gitignore.
  *  Caller is responsible for the size-tier check before calling. */
 export async function adoptCurrentDir(opts: {
@@ -203,8 +197,6 @@ export async function adoptCurrentDir(opts: {
   projectSlug: string;
   accountSlug: string;
   confirmDeletions: boolean;
-  /** Force a specific agent guid; skip the auto-lookup. */
-  agentOverride?: string;
   /** Subset of AI-tool primers to write. Defaults to all. */
   tools?: typeof SUPPORTED_TOOLS;
 }): Promise<AdoptResult> {
@@ -247,28 +239,18 @@ export async function adoptCurrentDir(opts: {
     }
   }
 
-  // Fetch the project's agent (if any). An explicit override wins.
-  let agentGuid = opts.agentOverride ?? '';
-  if (!agentGuid) {
-    try {
-      const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
-      if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
-    } catch { /* no agents */ }
-  }
-
   const { applied } = await finalizeLocalProject({
     dir: opts.cwd,
     projectGuid: project.short_guid,
     projectSlug: project.slug,
     projectName: project.name,
     accountSlug: opts.accountSlug,
-    agentGuid,
     sync: 'strict',
     interactive: opts.confirmDeletions,
     tools: opts.tools,
   });
 
-  return { project, isNew, agentGuid, accountSlug: opts.accountSlug, applied };
+  return { project, isNew, accountSlug: opts.accountSlug, applied };
 }
 
 /** Re-export so callers can unify on these constants for messaging. */

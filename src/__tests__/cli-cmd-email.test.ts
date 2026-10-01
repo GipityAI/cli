@@ -44,7 +44,7 @@ test('gipity email test <to> posts to the app email() path and reports the send'
   const r = await fresh(['email', 'test', 'lead@acme-corp.io']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Sent to 1 recipient/);
-  assert.match(r.stdout, /lead@acme-corp\.io — sent/);
+  assert.match(r.stdout, /lead@acme-corp\.io - sent/);
   assert.doesNotMatch(r.stdout, /undefined/);
 
   const post = mock.requests().find(q => q.method === 'POST' && q.url === '/api/p_TestProj/services/email/send');
@@ -81,7 +81,7 @@ test('gipity email test warns when nothing is sent (all skipped)', async () => {
   const r = await fresh(['email', 'test', 'blocked@x.io']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Nothing sent/);
-  assert.match(r.stdout, /blocked@x\.io — blocked: test\/internal address/);
+  assert.match(r.stdout, /blocked@x\.io - blocked: test\/internal address/);
 });
 
 test('gipity email log lists sends AND skipped attempts with recipient + subject', async () => {

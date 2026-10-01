@@ -108,7 +108,7 @@ and its own error message), use the per-call log instead:
 
 logsCommand
   .command('app')
-  .description('Unified recent activity for this app — JS errors, failed function calls, failed services, network failures. Designed for agents debugging a deployed app.')
+  .description('Unified recent activity for this app: JS errors, failed function calls, failed services, network failures. Designed for agents debugging a deployed app.')
   .option('--since <window>', "Window: 5m / 10m / 30m / 1h / 6h / 24h / 7d", '10m')
   .addOption(new Option('--severity <level>', 'Severity filter').choices(['error', 'warn', 'network', 'all']).default('all'))
   .option('--type <list>', "Comma-separated: errors,functions,services,traffic. Default excludes traffic (high volume).")
@@ -186,6 +186,6 @@ Examples:
     }
 
     if (truncated) {
-      console.log(`\n${muted(`(truncated at ${limit} entries — bump --limit or narrow --filter)`)}`);
+      console.log(`\n${muted(`(truncated at ${limit} entries: bump --limit or narrow --filter)`)}`);
     }
   }));

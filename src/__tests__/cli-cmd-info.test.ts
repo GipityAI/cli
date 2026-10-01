@@ -16,8 +16,8 @@ test('gipity doctor prints the environment block + shim version + auto-update st
   const r = await runCliAsync(['doctor'], { env: { HOME: home } });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Gipity - doctor/);
-  assert.match(r.stdout, /Environment/);   // env probe (node / login / claude / relay)
-  assert.match(r.stdout, /relay\s+/);
+  assert.match(r.stdout, /Environment/);   // env probe (node / login / claude)
+  assert.doesNotMatch(r.stdout, /relay|desktop app/);
   assert.match(r.stdout, /shim version/);
   assert.match(r.stdout, /auto-updates/);
   assert.doesNotMatch(r.stdout, /undefined/);

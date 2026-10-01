@@ -187,7 +187,7 @@ export const creditsCommand = new Command('credits')
     }
     console.log('');
     if (sub.tier !== 'pro') {
-      console.log(dim('Upgrade to Gipity Pro for higher limits and 20,000 credits/mo — run `gipity credits buy`.'));
+      console.log(dim('Upgrade to Gipity Pro for higher limits and 20,000 credits/mo: run `gipity credits buy`.'));
     } else {
       console.log(dim('Need more credits? Run `gipity credits list` to see credit packs, then `gipity credits buy <pack>`.'));
       console.log(dim('Manage or cancel your subscription with `gipity credits manage`.'));
@@ -335,7 +335,7 @@ creditsCommand
       console.log('');
       console.log(`  ${bold('Checkout:')} ${success(url)}`);
       console.log('');
-      console.log(dim('Open the link to complete your purchase — 2 minutes, cancel anytime. Your plan unlocks the moment payment clears.'));
+      console.log(dim('Open the link to complete your purchase. It takes 2 minutes; cancel anytime. Your plan unlocks the moment payment clears.'));
       if (opts.open) openInBrowser(url);
     } catch (err) {
       // Payments not configured / Stripe hiccup: fall back to the pricing page
@@ -377,7 +377,7 @@ creditsCommand
       }
       console.log(`  ${bold('Billing portal:')} ${success(url)}`);
       console.log('');
-      console.log(dim('Open the link to cancel, renew, update your card, or view invoices. Cancelling takes effect at the end of the billing period — you keep your credits.'));
+      console.log(dim('Open the link to cancel, renew, update your card, or view invoices. Cancelling takes effect at the end of the billing period: you keep your credits.'));
       if (opts.open) openInBrowser(url);
     } catch (err) {
       // No billing account / payments not configured: point at the pricing page

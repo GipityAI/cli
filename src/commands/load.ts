@@ -64,7 +64,6 @@ interface InspectData {
 }
 interface ImportData {
   project: { short_guid: string; name: string; slug: string };
-  conversation_guid: string | null;
   written: number;
   failed?: Array<{ path: string; error: string }>;
   manifest: GipManifestSummary;
@@ -222,24 +221,15 @@ export const loadCommand = new Command('load')
 
     const accountSlug = await getAccountSlug();
 
-    // Resolve the first assigned agent (if any) - not fatal if missing.
-    let agentGuid = '';
-    try {
-      const agents = await get<{ data: Array<{ short_guid: string }> }>(`/projects/${project.short_guid}/agents`);
-      if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
-    } catch {
-      // offline or no agents - non-fatal
-    }
-
     const { applied } = await finalizeLocalProject({
       dir,
       projectGuid: project.short_guid,
       projectSlug: project.slug,
       projectName: project.name,
       accountSlug,
-      agentGuid,
       sync: 'soft',
       interactive: false,
+      json: !!opts.json,
     });
 
     if (opts.json) {

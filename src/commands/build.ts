@@ -86,11 +86,6 @@ interface ProjectData {
   is_default?: number;
 }
 
-interface AgentData {
-  short_guid: string;
-  name: string;
-}
-
 interface ProjectStats {
   fileCount: number;
   folderCount: number;
@@ -527,18 +522,11 @@ async function runLaunch(
         process.chdir(projectDir);
         clearConfigCache();
 
-        let agentGuid = '';
-        try {
-          const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
-          if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
-        } catch { /* no agents */ }
-
         const accountSlug = await getAccountSlug();
         saveConfigAt(projectDir, {
           projectGuid: project.short_guid,
           projectSlug: project.slug,
           accountSlug,
-          agentGuid,
           conversationGuid: null,
           apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
           ignore: DEFAULT_SYNC_IGNORE,
@@ -648,7 +636,6 @@ async function runLaunch(
         let project: ProjectData;
         let isNewProject = false;
         let accountSlug = '';
-        let agentGuid = '';
 
         const result = forceAdoptCwd
           ? { kind: 'adopt-cwd' as const }
@@ -674,7 +661,6 @@ async function runLaunch(
             confirmDeletions: !nonInteractive,
           });
           project = adopted.project;
-          agentGuid = adopted.agentGuid;
           // Treat as "new project" for the build prompt only when cwd is
           // genuinely empty - otherwise the user has chosen to adopt
           // existing content and shouldn't be asked "what to build?".
@@ -694,14 +680,6 @@ async function runLaunch(
           process.chdir(projectDir);
           clearConfigCache();
 
-          // Fetch agents
-          try {
-            const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
-            if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
-          } catch {
-            // No agents
-          }
-
           accountSlug = await getAccountSlug();
 
           // Always write config (refresh stale GUIDs from a previous setup)
@@ -709,7 +687,6 @@ async function runLaunch(
             projectGuid: project.short_guid,
             projectSlug: project.slug,
             accountSlug,
-            agentGuid,
             conversationGuid: null,
             apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
             ignore: DEFAULT_SYNC_IGNORE,

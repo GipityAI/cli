@@ -20,7 +20,6 @@ export interface FinalizeLocalProjectOpts {
    *  template files that contain placeholders. */
   projectName: string;
   accountSlug: string;
-  agentGuid: string;
   /** When true, sync operations are non-fatal and fall through with a log. Used
    *  by `project create` where the remote project was just created and may not
    *  have anything to sync yet; set false for `init` which prefers to fail loud. */
@@ -30,6 +29,9 @@ export interface FinalizeLocalProjectOpts {
   /** Subset of AI-tool primers to write. Omit to use the project's own
    *  resolution (an explicit `--for` pin, else what's installed here). */
   tools?: typeof SUPPORTED_TOOLS;
+  /** Caller is emitting `--json`: suppress the progress UI so stdout carries
+   *  only the caller's JSON. (Status notes always go to stderr.) */
+  json?: boolean;
 }
 
 export interface FinalizeResult {
@@ -44,7 +46,6 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
     projectGuid: opts.projectGuid,
     projectSlug: opts.projectSlug,
     accountSlug: opts.accountSlug,
-    agentGuid: opts.agentGuid,
     conversationGuid: null,
     apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
     ignore: [...DEFAULT_SYNC_IGNORE],
@@ -68,7 +69,7 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
       projectSlug: opts.projectSlug,
     });
     if (sub.changed.length) {
-      console.log(muted(`Resolved template vars in ${sub.changed.length} file${sub.changed.length > 1 ? 's' : ''}.`));
+      console.error(muted(`Resolved template vars in ${sub.changed.length} file${sub.changed.length > 1 ? 's' : ''}.`));
     }
     for (const u of sub.unresolved) {
       console.warn(muted(`  ${u.path}: unknown placeholder${u.tokens.length > 1 ? 's' : ''} ${u.tokens.join(', ')}`));
@@ -82,7 +83,7 @@ export async function finalizeLocalProject(opts: FinalizeLocalProjectOpts): Prom
   try {
     const result = await sync({
       interactive: opts.interactive ?? false,
-      progress: createProgressReporter(),
+      progress: opts.json ? undefined : createProgressReporter(),
     });
     applied = result.applied;
   } catch (err) {

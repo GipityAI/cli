@@ -135,33 +135,32 @@ export const statusCommand = new Command('status')
       // --api-base, or a disallowed host being dropped to the default). Surface
       // the divergence rather than silently trusting the recorded value.
       if (apiBaseInUse !== config.apiBase) {
-        console.log(`${muted('API (in use):')} ${warning(apiBaseInUse)} ${muted('(overrides .gipity.json — GIPITY_API_BASE / --api-base / allowlist)')}`);
+        console.log(`${muted('API (in use):')} ${warning(apiBaseInUse)} ${muted('(overrides .gipity.json: GIPITY_API_BASE / --api-base / allowlist)')}`);
       }
-      if (config.agentGuid) console.log(`${muted('Agent:')} ${config.agentGuid}`);
     }
 
     if (usingEnvToken()) {
       console.log(`${muted('Auth:')} ${probe.state === 'rejected'
-        ? warning('agent API token (GIPITY_TOKEN) rejected by the server — mint a new one: gipity skill read agent-deploy')
-        : success('agent API token (GIPITY_TOKEN)')}${probe.state === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
+        ? warning('agent API token (GIPITY_TOKEN) rejected by the server. Mint a new one: gipity skill read agent-deploy')
+        : success('agent API token (GIPITY_TOKEN)')}${probe.state === 'unreachable' ? ` ${muted('(unverified: API unreachable)')}` : ''}`);
     } else if (!auth) {
       console.log(`${muted('Auth:')} ${warning('not logged in. Run: gipity login')}`);
     } else if (probe.state === 'expired') {
-      console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login (headless/CI: set GIPITY_TOKEN — gipity skill read agent-deploy)`)}`);
+      console.log(`${muted('Auth:')} ${warning(`session expired for ${auth.email}. Run: gipity login (headless/CI: set GIPITY_TOKEN, see gipity skill read agent-deploy)`)}`);
     } else if (probe.state === 'rejected') {
       // Locally fresh but the server says no (refresh token rotated away or
       // revoked). Without the live probe this printed a green identity while
       // every authenticated command failed.
-      console.log(`${muted('Auth:')} ${warning(`session for ${auth.email} was rejected by the server. Run: gipity login (headless/CI: set GIPITY_TOKEN — gipity skill read agent-deploy)`)}`);
+      console.log(`${muted('Auth:')} ${warning(`session for ${auth.email} was rejected by the server. Run: gipity login (headless/CI: set GIPITY_TOKEN, see gipity skill read agent-deploy)`)}`);
     } else {
-      console.log(`${muted('Auth:')} ${success(auth.email)}${probe.state === 'unreachable' ? ` ${muted('(unverified — API unreachable)')}` : ''}`);
+      console.log(`${muted('Auth:')} ${success(auth.email)}${probe.state === 'unreachable' ? ` ${muted('(unverified: API unreachable)')}` : ''}`);
     }
 
     // Source-independent (session or GIPITY_TOKEN): a mismatch under an agent
     // token is the same wrong-account class and must not be hidden inside the
     // cascade above, which only special-cases 'rejected' for that source.
     if (accountMismatch) {
-      console.log(`${muted('Account:')} ${warning(`logged-in account (${probe.account}) differs from this project's account (${config!.accountSlug}). If you didn't expect this you may be logged into the wrong account — run: gipity login`)}`);
+      console.log(`${muted('Account:')} ${warning(`logged-in account (${probe.account}) differs from this project's account (${config!.accountSlug}). If you didn't expect this you may be logged into the wrong account. Run: gipity login`)}`);
       console.log(muted('(If this project was shared with you via gipity rbac, this is expected.)'));
     }
 

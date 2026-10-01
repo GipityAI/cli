@@ -172,7 +172,7 @@ function unknownTokens(...strings: (string | undefined)[]): string[] {
 function warnUnknownTokens(unknown: string[]): void {
   if (unknown.length === 0) return;
   console.error(warning(
-    `⚠ Unrecognized placeholder ${unknown.join(', ')} left as-is — only {{i}} (0-based client index) and {{label}} are substituted per client. Set per-client values with --labels and reference them as {{label}}.`,
+    `⚠ Unrecognized placeholder ${unknown.join(', ')} left as-is: only {{i}} (0-based client index) and {{label}} are substituted per client. Set per-client values with --labels and reference them as {{label}}.`,
   ));
 }
 
@@ -304,7 +304,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
     // Surface the clamp (to stderr, so --json stdout stays clean) instead of
     // leaving the agent to infer it from the printed "hold Nms" line.
     console.error(warning(
-      `--hold ${rawHold}ms exceeds the ${MAX_HOLD_MS}ms per-client cap (each client samples inside one browser eval, bounded by the server's eval budget) — using ${MAX_HOLD_MS}ms. ` +
+      `--hold ${rawHold}ms exceeds the ${MAX_HOLD_MS}ms per-client cap (each client samples inside one browser eval, bounded by the server's eval budget): using ${MAX_HOLD_MS}ms. ` +
       `Co-launch every role in this one command (put {{label}}/{{i}} in the URL) so all clients overlap for the whole window; a separately-started background client overlaps only the sliver of its window that lines up.`,
     ));
   }
@@ -374,12 +374,12 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
     console.log(clrError(`⚠ ${errored.length} client(s) failed (see above)`));
   }
   if (clients < 2) {
-    console.log(muted('Note: a single client cannot verify cross-client visibility — run with --clients 2+.'));
+    console.log(muted('Note: a single client cannot verify cross-client visibility: run with --clients 2+.'));
   } else if (overlapped) {
-    console.log(success(`✓ all clients overlapped for ~${(ovl / 1000).toFixed(1)}s — genuine concurrency, so the readings above are trustworthy`));
+    console.log(success(`✓ all clients overlapped for ~${(ovl / 1000).toFixed(1)}s: genuine concurrency, so the readings above are trustworthy`));
   } else {
     console.log(clrError(
-      '⚠ clients did NOT overlap in time — each ran in isolation, so any shared-state reading here is a FALSE NEGATIVE, not proof the app is broken.',
+      '⚠ clients did NOT overlap in time: each ran in isolation, so any shared-state reading here is a FALSE NEGATIVE, not proof the app is broken.',
     ));
     console.log(muted(
       '  Likely causes: --stagger ≥ --hold, or more --clients than free browser slots (they queued). Lower --stagger / raise --hold / fewer --clients and retry.',
@@ -492,7 +492,7 @@ Examples:
   # Passive: load in 3 staggered clients, flag console errors
   gipity page test "https://dev.gipity.ai/me/app/" --clients 3 --stagger 8
 
-  # Per-client URL params: each client joins under a distinct name (Bot0, Bot1, …)
+  # Per-client URL params: each client joins under a distinct name (Bot0, Bot1, ...)
   gipity page test "https://dev.gipity.ai/me/app/?name=Bot{{i}}" --clients 2
 
   # Interactive: two concurrent clients each join with a name, then watch the
@@ -504,7 +504,7 @@ Examples:
 
   # Asymmetric roles in ONE invocation: {{label}} in the URL routes client 0 to
   # host and client 1 to join. They overlap in time (verified), so the joiner
-  # observes the live state the host is driving — no background-process dance.
+  # observes the live state the host is driving: no background-process dance.
   gipity page test "https://dev.gipity.ai/me/app/?test-action={{label}}" --clients 2 \\
     --labels host,join \\
     --observe "document.querySelector('[data-screen]')?.dataset.screen"

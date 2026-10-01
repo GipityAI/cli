@@ -23,7 +23,7 @@
 //   GIPITY_E2E_CODE=914914
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCli, makeTmpHome } from './helpers/spawn-cli.js';
@@ -41,6 +41,7 @@ if (E2E_ENABLED && !EMAIL.startsWith('ec')) {
 // back out of each real client's captured console.
 const PAGE = 'e2e-page-test.html';
 const MARKER = 'E2E_NAME=';
+const TEST_NAME = 'e2e hello returns ok';
 
 describe('cli-e2e-page-test-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, () => {
   const tmpHome = makeTmpHome();
@@ -77,7 +78,18 @@ describe('cli-e2e-page-test-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to 
     const add = cli(['add', 'web-fullstack'], { timeout: 120000 });
     assert.equal(add.status, 0, `add web-fullstack failed: ${add.stderr || add.stdout}`);
     assert.ok(existsSync(join(projectDir, 'src')), 'web-fullstack did not produce src/');
-    assert.ok(existsSync(join(projectDir, 'tests')), 'web-fullstack did not produce tests/');
+
+    // web-fullstack ships blank (no example function/test since 2026-07-23), so
+    // scaffold our own function + test for the `gipity test` steps below.
+    mkdirSync(join(projectDir, 'functions'), { recursive: true });
+    mkdirSync(join(projectDir, 'tests'), { recursive: true });
+    writeFileSync(join(projectDir, 'functions', 'e2e-hello.js'),
+      'export default async function e2e_hello(ctx) {\n  return { ok: true };\n}\n');
+    writeFileSync(join(projectDir, 'tests', 'e2e-hello.test.js'), `test(${JSON.stringify(TEST_NAME)}, async (ctx) => {
+  const result = await ctx.fn.call('e2e-hello', {});
+  assert.equal(result.ok, true);
+});
+`);
 
     writeFileSync(join(projectDir, 'src', PAGE), `<!doctype html>
 <html><head><meta charset="utf-8"><title>page-test e2e</title></head>
@@ -123,7 +135,7 @@ describe('cli-e2e-page-test-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to 
     const r = cli(['test'], { timeout: 180000 });
     assert.equal(r.status, 0, `test run failed: ${r.stderr || r.stdout}`);
     // Don't pin the template's exact test count — just that it ran and passed.
-    assert.match(r.stdout, /✓ example returns ok/);
+    assert.ok(r.stdout.includes(`✓ ${TEST_NAME}`), `test line missing:\n${r.stdout}`);
     assert.match(r.stdout, /\d+ passed/);
     assert.doesNotMatch(r.stdout, /\d+ failed/);
 
@@ -144,7 +156,7 @@ describe('cli-e2e-page-test-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to 
     assert.equal(data.runGuid, runGuid, 'must return the run we already paid for, not a new one');
     assert.ok(data.passed >= 1, `expected stored passes: ${r.stdout}`);
     assert.equal(data.failed, 0);
-    assert.ok(data.results.some((t) => t.name === 'example returns ok' && t.status === 'passed'),
+    assert.ok(data.results.some((t) => t.name === TEST_NAME && t.status === 'passed'),
       `stored per-test detail missing: ${r.stdout}`);
   });
 

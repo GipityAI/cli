@@ -334,7 +334,7 @@ workflowCommand
     const wf = await resolveWorkflow(name);
     const res = await put<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`, { is_active: true });
     if (!res.data?.is_active) {
-      console.error(clrError(`Workflow "${wf.name}" is still inactive after enable — not enabled.`));
+      console.error(clrError(`Workflow "${wf.name}" is still inactive after enable: not enabled.`));
       process.exit(1);
     }
     printResult(`Enabled "${wf.name}".`, opts, { enabled: wf.name, is_active: true });
@@ -349,7 +349,7 @@ workflowCommand
     const wf = await resolveWorkflow(name);
     const res = await put<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`, { is_active: false });
     if (res.data?.is_active) {
-      console.error(clrError(`Workflow "${wf.name}" is still active after disable — not disabled.`));
+      console.error(clrError(`Workflow "${wf.name}" is still active after disable: not disabled.`));
       process.exit(1);
     }
     printResult(`Disabled "${wf.name}".`, opts, { disabled: wf.name, is_active: false });
@@ -437,7 +437,7 @@ workflowCommand
     // actually went inactive rather than trusting the request was accepted.
     const after = await get<{ data: WorkflowData }>(`/workflows/${wf.short_guid}`);
     if (after.data?.is_active) {
-      console.error(clrError(`Workflow "${wf.name}" (${wf.short_guid}) is still active — delete had no effect.`));
+      console.error(clrError(`Workflow "${wf.name}" (${wf.short_guid}) is still active: delete had no effect.`));
       process.exit(1);
     }
     printResult(`Deleted "${wf.name}".`, opts, { deleted: wf.name, short_guid: wf.short_guid });
@@ -469,7 +469,7 @@ async function resolveWorkflow(name: string): Promise<WorkflowData> {
   const active = byName.filter(w => w.is_active);
   if (active.length === 1) return active[0]!;
   console.error(clrError(
-    `${byName.length} workflows named "${name}" in this project — pass a short_guid:\n` +
+    `${byName.length} workflows named "${name}" in this project. Pass a short_guid:\n` +
     byName.map(w => `  ${w.short_guid}${w.is_active ? '' : ' (inactive)'}`).join('\n'),
   ));
   process.exit(1);

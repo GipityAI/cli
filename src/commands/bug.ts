@@ -25,13 +25,13 @@ export const bugCommand = new Command('bug')
   .description('Report Gipity platform bugs / friction in real time')
   .addHelpText(
     'after',
-    `\nCapture platform friction the moment you hit it — even one you worked around —` +
+    `\nCapture platform friction the moment you hit it, even one you worked around,` +
     `\nso the team can triage it into a fix.\n` +
     `\nCategories: ${CATEGORIES.join(', ')}` +
     `\nSeverity:   ${SEVERITY_HINT}` +
-    `\nNever include PII or user data — describe the platform problem in the abstract.` +
+    `\nNever include PII or user data: describe the platform problem in the abstract.` +
     `\nFiled one by mistake? Withdraw it yourself with \`gipity bug retract <id>\`` +
-    `\n(works until a human picks it up) — don't file a second report asking for a close.`,
+    `\n(works until a human picks it up). Don't file a second report asking for a close.`,
   );
 
 bugCommand
@@ -68,7 +68,7 @@ bugCommand
         payload,
       );
       if (opts.json) { console.log(JSON.stringify(res.data)); return; }
-      console.log(success(`✓ Bug report filed (${res.data.report_guid}) — queued for triage.`));
+      console.log(success(`✓ Bug report filed (${res.data.report_guid}): queued for triage.`));
     } catch (err: any) {
       // The report itself is the record of "the platform broke" - don't lose it
       // just because the breakage (dead session, no network) also blocks filing it.
@@ -99,7 +99,7 @@ bugCommand
       { report_guid: id, reason: opts.reason },
     );
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
-    console.log(success(`✓ Bug report ${res.data.report_guid} retracted — it is out of the triage queue.`));
+    console.log(success(`✓ Bug report ${res.data.report_guid} retracted: it is out of the triage queue.`));
   }));
 
 bugCommand

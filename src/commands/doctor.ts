@@ -5,7 +5,7 @@ import { homedir } from 'os';
 import { LOCAL_PKG_DIR, LOCAL_ENTRY, STATE_FILE, SETTINGS_FILE, UPDATE_LOG, readState, readSettings, updatesDisabled } from '../updater/state.js';
 import { bold, dim, success, warning, error as clrError, muted } from '../colors.js';
 import { getAuth, sessionExpired } from '../auth.js';
-import { isClaudeInstalled, probeClaudeAuthenticated, claudeAuthStatus, claudeCredentialHeuristic, claudeLoginHint } from '../claude-setup.js';
+import { isClaudeInstalled, probeClaudeAuthenticated, claudeAuthStatus, claudeCredentialHeuristic } from '../claude-setup.js';
 import * as relayState from '../relay/state.js';
 import { planFor, UnsupportedPlatformError } from '../relay/installers.js';
 import { resolveCliPath } from '../relay/setup.js';
@@ -209,20 +209,19 @@ export const doctorCommand = new Command('doctor')
     const claudeAccount = env.claude.account ? muted(`  (${env.claude.account}${env.claude.method ? ` via ${env.claude.method}` : ''})`) : '';
     console.log(`${muted('claude code     ')} installed ${yn(env.claude.installed)} · authenticated ${yn(env.claude.authenticated)}${claudeAccount}`);
     if (env.claude.installed && !env.claude.authenticated) {
-      // The single most common cause of a relay that accepts messages and then
-      // fails every one of them. Say the fix here rather than making them find
-      // it from a failed dispatch.
-      console.log(`${muted('                ')} ${warning(claudeLoginHint())}`);
+      console.log(`${muted('                ')} ${warning('Claude Code is not logged in. Run `claude auth login` and sign in.')}`);
     }
-    const autostartLabel = env.relay.autostart === null ? muted('n/a') : yn(env.relay.autostart);
-    console.log(`${muted('relay           ')} paired ${yn(env.relay.paired)} · running ${yn(env.relay.running)} · autostart ${autostartLabel}${env.relay.paused ? warning(' · paused') : ''}${env.relay.device ? muted(`  (${env.relay.device.name})`) : ''}`);
     // Codex approves project hooks interactively and stores the decision in
     // its own opaque state - we can't verify it from here, so surface the
     // one manual step whenever this project ships Codex hooks.
     if (existsSync(resolve(process.cwd(), '.codex', 'hooks.json'))) {
       console.log(`${muted('codex hooks     ')} ${warning('written')} - session capture needs a one-time approval: run /hooks inside Codex in this project`);
     }
-    console.log(`${muted('ready           ')} ${env.ready ? success('yes') : warning('no - run `gipity build` (or the desktop app) to finish setup')}`);
+    // The human verdict covers what building needs (node + a live Gipity
+    // login). The --json `ready` field keeps its parked-Relay meaning for the
+    // archived desktop client.
+    const buildReady = env.node.ok && env.gipity.logged_in;
+    console.log(`${muted('ready           ')} ${buildReady ? success('yes') : warning('no - run `gipity build` to finish setup')}`);
 
     // ── CLI install / update health ────────────────────────────────────
     const state = readState();

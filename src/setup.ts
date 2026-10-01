@@ -1,5 +1,6 @@
 /**
- * Shared project setup helpers used by both `init` and `claude`.
+ * Shared project setup helpers used by both `init` and `claude`. Setup notices
+ * print to stderr so a caller's `--json` stdout stays pure JSON.
  */
 import { resolve, join, dirname } from 'path';
 import { homedir, tmpdir } from 'os';
@@ -417,7 +418,7 @@ export function ensureGrokPluginInstalled(): void {
     : ['plugin', 'install', GIPITY_MARKETPLACE_REPO, '--trust'];
   const res = spawnSyncCommand(grokCmd, verb, { stdio: 'ignore', timeout: 120_000 });
   if (!state.exists && res.status === 0) {
-    console.log('Installed the Gipity plugin for Grok (skills + file-sync hooks).');
+    console.error('Installed the Gipity plugin for Grok (skills + file-sync hooks).');
   }
 }
 
@@ -554,7 +555,7 @@ function installSkillsAndHooks(skillsDir: string, manifestPath: string, harnessL
     }
 
     writeFileSync(manifestPath, JSON.stringify({ version, skills: names }, null, 2) + '\n');
-    console.log(`Installed ${names.length} Gipity skills for ${harnessLabel} (${skillsDir}).`);
+    console.error(`Installed ${names.length} Gipity skills for ${harnessLabel} (${skillsDir}).`);
   } catch (e) {
     // Best-effort (never break setup) but never silent - see the clone warning.
     console.warn(`Skills install for ${harnessLabel} failed midway: ${e instanceof Error ? e.message : String(e)} - re-run \`gipity init\`.`);
@@ -645,9 +646,9 @@ export function setupCodexHooks(): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next);
   if (existing === null) {
-    console.log('Wrote Codex sync + session-capture hooks (.codex/hooks.json) - approve them once with /hooks inside Codex.');
+    console.error('Wrote Codex sync + session-capture hooks (.codex/hooks.json) - approve them once with /hooks inside Codex.');
   } else {
-    console.log('Updated Codex hooks (.codex/hooks.json) - if Codex asks, re-approve them via /hooks.');
+    console.error('Updated Codex hooks (.codex/hooks.json) - if Codex asks, re-approve them via /hooks.');
   }
 }
 
@@ -839,7 +840,7 @@ export function setupAgyHooks(): void {
   if (next === null) return;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next);
-  console.log(existing === null
+  console.error(existing === null
     ? 'Wrote Antigravity sync + session-capture hooks (.agents/hooks.json).'
     : 'Updated Antigravity hooks (.agents/hooks.json).');
 }

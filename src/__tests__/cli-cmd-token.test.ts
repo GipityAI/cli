@@ -24,7 +24,7 @@ after(async () => {
 test('gipity token create prints the token once + an export line', async () => {
   mock.reset();
   mock.on('POST /auth/agent-tokens', { body: { data: {
-    token: 'gip_at_TESTTOKEN1234567890', shortGuid: 'at_abc12345', expiresAt: null,
+    token: 'gip_at_TESTTOKEN1234567890', short_guid: 'at_abc12345', expires_at: null,
   } } });
 
   const r = await runCliAsync(['--api-base', mock.apiBase, 'token', 'create', '--name', 'Hermes'], { env: { HOME: home } });
@@ -38,14 +38,16 @@ test('gipity token create prints the token once + an export line', async () => {
 test('gipity token create --json emits raw API data', async () => {
   mock.reset();
   mock.on('POST /auth/agent-tokens', { body: { data: {
-    token: 'gip_at_JSON', shortGuid: 'at_json1234', expiresAt: '2026-12-01T00:00:00Z',
+    token: 'gip_at_JSON', short_guid: 'at_json1234', expires_at: '2026-12-01T00:00:00Z',
   } } });
 
   const r = await runCliAsync(['--api-base', mock.apiBase, 'token', 'create', '--json'], { env: { HOME: home } });
   assert.equal(r.status, 0, r.stderr);
   const parsed = JSON.parse(r.stdout.trim());
   assert.equal(parsed.token, 'gip_at_JSON');
-  assert.equal(parsed.shortGuid, 'at_json1234');
+  assert.equal(parsed.short_guid, 'at_json1234');
+  assert.equal(parsed.expires_at, '2026-12-01T00:00:00Z');
+  assert.equal(parsed.shortGuid, undefined);
 });
 
 test('gipity token list shows tokens with name + dates', async () => {

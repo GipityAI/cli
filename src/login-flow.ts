@@ -32,7 +32,7 @@ export function warnBeforeCodeIfUnexpectedNewAccount(isNewUser: boolean | undefi
   const priorAuth = getAuth();
   if (!newAccountWouldBeUnexpected(email, priorAuth)) return;
   const config = getConfig();
-  console.log(`${indent}${warning(`No existing Gipity account for ${email} — entering the code will CREATE a new one.`)}`);
+  console.log(`${indent}${warning(`No existing Gipity account for ${email}: entering the code will CREATE a new one.`)}`);
   if (config) {
     console.log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}). If you meant to log into that account, stop and re-check the email before entering the code.`)}`);
   }
@@ -45,11 +45,11 @@ export function warnIfUnexpectedNewAccount(isNewUser: boolean | undefined, email
   if (isNewUser !== true) return;
   if (!newAccountWouldBeUnexpected(email, priorAuth)) return;
   const config = getConfig();
-  console.log(`${indent}${warning(`Logged into a NEW, empty account for ${email} — no prior account existed for this email.`)}`);
+  console.log(`${indent}${warning(`Logged into a NEW, empty account for ${email}: no prior account existed for this email.`)}`);
   if (config) {
-    console.log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}), which the new account does not own — project / skill / sync commands will fail with "not found".`)}`);
+    console.log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}), which the new account does not own: project / skill / sync commands will fail with "not found".`)}`);
   }
-  console.log(`${indent}${muted('If you expected an existing account, run: gipity status  — then gipity login again with the correct email.')}`);
+  console.log(`${indent}${muted('If you expected an existing account, run gipity status, then gipity login again with the correct email.')}`);
 }
 
 /** Prompt for email + 6-digit code, persist the tokens, and return the new

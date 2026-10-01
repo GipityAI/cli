@@ -29,23 +29,19 @@ export interface BannerOptions {
 // ── Feature groups ────────────────────────────────────────────────────
 
 const AI_MODELS = [
-  'OpenAI', 'Anthropic', 'Gemini', 'ElevenLabs', 'Black Forest Labs',
+  'OpenAI', 'Anthropic', 'Gemini', 'Black Forest Labs',
 ];
 
 const GENERATION = [
   'Image', 'Video', 'Music', 'Speech / TTS', 'Sound',
 ];
 
-const AGENT = [
-  'Memory', 'Conversations', 'Plans', 'Schedules', 'Soul',
-];
-
 const AUTOMATION = [
-  'Workflows', 'Triggers', 'Webhooks', 'Approvals',
+  'Workflows', 'Schedules', 'Triggers', 'Webhooks', 'Approvals', 'Memory',
 ];
 
 const INTEGRATIONS = [
-  '5,000+ Skills', 'Gmail', 'Calendar', 'Twitter', 'Telegram',
+  'GitHub', 'Stripe', 'Web Push', 'Email', 'Custom Domains',
 ];
 
 const DATA = [
@@ -286,7 +282,6 @@ function printFull(opts: BannerOptions, outerW: number): void {
   rightLines.push('');
   addSection('AI Models', AI_MODELS);
   addSection('Generation', GENERATION);
-  addSection('Agent', AGENT);
   addSection('Automation', AUTOMATION);
   addSection('Integrations', INTEGRATIONS);
   addSection('Data', DATA);

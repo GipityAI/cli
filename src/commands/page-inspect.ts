@@ -72,7 +72,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
   .option('--no-fake-media', "Inspect with NO camera or microphone present, so a getUserMedia app takes its no-device error path (use this only when that fallback IS what you're inspecting)")
   .option('--device <name>', `Inspect as a real touch device: ${INSPECT_DEVICES.join(', ')}. Emulates touch events, mobile user-agent and DPR, so a touch-gated mobile layout is what gets inspected.`)
-  .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
+  .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
   // an image here (`page screenshot` is the single path for that) — just point there.
   .addOption(new Option('--screenshot [path]', 'Capture a screenshot').hideHelp())
@@ -143,7 +143,7 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
         return;
       }
       console.log(`${brand('Inspecting')} ${bold(url)}`);
-      console.log(warning('Captured no page data — the page returned an empty response.'));
+      console.log(warning('Captured no page data: the page returned an empty response.'));
       console.log(muted('The page may have failed to load, redirected away, or rendered nothing server-side. Retry once; if it persists pass --wait-for <selector> to wait for a specific element to appear, or --auth if it is behind Sign in with Gipity.'));
       return;
     }
@@ -242,7 +242,7 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
       const who = getAuth()?.email;
       console.log(b.auth.established
         ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
-        : `${warning('Auth: session NOT established')}${b.auth.detail ? ` — ${b.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+        : `${warning('Auth: session NOT established')}${b.auth.detail ? `: ${b.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
     } else {
       console.log(muted('Auth: anonymous visitor (signed out; pass --auth to load as your Gipity account)'));
     }
@@ -256,7 +256,7 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     // real story is "client render or auth gate produced nothing yet." Flag it
     // so the agent knows to wait for the render or sign in, not to trust silence.
     if ((b.elementCount || 0) === 0 && !b.title) {
-      console.log(`${warning('⚠ Rendered no DOM (0 elements, no title)')} ${muted('— the client-side render likely had not run yet (try --wait-for <selector>), the page failed to load, or it is behind a sign-in gate (try --auth).')}`);
+      console.log(`${warning('⚠ Rendered no DOM (0 elements, no title)')} ${muted('The client-side render likely had not run yet (try --wait-for <selector>), the page failed to load, or it is behind a sign-in gate (try --auth).')}`);
     }
 
     // ── Timing ──
@@ -284,13 +284,13 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
       for (const line of transientErrors) {
         console.log(muted(line));
       }
-      console.log(muted('One-time cold-load artifact (first hit of freshly-deployed assets) — not reproducible, not in your app code. Ignore unless it recurs.'));
+      console.log(muted('One-time cold-load artifact (first hit of freshly-deployed assets): not reproducible, not in your app code. Ignore unless it recurs.'));
     }
 
     // ── Cross-origin console errors (message-less; source hidden by the browser) ──
     if (crossOriginErrors.length > 0) {
       console.log(`\n${bold('Cross-origin console errors')} ${muted(`(${crossOriginErrors.length}, source hidden by the browser)`)}:`);
-      console.log(muted("Message-less — the throwing <script> lacks CORS, so the browser hides its source and there's no own-code stack to chase. Gipity's injected SDK is itself cross-origin, so if your app loads no third-party CDN scripts these are platform noise — ignore them. If your app DOES load a third-party <script>, add crossorigin=\"anonymous\" to that tag to surface the real error."));
+      console.log(muted("Message-less: the throwing <script> lacks CORS, so the browser hides its source and there's no own-code stack to chase. Gipity's injected SDK is itself cross-origin, so if your app loads no third-party CDN scripts these are platform noise; ignore them. If your app DOES load a third-party <script>, add crossorigin=\"anonymous\" to that tag to surface the real error."));
     }
 
     // ── Failed Resources ──

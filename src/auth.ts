@@ -160,7 +160,7 @@ export async function acquireRefreshLock(): Promise<(() => void) | null> {
  *  refresh" shortcut and performs the refresh round-trip unconditionally, so a token
  *  the server considers dead actually gets replaced instead of re-sent. */
 export async function refreshTokenIfNeeded(force = false): Promise<void> {
-  const auth = readAuthFresh();        // never the cache — a sibling may have rotated
+  const auth = readAuthFresh();        // never the cache: a sibling may have rotated
   if (!auth) return;                   // not logged in - caller throws the clean error
   cached = auth;
 

@@ -148,14 +148,14 @@ const formatName = (ext: string) => (canonicalExt(ext) === 'jpg' ? 'JPEG' : ext.
  *  stem, and let the bytes name the format. */
 function correctExtension(filename: string, buf: Buffer): string {
   const actual = sniffExt(buf);
-  if (!actual) return filename; // unrecognized bytes — nothing better to say
+  if (!actual) return filename; // unrecognized bytes: nothing better to say
   const dot = filename.lastIndexOf('.');
   const asked = dot > 0 ? filename.slice(dot + 1).toLowerCase() : '';
   if (canonicalExt(asked) === actual) return filename;
 
   const corrected = `${dot > 0 ? filename.slice(0, dot) : filename}.${actual}`;
   console.error(muted(
-    `Note: the model returned ${formatName(actual)}, not ${asked ? formatName(asked) : 'the requested format'} — `
+    `Note: the model returned ${formatName(actual)}, not ${asked ? formatName(asked) : 'the requested format'}: `
     + `saving as ${corrected} so the extension matches the actual bytes.`,
   ));
   return corrected;
@@ -173,7 +173,7 @@ function noteFormatMismatch(filename: string, buf: Buffer): void {
   const asked = dot > 0 ? filename.slice(dot + 1).toLowerCase() : '';
   if (!asked || canonicalExt(asked) === actual) return;
   console.error(muted(
-    `Note: ${basename(filename)} holds ${formatName(actual)} bytes though its name ends .${asked} — `
+    `Note: ${basename(filename)} holds ${formatName(actual)} bytes though its name ends .${asked}: `
     + `that's fine (browsers and image/video/edit tools sniff the bytes, not the name). `
     + `Saved at the exact path you requested; reference it as-is.`,
   ));
@@ -315,7 +315,7 @@ Examples:
 // ── VIDEO ──────────────────────────────────────────────────────────────
 
 const videoCommand = new Command('video')
-  .description('Generate a short video (up to 8 seconds) from a text prompt using Google Veo')
+  .description('Generate a short video (up to 8 seconds) from a text prompt')
   .addHelpText('after', `
 Models (default: veo-3.1-generate-preview):
 ${VIDEO_MODELS_TABLE}

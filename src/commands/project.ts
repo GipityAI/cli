@@ -25,11 +25,6 @@ interface ProjectData {
   created_at: string;
 }
 
-interface AgentData {
-  short_guid: string;
-  name: string;
-}
-
 export const projectCommand = new Command('project')
   .description('Manage projects')
   // Options after a subcommand (`project auth --json`) belong to it, not to `project`.
@@ -95,7 +90,8 @@ projectCommand
   .action((name: string, opts) => run('Create', async () => {
     const slug = opts.slug || slugify(name);
 
-    // Auto-chat so the project surfaces at the top of both picker lists -
+    // On a paired relay device, pre-create the placeholder claude_code chat
+    // so the project surfaces at the top of both picker lists -
     // `projects.dal.ts` orders by most recent conversation activity. Same
     // shape `gipity claude` uses for its picker-created projects.
     // When spawned inside a web-CLI-dispatched Claude Code turn, the relay
@@ -106,7 +102,7 @@ projectCommand
     const isDispatch = Boolean(process.env.GIPITY_CONVERSATION_GUID);
     const body: {
       name: string; slug: string;
-      autoChat?: 'claude_code' | 'gip';
+      autoChat?: 'claude_code';
       deviceGuid?: string;
       origin?: 'dispatch' | 'local';
     } = { name, slug };
@@ -114,8 +110,6 @@ projectCommand
       body.autoChat = 'claude_code';
       body.deviceGuid = device.guid;
       if (isDispatch) body.origin = 'dispatch';
-    } else {
-      body.autoChat = 'gip';
     }
 
     const res = await post<{ data: ProjectData }>('/projects', body);
@@ -130,24 +124,15 @@ projectCommand
 
     const accountSlug = await getAccountSlug();
 
-    // Resolve the first assigned agent (if any) - not fatal if missing.
-    let agentGuid = '';
-    try {
-      const agents = await get<{ data: AgentData[] }>(`/projects/${project.short_guid}/agents`);
-      if (agents.data.length > 0) agentGuid = agents.data[0].short_guid;
-    } catch {
-      // offline or no agents - non-fatal
-    }
-
     const { applied } = await finalizeLocalProject({
       dir,
       projectGuid: project.short_guid,
       projectSlug: project.slug,
       projectName: project.name,
       accountSlug,
-      agentGuid,
       sync: 'soft',
       interactive: false,
+      json: !!opts.json,
     });
 
     if (opts.json) {

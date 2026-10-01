@@ -1688,7 +1688,6 @@ async function resolveCwdForProject(d: ClaimedDispatch): Promise<{ cwd: string; 
     projectGuid: d.project_guid,
     projectSlug: d.project_slug,
     accountSlug: d.account_slug,
-    agentGuid: d.agent_guid || '',
     conversationGuid: null,
     apiBase,
     ignore: DEFAULT_SYNC_IGNORE,

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
+import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { join } from 'node:path';
 
 let mock: MockServer;
 let home: string;
@@ -122,4 +124,60 @@ test('gipity project delete --yes calls DELETE', async () => {
   const r = await inProject(['--yes', 'project', 'delete', 'beta']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Deleted "Beta"/);
+});
+
+// ── --json purity ──────────────────────────────────────────────────────
+// `project create --json` and `load --json` used to print setup notices
+// ("Wrote Codex ... hooks", "Resolved template vars in N files") on stdout
+// ahead of the JSON, so `JSON.parse(stdout)` failed. Notices go to stderr.
+
+/** A HOME whose projects root already holds `<slug>/index.html` with a
+ *  placeholder (forces the template-vars notice) plus a fake `codex` binary on
+ *  PATH (forces the Codex hooks notice). */
+function jsonPurityEnv(slug: string): { env: Record<string, string> } {
+  const h = makeAuthedHome();
+  const projects = join(h, 'GipityProjects');
+  mkdirSync(join(h, '.gipity'), { recursive: true });
+  writeFileSync(join(h, '.gipity', 'settings.json'), JSON.stringify({ projectsDir: projects }));
+  mkdirSync(join(projects, slug), { recursive: true });
+  writeFileSync(join(projects, slug, 'index.html'), '<title>{{TITLE}}</title>');
+  const bin = join(h, 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'codex'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(bin, 'codex'), 0o755);
+  return { env: { HOME: h, PATH: `${bin}:${process.env['PATH'] ?? ''}` } };
+}
+
+function parseStdoutJson(stdout: string): Record<string, unknown> {
+  try { return JSON.parse(stdout); } catch { assert.fail(`stdout is not pure JSON:\n${stdout}`); }
+}
+
+test('gipity project create --json prints only JSON on stdout', { skip: process.platform === 'win32' }, async () => {
+  mock.reset();
+  mock.on('POST /projects', { body: { data: { ...PROJ_A, slug: 'jsonpure', name: 'JsonPure' } } });
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'tester' } } });
+  const { env } = jsonPurityEnv('jsonpure');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'project', 'create', 'JsonPure', '--json'], { env });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = parseStdoutJson(r.stdout);
+  assert.equal(parsed.created, 'jsonpure');
+  assert.match(r.stderr, /Resolved template vars/);
+  assert.match(r.stderr, /Codex/);
+});
+
+test('gipity load --json prints only JSON on stdout', { skip: process.platform === 'win32' }, async () => {
+  mock.reset();
+  mock.on('POST /projects/import', { status: 201, body: { data: {
+    project: { short_guid: PROJ_B.short_guid, name: 'Loaded', slug: 'loaded' },
+    written: 1, manifest: {}, meta: null,
+  } } });
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'tester' } } });
+  const { env } = jsonPurityEnv('loaded');
+  const bundle = join(env.HOME, 'app.gip');
+  writeFileSync(bundle, 'PK');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'load', bundle, '--json'], { env });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = parseStdoutJson(r.stdout);
+  assert.equal(parsed.created, 'loaded');
+  assert.match(r.stderr, /Resolved template vars/);
 });

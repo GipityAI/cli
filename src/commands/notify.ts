@@ -31,7 +31,7 @@ notifyCommand
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     const { sent, failed, pruned } = res.data;
     if (sent > 0) console.log(success(`✓ Sent to ${sent} device${sent === 1 ? '' : 's'}.`));
-    else console.log(warning('No devices received it — has anyone enabled notifications in the app yet? (gipity notify subs)'));
+    else console.log(warning('No devices received it: has anyone enabled notifications in the app yet? (gipity notify subs)'));
     if (pruned) console.log(muted(`  pruned ${pruned} expired subscription${pruned === 1 ? '' : 's'}`));
     if (failed) console.log(muted(`  ${failed} delivery failure${failed === 1 ? '' : 's'}`));
   }));

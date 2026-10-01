@@ -79,7 +79,7 @@ function printAuthLine(auth?: ScreenshotMeta['auth']): void {
   const who = getAuth()?.email;
   console.log(auth.established
     ? `${label('Auth')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
-    : `${warning('Auth: session NOT established')}${auth.detail ? ` — ${auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+    : `${warning('Auth: session NOT established')}${auth.detail ? `: ${auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
 }
 
 /** A failed pre-capture script still yields a screenshot - of the page it never
@@ -107,7 +107,7 @@ export function augmentSandboxTimeout(message: string): string {
   return (
     `${message}\n` +
     `A pre-capture script was set (--action and/or the --wait-for gate), and its runtime is spent INSIDE ` +
-    `that same sandbox budget — a script that waits on slow work (a WASM/model download, a network fetch, ` +
+    `that same sandbox budget: a script that waits on slow work (a WASM/model download, a network fetch, ` +
     `a long animation) can exhaust the budget on its own. Keep --action to the interaction itself (a click, ` +
     `a keypress), let the page do the slow work on load, and absorb that with --wait <ms> or a tighter ` +
     `--wait-for '<selector>' gate instead.`
@@ -263,7 +263,7 @@ export function buildWaitForGate(selector: string, timeoutMs: number): string {
     `while (Date.now() - __t0 < ${timeoutMs}) { ` +
     `try { if (document.querySelector(${sel})) return; } catch (e) { throw new Error('wait-for: invalid selector ' + ${sel}); } ` +
     `await new Promise((r) => setTimeout(r, 100)); } ` +
-    `throw new Error('wait-for: nothing matched ' + ${sel} + ' within ${timeoutMs}ms — the page never reached that state (raise --wait-timeout, fix the selector, or check the app actually gets there headlessly)'); })();`
+    `throw new Error('wait-for: nothing matched ' + ${sel} + ' within ${timeoutMs}ms: the page never reached that state (raise --wait-timeout, fix the selector, or check the app actually gets there headlessly)'); })();`
   );
 }
 
@@ -294,7 +294,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   // the single most common reason to screenshot, and agents routinely read the
   // help through `--help | head -N` — buried below the timing flags, these two
   // fell off the bottom and the run proceeded at desktop width.
-  .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device — touch events, mobile user-agent, DPR — so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
+  .option('--device <names>', `Device preset(s): ${Object.keys(DEVICE_PRESETS).join(', ')} (comma-separated or repeat flag). mobile/tablet emulate a real touch device (touch events, mobile user-agent, DPR) so touch-gated mobile UI actually renders.`, appendOption, [] as string[])
   .option('--viewport <dims>', 'Raw viewport(s): WxH or WxH@dpr (comma-separated or repeat flag), e.g. --viewport 390x844 for a phone-sized window', appendOption, [] as string[])
   // No commander default: a default here would make the value always set, so the
   // merge below could not tell "caller chose a delay" from "nobody did" — which
@@ -307,9 +307,9 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
   .option('-o, --output <file>', 'Output path (default .gipity/screenshots/ss-<host>-<timestamp>.png). With several viewports it is a stem: -o tmp/shot.png --device desktop,mobile writes tmp/shot-desktop.png and tmp/shot-mobile.png.')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
-  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern — to capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
-  .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture — so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
-  .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor — nothing carries over from earlier --auth runs.')
+  .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern. To capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
+  .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture, so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
+  .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
   .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--post-load-delay <ms>', 'Alias for --wait').hideHelp())
@@ -332,7 +332,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     const aliasFlag = ACTION_ALIAS_FLAGS.find((f) => opts[f.slice(2)] !== undefined);
     if (aliasFlag) {
       console.error(muted(
-        `Note: treating ${aliasFlag} as --action — it runs your JS in the page before the capture. --action is the canonical flag.`,
+        `Note: treating ${aliasFlag} as --action: it runs your JS in the page before the capture. --action is the canonical flag.`,
       ));
     }
     // The pre-capture script can come inline (--action / its JS-intent aliases) or
@@ -366,7 +366,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
     if (postLoadDelayMs > MAX_POST_LOAD_DELAY_MS) {
       console.error(warning(
-        `--wait ${postLoadDelayMs}ms exceeds the ${MAX_POST_LOAD_DELAY_MS}ms cap — using ${MAX_POST_LOAD_DELAY_MS}ms. ` +
+        `--wait ${postLoadDelayMs}ms exceeds the ${MAX_POST_LOAD_DELAY_MS}ms cap: using ${MAX_POST_LOAD_DELAY_MS}ms. ` +
         `Waiting longer is rarely the fix: gate on the state you want with --wait-for '<selector>' instead of guessing a duration.`,
       ));
       postLoadDelayMs = MAX_POST_LOAD_DELAY_MS;
@@ -379,7 +379,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     const waitForTimeoutMs = Math.min(waitForTimeoutRaw, WAIT_FOR_MAX_MS);
     if (waitForTimeoutRaw > WAIT_FOR_MAX_MS) {
       console.error(warning(
-        `--wait-timeout ${waitForTimeoutRaw}ms exceeds the ${WAIT_FOR_MAX_MS}ms the capture's browser budget covers — using ${WAIT_FOR_MAX_MS}ms. ` +
+        `--wait-timeout ${waitForTimeoutRaw}ms exceeds the ${WAIT_FOR_MAX_MS}ms the capture's browser budget covers: using ${WAIT_FOR_MAX_MS}ms. ` +
         `A state that takes longer than that to appear is not a screenshot problem: watch for it with ` +
         `\`gipity page eval <url> --wait-for '<selector>' --wait-timeout 30000\` (a wider budget), then capture it.`,
       ));
@@ -407,7 +407,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (opts.width !== undefined || opts.height !== undefined) {
       if (opts.width === undefined || opts.height === undefined) {
         pageScreenshotCommand.error(
-          'error: --width and --height go together (both in px, equivalent to --viewport WxH) — ' +
+          'error: --width and --height go together (both in px, equivalent to --viewport WxH): ' +
           'or use a preset like --device mobile for a real handset (touch events, mobile user-agent, DPR)',
         );
       }
@@ -419,7 +419,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       // renders its desktop variant. Say so once, on the path where the caller
       // was clearly after a phone.
       if (parseInt(String(opts.width), 10) <= 500) {
-        console.error(muted('Tip: --device mobile emulates a real handset (touch events, mobile user-agent, DPR) — a raw viewport only resizes the window.'));
+        console.error(muted('Tip: --device mobile emulates a real handset (touch events, mobile user-agent, DPR): a raw viewport only resizes the window.'));
       }
     }
     const customViewports: Viewport[] = [
@@ -456,7 +456,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     let camera: HostedFixture | undefined;
     if (opts.camera) {
       assertCameraFile(opts.camera);
-      if (!projectGuid) throw new Error('--camera needs a linked project (the frame is hosted for the browser to fetch) — run `gipity link` first.');
+      if (!projectGuid) throw new Error('--camera needs a linked project (the frame is hosted for the browser to fetch): run `gipity link` first.');
       console.log(muted(`Hosting camera feed ${opts.camera}...`));
       camera = await uploadCameraFeed(projectGuid, opts.camera);
     }
@@ -508,7 +508,7 @@ export const pageScreenshotCommand = new Command('screenshot')
         try {
           await deleteFixture(projectGuid!, camera.guid);
         } catch (err) {
-          console.error(warning(`⚠ Could not auto-delete camera feed "${camera.name}" (${camera.guid}) — still hosted at ${camera.url}: ${(err as Error).message}`));
+          console.error(warning(`⚠ Could not auto-delete camera feed "${camera.name}" (${camera.guid}): still hosted at ${camera.url}: ${(err as Error).message}`));
         }
       }
     }
@@ -616,7 +616,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     for (let i = 0; i < meta.screenshots.length; i++) {
       const s = meta.screenshots[i];
       const dims = `${s.viewport.width}×${s.viewport.height}${s.viewport.deviceScaleFactor > 1 ? ` @${s.viewport.deviceScaleFactor}x` : ''}`;
-      const deviceTag = s.viewport.device ? muted(` — ${s.viewport.device}, touch`) : '';
+      const deviceTag = s.viewport.device ? muted(` (${s.viewport.device}, touch)`) : '';
       console.log(`\n${brand('@ ' + dims)}${deviceTag}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
       console.log(`${label('Screenshot size')} ${sizePart}`);
@@ -646,17 +646,17 @@ Examples:
   gipity page screenshot "https://dev.gipity.ai/me/app/" \\
     --action "document.getElementById('play').click()"                   # capture an in-game frame
   # Camera / vision app: play a real frame in as the webcam and shoot once the app
-  # says it's ready — same --camera / --wait-for flags as 'page eval', no guessed delay:
+  # says it's ready: same --camera / --wait-for flags as 'page eval', no guessed delay:
   gipity page screenshot "https://dev.gipity.ai/me/app/" --camera fist.png \\
     --wait-for '[data-vision="ready"]'
 
 Waiting for the page to reach a state before the shot?
   --wait-for '<selector>' gates the capture on the app's own signal (deterministic).
-  Reach for --wait <ms> only when there is nothing to gate on — a guessed duration
+  Reach for --wait <ms> only when there is nothing to gate on: a guessed duration
   either shoots too early or wastes the difference.
 
 Capturing a state that needs an interaction (start a game, open a menu, dismiss a modal)?
-  Use --action to run JS in the page before the shot — it fires after the wait
+  Use --action to run JS in the page before the shot: it fires after the wait
   (and after any --wait-for gate), then settles again so the result has painted. For
   a multi-step driver (click, wait, click) pipe it as a heredoc with --file - (same
   as 'page eval') instead of cramming it into one inline string:
@@ -672,5 +672,5 @@ Capturing a state that needs an interaction (start a game, open a menu, dismiss 
 Capturing an off-screen region or reading element data?
     • --full captures the ENTIRE scrollable page (then crop to the region).
     • 'gipity page eval <url> "<expr>"' reads any (even off-screen) element's
-      data/state/rect without a picture — e.g. read the chart's bar values
+      data/state/rect without a picture: e.g. read the chart's bar values
       directly instead of screenshotting the slide.`);

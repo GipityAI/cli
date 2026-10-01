@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { get } from '../api.js';
-import { resolveProjectContext, getProjectRoot } from '../config.js';
+import { getProjectRoot } from '../config.js';
 import { error as clrError, bold, muted } from '../colors.js';
 import { run, printList } from '../helpers/index.js';
 
@@ -148,12 +148,7 @@ skillCommand
   .description('List skills')
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
-    const { config } = await resolveProjectContext();
-    if (!config.agentGuid) {
-      console.error(clrError('No agent configured for this project. Run `gipity init` to refresh.'));
-      process.exit(1);
-    }
-    const res = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
+    const res = await get<{ data: SkillSummary[] }>('/skills');
 
     const width = res.data.reduce((m, s) => Math.max(m, s.name.length), 0);
     printList(res.data, opts, 'No skills available.', s =>
@@ -170,12 +165,7 @@ skillCommand
   .option('--grep <term>', 'Print only the sections matching this term (case-insensitive regex)')
   .option('--json', 'Output as JSON')
   .action((names: string[], opts: ReadOpts) => run('Read', async () => {
-    const { config } = await resolveProjectContext();
-    if (!config.agentGuid) {
-      console.error(clrError('No agent configured for this project. Run `gipity init` to refresh.'));
-      process.exit(1);
-    }
-    const listRes = await get<{ data: SkillSummary[] }>(`/skills?agent=${config.agentGuid}`);
+    const listRes = await get<{ data: SkillSummary[] }>('/skills');
 
     const jsonDocs: unknown[] = [];
     let failed = false;
@@ -188,7 +178,7 @@ skillCommand
       let note: string | null = null;
 
       if (match) {
-        const res = await get<{ data: SkillDetail }>(`/skills/${match.guid}?agent=${config.agentGuid}`);
+        const res = await get<{ data: SkillDetail }>(`/skills/${match.guid}`);
         content = res.data.content;
         detail = { ...res.data };
       } else {

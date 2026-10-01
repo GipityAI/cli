@@ -13,7 +13,7 @@ before(async () => { mock = await startMockServer(); home = makeAuthedHome(); })
 after(async () => { await mock.stop(); });
 
 function fresh(args: string[]) {
-  const d = makeProjectDir({ apiBase: mock.apiBase, agentGuid: 'a_TestAgnt' });
+  const d = makeProjectDir({ apiBase: mock.apiBase });
   return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home }, cwd: d });
 }
 
@@ -28,6 +28,20 @@ test('gipity skill list shows available skills with description', async () => {
   assert.match(r.stdout, /web-app-basics/);
   assert.match(r.stdout, /Build a web app/);
   assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity skill list is account-level: no ?agent= even from a legacy .gipity.json carrying agentGuid', async () => {
+  mock.reset();
+  mock.on('GET /skills', { body: { data: [
+    { guid: 'sk_TestSkl01', name: 'web-app-basics', description: 'Build a web app', scope: 'platform' },
+  ] } });
+  const legacy = makeProjectDir({ apiBase: mock.apiBase, agentGuid: 'a_Legacy00' });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'skill', 'list'], { env: { HOME: home }, cwd: legacy });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /web-app-basics/);
+  const urls = mock.requests().map(q => q.url);
+  assert.ok(urls.includes('/skills'), urls.join(', '));
+  assert.ok(urls.every(u => !u.includes('agent')), urls.join(', '));
 });
 
 test('gipity skill read <name> prints content', async () => {
@@ -137,7 +151,7 @@ test('gipity skill read <kit> falls back to an installed kit README when no skil
   mock.on('GET /skills', { body: { data: [
     { guid: 'sk_TestSkl01', name: 'web-app-basics', description: 'Build a web app', scope: 'platform' },
   ] } });
-  const dir = makeProjectDir({ apiBase: mock.apiBase, agentGuid: 'a_TestAgnt' });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
   const kitDir = join(dir, 'src', 'packages', 'chatbot');
   mkdirSync(kitDir, { recursive: true });
   writeFileSync(join(kitDir, 'package.json'), JSON.stringify({ name: '@gipity/chatbot', gipity: { install: {} } }));

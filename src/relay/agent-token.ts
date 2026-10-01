@@ -55,11 +55,11 @@ export async function ensureRelayAgentToken(): Promise<string | null> {
 
   try {
     const name = `Relay on ${state.getDevice()?.name ?? hostname()}`;
-    const res = await post<{ data: { token: string; shortGuid: string } }>(
+    const res = await post<{ data: { token: string; short_guid: string } }>(
       '/auth/agent-tokens',
       { name, expiresInDays: RELAY_AGENT_TOKEN_EXPIRY_DAYS },
     );
-    state.setAgentToken(res.data.token, res.data.shortGuid);
+    state.setAgentToken(res.data.token, res.data.short_guid);
     return res.data.token;
   } catch {
     return null;

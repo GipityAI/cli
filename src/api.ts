@@ -161,7 +161,7 @@ async function shouldRetryAfter401(status: number, retried: boolean): Promise<bo
  *  the emailed login code, and dead-ending there stranded whole runs (cli#137). */
 function with401Hint(status: number, message: string): string {
   return status === 401 && !usingEnvToken()
-    ? `${message} — run: gipity login (headless/CI: set GIPITY_TOKEN instead — gipity skill read agent-deploy)`
+    ? `${message}; run: gipity login (headless/CI: set GIPITY_TOKEN instead; see gipity skill read agent-deploy)`
     : message;
 }
 
@@ -463,14 +463,14 @@ export async function putToPresignedUrl(
     // withRetry() treats it as transient and retries the PUT.
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
       throw new ApiError(408, 'S3_UPLOAD_TIMEOUT',
-        `S3 PUT stalled (no completion in ${Math.round(timeoutMs / 1000)}s)`);
+        `Storage upload stalled (no completion in ${Math.round(timeoutMs / 1000)}s)`);
     }
     throw err;
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, 'S3_UPLOAD', `S3 PUT failed: ${res.status} ${text.slice(0, 200)}`);
+    throw new ApiError(res.status, 'S3_UPLOAD', `Storage upload failed: ${res.status} ${text.slice(0, 200)}`);
   }
   const etag = (res.headers.get('etag') ?? '').replace(/^"|"$/g, '');
   return etag;

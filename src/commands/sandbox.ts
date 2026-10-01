@@ -475,7 +475,7 @@ GCC/Rust).
         console.error(clrError(`Scratch files are never mirrored into the sandbox, so it can't read: ${scratchReads.join(', ')}`));
         console.error(dim(`  ${SCRATCH_IGNORE.join(', ')} are ignored by sync, so the sandbox never sees them.`));
         console.error(dim('  Stage the input at a real project path (src/, docs/, assets/) and delete it afterward.'));
-        console.error(dim('  (Writing OUTPUT under tmp/ is fine — scratch outputs come back to your local tmp/.)'));
+        console.error(dim('  (Writing OUTPUT under tmp/ is fine: scratch outputs come back to your local tmp/.)'));
         process.exit(1);
       }
     }

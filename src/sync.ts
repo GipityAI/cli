@@ -955,12 +955,12 @@ async function syncInner(
     const shape: string[] = [`    Server: ${f(remote.size)}   ·   Local: ${f(local.size)}`];
     if (planned.downloads > 0) shape.push(`    ↓ download ${f(planned.downloads)} from the project into this folder`);
     if (planned.uploads > 0)   shape.push(`    ↑ upload ${f(planned.uploads)} from this folder INTO the project (they become part of it)`);
-    if (planned.conflicts > 0) shape.push(`    ! ${f(planned.conflicts)} differ on both sides — both kept (your copy is renamed)`);
+    if (planned.conflicts > 0) shape.push(`    ! ${f(planned.conflicts)} differ on both sides: both kept (your copy is renamed)`);
 
     const abort = (): SyncResult => ({
       plan: planned, applied: 0, skipped: planned.actions.length, errors: [],
       summary: [
-        `This folder has files that haven't been synced with this project yet — merge not confirmed.`,
+        `This folder has files that haven't been synced with this project yet: merge not confirmed.`,
         ...shape,
         `Re-run with --yes to merge, or sync into an empty folder.`,
       ].join('\n'),
@@ -973,7 +973,7 @@ async function syncInner(
       const answer = await prompt([
         '',
         `  This folder has files that haven't been synced with this project yet.`,
-        `  Syncing here MERGES the two — nothing is deleted:`,
+        `  Syncing here MERGES the two (nothing is deleted):`,
         '',
         ...shape,
         '',

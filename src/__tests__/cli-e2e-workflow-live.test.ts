@@ -104,10 +104,13 @@ describe('cli-e2e-workflow-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to r
     assert.match(r.stdout, /greet/); // the step name from the YAML
   });
 
-  it('4. run <name> triggers the workflow (POST /workflows/:guid/run)', () => {
-    const r = cli(['workflow', 'run', WF_NAME], { timeout: 60000 });
+  it('4. run <name> runs the workflow and waits for it (POST /workflows/:guid/run)', () => {
+    // `workflow run` waits by default and prints the run id plus each step.
+    const r = cli(['workflow', 'run', WF_NAME], { timeout: 120000 });
     assert.equal(r.status, 0, `run failed: ${r.stderr || r.stdout}`);
-    assert.match(r.stdout, new RegExp(`Triggered "${WF_NAME}"`));
+    assert.match(r.stdout, /wr_\w+/, `run id missing: ${r.stdout}`);
+    assert.match(r.stdout, /completed/, `run did not complete: ${r.stdout}`);
+    assert.match(r.stdout, /greet/, `step name missing: ${r.stdout}`);
   });
 
   it('5. runs <name> lists run history (GET /workflows/:guid/runs)', () => {

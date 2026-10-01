@@ -104,7 +104,7 @@ export function ensureOpencodePluginInstalled(): boolean {
     if (existsSync(dest) && readFileSync(dest, 'utf-8') === readFileSync(src, 'utf-8')) return true;
     mkdirSync(join(opencodeConfigDir(), 'plugins'), { recursive: true });
     copyFileSync(src, dest);
-    console.log('Installed the Gipity plugin for opencode (models + session capture).');
+    console.error('Installed the Gipity plugin for opencode (models + session capture).');
     return true;
   } catch {
     return existsSync(dest);
@@ -162,13 +162,13 @@ export async function ensureOpencodeModelToken(): Promise<string | null> {
 
   if (!getAuth()) return null;
   try {
-    const res = await post<{ data: { token: string; shortGuid: string } }>(
+    const res = await post<{ data: { token: string; short_guid: string } }>(
       '/auth/agent-tokens',
       { name: `opencode models on ${hostname()}`, expiresInDays: MODEL_TOKEN_EXPIRY_DAYS },
     );
     const stored: StoredModelToken = {
       token: res.data.token,
-      guid: res.data.shortGuid,
+      guid: res.data.short_guid,
       mintedAt: new Date().toISOString(),
     };
     mkdirSync(dirname(OPENCODE_TOKEN_FILE), { recursive: true, mode: 0o700 });

@@ -30,7 +30,9 @@ export interface ProjectDirOpts {
   projectGuid?: string;
   projectSlug?: string;
   accountSlug?: string;
-  agentGuid?: string | null;
+  /** Legacy key: `.gipity.json` files written before the agent primitive was
+   *  archived carry one. Set it to prove such a config still loads. */
+  agentGuid?: string;
   apiBase?: string;
 }
 
@@ -42,7 +44,7 @@ export function makeProjectDir(opts: ProjectDirOpts = {}): string {
     projectGuid: opts.projectGuid ?? 'p_TestProj',
     projectSlug: opts.projectSlug ?? 'test-project',
     accountSlug: opts.accountSlug ?? 'test-account',
-    agentGuid: opts.agentGuid ?? 'a_TestAgnt',
+    ...(opts.agentGuid ? { agentGuid: opts.agentGuid } : {}),
     conversationGuid: null,
     apiBase: opts.apiBase ?? 'http://127.0.0.1:0',
     ignore: [],

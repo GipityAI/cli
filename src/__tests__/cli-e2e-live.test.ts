@@ -1,6 +1,6 @@
 // Real platform e2e tests. Skipped unless GIPITY_E2E=1 is set.
 //
-// Cost profile: ~$0.001 (one short LLM turn for `chat`); everything else is
+// Cost profile: ~$0.001 (one short LLM turn for `ask`); everything else is
 // free platform CRUD. Uses dev-bypass auth (magic code 914914) with an
 // `ec-` prefixed @914-6.com email so the platform suppresses real outbound
 // mail (see platform/CLAUDE.md).
@@ -12,7 +12,7 @@
 //   GIPITY_E2E_CODE=914914
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCli, makeTmpHome } from './helpers/spawn-cli.js';
@@ -21,6 +21,7 @@ const E2E_ENABLED = process.env['GIPITY_E2E'] === '1';
 const API_BASE = process.env['GIPITY_E2E_API_BASE'] ?? 'https://a.gipity.ai';
 const EMAIL = process.env['GIPITY_E2E_EMAIL'] ?? 'ec-cli-e2e@914-6.com';
 const CODE = process.env['GIPITY_E2E_CODE'] ?? '914914';
+const FN_NAME = 'e2e-hello';
 
 // Email convention guard - protect against accidentally invoking real SendGrid.
 if (E2E_ENABLED && !EMAIL.startsWith('ec')) {
@@ -75,14 +76,19 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
 
   it('3. add web-fullstack creates expected files', () => {
     // `gipity scaffold` was retired in the move to templates/kits; `add` is the
-    // user path now. web-fullstack keeps every downstream assertion meaningful:
-    // its gipity.yaml declares files + database + functions phases, ships the
-    // `example` function (5a/5b), and auto-creates the project DB (6b).
+    // user path now. web-fullstack ships blank (no example function or test
+    // since 2026-07-23): its gipity.yaml declares files + database + functions
+    // phases and auto-creates the project DB (6b). We write our own tiny
+    // function so 5a/5b exercise a real deployed endpoint; the functions phase
+    // auto-registers any new file under functions/ on deploy.
     const r = cli(['add', 'web-fullstack'], { timeout: 120000 });
     assert.equal(r.status, 0, `add web-fullstack failed: ${r.stderr || r.stdout}`);
     assert.ok(existsSync(join(projectDir, 'gipity.yaml')), 'gipity.yaml missing');
-    assert.ok(existsSync(join(projectDir, 'functions')), 'functions/ missing');
-    assert.ok(existsSync(join(projectDir, 'tests')), 'tests/ missing');
+    assert.ok(existsSync(join(projectDir, 'src')), 'src/ missing');
+
+    mkdirSync(join(projectDir, 'functions'), { recursive: true });
+    writeFileSync(join(projectDir, 'functions', `${FN_NAME}.js`),
+      `export default async function ${FN_NAME.replace(/-/g, '_')}(ctx) {\n  return { ok: true };\n}\n`);
   });
 
   it('4a. deploy dev succeeds (first deploy)', () => {
@@ -107,18 +113,18 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     assert.equal(r.status, 0);
   });
 
-  it('5a. fn list shows the template example function', () => {
+  it('5a. fn list shows the function we deployed', () => {
     const r = cli(['fn', 'list', '--json']);
     assert.equal(r.status, 0);
     const fns = JSON.parse(r.stdout);
     assert.ok(Array.isArray(fns));
-    assert.ok(fns.some((f: any) => f.name === 'example'), 'example not in fn list');
+    assert.ok(fns.some((f: any) => f.name === FN_NAME), `${FN_NAME} not in fn list: ${r.stdout}`);
   });
 
-  it('5b. fn call example returns ok', () => {
-    const r = cli(['fn', 'call', 'example', '{}'], { timeout: 30000 });
+  it('5b. fn call returns ok', () => {
+    const r = cli(['fn', 'call', FN_NAME, '{}', '--json'], { timeout: 30000 });
     assert.equal(r.status, 0, `fn call failed: ${r.stderr || r.stdout}`);
-    assert.match(r.stdout, /"ok"\s*:\s*true|\bok\b/i);
+    assert.equal(JSON.parse(r.stdout).ok, true);
   });
 
   it('6a. db list succeeds', () => {
@@ -153,7 +159,7 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
   it('9. doctor reports sane install info with auth', () => {
     const r = cli(['doctor']);
     assert.equal(r.status, 0);
-    assert.match(r.stdout, /Gipity CLI - doctor/);
+    assert.match(r.stdout, /Gipity - doctor/);
     assert.match(r.stdout, /shim version/);
   });
 

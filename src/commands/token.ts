@@ -37,11 +37,11 @@ tokenCommand
       body.expiresInDays = days;
     }
 
-    const res = await post<{ data: { token: string; shortGuid: string; expiresAt: string | null } }>(
+    const res = await post<{ data: { token: string; short_guid: string; expires_at: string | null } }>(
       '/auth/agent-tokens',
       body,
     );
-    const { token, shortGuid, expiresAt } = res.data;
+    const { token, short_guid: shortGuid, expires_at: expiresAt } = res.data;
 
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
 
@@ -50,10 +50,10 @@ tokenCommand
     console.log('');
     console.log(token);
     console.log('');
-    console.log(muted('Use it from an agent, script, or CI — no login needed:'));
+    console.log(muted('Use it from an agent, script, or CI (no login needed):'));
     console.log(`  export GIPITY_TOKEN=${token}`);
     console.log('');
-    console.log(warning('Copy it now — it will not be shown again.'));
+    console.log(warning('Copy it now. It will not be shown again.'));
   }));
 
 tokenCommand
@@ -76,6 +76,6 @@ tokenCommand
   .option('--json', 'Output as JSON')
   .action((shortGuid: string, opts) => run('Revoke', async () => {
     await del<{ success: boolean }>(`/auth/agent-tokens/${encodeURIComponent(shortGuid)}`);
-    if (opts.json) { console.log(JSON.stringify({ shortGuid, revoked: true })); return; }
+    if (opts.json) { console.log(JSON.stringify({ short_guid: shortGuid, revoked: true })); return; }
     console.log(success(`Revoked token ${bold(shortGuid)}.`));
   }));

@@ -6,7 +6,6 @@ export interface GipityConfig {
   projectGuid: string;
   projectSlug: string;
   accountSlug: string;
-  agentGuid: string;
   conversationGuid: string | null;
   apiBase: string;
   ignore: string[];
@@ -83,7 +82,7 @@ export function resolveApiBase(): string {
     if (!warnedHosts.has(fromConfig)) {
       warnedHosts.add(fromConfig);
       console.error(
-        `⚠ Ignoring untrusted apiBase "${fromConfig}" from .gipity.json — not a gipity.ai host. Using ${DEFAULT_API_BASE}.`,
+        `⚠ Ignoring untrusted apiBase "${fromConfig}" from .gipity.json: not a gipity.ai host. Using ${DEFAULT_API_BASE}.`,
       );
     }
   }
@@ -166,7 +165,6 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
       console.error(`Project not found: ${target}`);
       process.exit(1);
     }
-    const agents = await get<{ data: Array<{ short_guid: string }> }>(`/projects/${match.short_guid}/agents`);
     const accountSlug = await getAccountSlug();
     console.error(dim(`→ (project: ${match.slug} · no file sync)`));
     console.error('');
@@ -175,7 +173,6 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
         projectGuid: match.short_guid,
         projectSlug: match.slug,
         accountSlug,
-        agentGuid: agents.data[0]?.short_guid ?? '',
         conversationGuid: null,
         apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
         ignore: [],
@@ -193,7 +190,7 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
     console.error('Not logged in. Run: gipity login');
     process.exit(1);
   }
-  const res = await get<{ data: { projectGuid: string; projectSlug: string; projectName: string; accountSlug: string; agentGuid: string | null } }>('/projects/default');
+  const res = await get<{ data: { projectGuid: string; projectSlug: string; projectName: string; accountSlug: string } }>('/projects/default');
   if (!res.data?.projectGuid) {
     console.error('Could not resolve your Home project - please contact support.');
     process.exit(1);
@@ -205,7 +202,6 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
       projectGuid: res.data.projectGuid,
       projectSlug: res.data.projectSlug,
       accountSlug: res.data.accountSlug,
-      agentGuid: res.data.agentGuid ?? '',
       conversationGuid: null,
       apiBase: getApiBaseOverride() || DEFAULT_API_BASE,
       ignore: [],
@@ -245,7 +241,7 @@ export function saveConfig(data: GipityConfig): void {
   if (!path) {
     throw new Error(
       'saveConfig: no .gipity.json found to update. ' +
-      'Use saveConfigAt(dir, …) to create a new project config.',
+      'Use saveConfigAt(dir, ...) to create a new project config.',
     );
   }
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n');

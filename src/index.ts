@@ -207,7 +207,23 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
   // so both `gipity -y records delete ...` and `gipity records delete ... --yes`
   // skip confirmation identically.
   if (globalOpts.yes || actionCommand.opts().yes) setAutoConfirm(true);
+  rejectBlankIdArgs(actionCommand);
 });
+
+// An identifier positional (<guid>, <runGuid>, <short_guid>, <id>, ...) passed
+// as "" or whitespace - usually an unset shell variable - would otherwise go
+// out as an empty path segment and come back as a confusing server error (or
+// hit a different route entirely). Treat it like a missing argument, locally.
+const ID_ARG = /(guid|id)$/i;
+function rejectBlankIdArgs(cmd: Command): void {
+  cmd.registeredArguments.forEach((arg, i) => {
+    if (!arg.required || arg.variadic || !ID_ARG.test(arg.name())) return;
+    const value = cmd.args[i];
+    if (typeof value === 'string' && value.trim() === '') {
+      cmd.error(`error: argument '${arg.name()}' must not be empty`, { code: 'commander.missingArgument' });
+    }
+  });
+}
 
 // Bracket non-JSON command output with leading/trailing blank lines centrally,
 // so commands never hand-roll their own boundary spacing.

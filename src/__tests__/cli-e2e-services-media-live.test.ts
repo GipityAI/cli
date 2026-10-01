@@ -219,7 +219,7 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
   it('service call surfaces an unknown service as an error (non-zero exit)', () => {
     const r = cli(['service', 'call', 'definitely-not-a-service', '{}']);
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr + r.stdout, /not found/i);
+    assert.match(r.stderr + r.stdout, /unknown|not found/i);
   });
 
   // ── page inspect/screenshot --fake-media ────────────────────────

@@ -113,7 +113,6 @@ test('gipity init creates a new project in an empty directory', async () => {
   mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
   mock.on('GET /projects', { body: { data: [], totalCount: 0 } });
   mock.on('POST /projects', { body: { data: { short_guid: 'p_NewInit000', name: 'my-app', slug: 'my-app' } } });
-  mock.on('GET /projects/p_NewInit000/agents', { body: { data: [] } });
   mock.on('GET /projects/p_NewInit000/files/tree', { body: { data: [] } });
 
   const dir = freshDir();
@@ -121,6 +120,9 @@ test('gipity init creates a new project in an empty directory', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Created project "my-app"/);
   assert.ok(existsSync(join(dir, '.gipity.json')), 'init should write .gipity.json into cwd');
+  const cfg = JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8'));
+  assert.equal('agentGuid' in cfg, false, 'no agent key in a fresh config');
+  assert.ok(mock.requests().every(q => !q.url.includes('/agents')), 'never looks up project agents');
 });
 
 test('gipity init --no-capture writes captureHooks:false and says sessions are not recorded', async () => {
@@ -128,7 +130,6 @@ test('gipity init --no-capture writes captureHooks:false and says sessions are n
   mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
   mock.on('GET /projects', { body: { data: [], totalCount: 0 } });
   mock.on('POST /projects', { body: { data: { short_guid: 'p_NoCap00000', name: 'no-cap', slug: 'no-cap' } } });
-  mock.on('GET /projects/p_NoCap00000/agents', { body: { data: [] } });
   mock.on('GET /projects/p_NoCap00000/files/tree', { body: { data: [] } });
 
   const dir = freshDir();
@@ -144,7 +145,6 @@ test('gipity init leaves session recording off; --capture turns it on and pairs 
   mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
   mock.on('GET /projects', { body: { data: [], totalCount: 0 } });
   mock.on('POST /projects', { body: { data: { short_guid: 'p_CapDef0000', name: 'cap-def', slug: 'cap-def' } } });
-  mock.on('GET /projects/p_CapDef0000/agents', { body: { data: [] } });
   mock.on('GET /projects/p_CapDef0000/files/tree', { body: { data: [] } });
   mock.on('POST /remote-devices', { status: 201, body: { data: { short_guid: 'rd_CapDev000', name: 'Linux PC', platform: 'linux', token: 'tok_cap' } } });
 

@@ -23,7 +23,7 @@ function renderStatus(status: ConnectStatus): void {
   console.log(`  Payouts:  ${payouts}`);
   console.log(`  Onboarding: ${status.details_submitted ? 'complete' : 'incomplete'}`);
   if (!status.charges_enabled) {
-    console.log(muted('\nCharges are not enabled yet — finish Stripe onboarding via `gipity payments connect`.'));
+    console.log(muted('\nCharges are not enabled yet: finish Stripe onboarding via `gipity payments connect`.'));
   }
 }
 
@@ -33,7 +33,7 @@ export const paymentsCommand = new Command('payments')
 
 paymentsCommand
   .command('connect')
-  .description('Start (or resume) Stripe onboarding for this app — prints a link to finish in your browser')
+  .description('Start (or resume) Stripe onboarding for this app: prints a link to finish in your browser')
   .option('--return-url <url>', 'Where Stripe redirects after onboarding')
   .option('--json', 'Output as JSON')
   .action((opts) => run('Payments', async () => {

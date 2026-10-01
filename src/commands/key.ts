@@ -94,7 +94,7 @@ keyCommand
       res.data,
       opts,
       'No API keys. Mint one with: gipity key create "my script" --role editor',
-      (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${k.prefix}…  last used ${fmtDate(k.last_used_at)}  expires ${fmtDate(k.expires_at)}`)}`,
+      (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${k.prefix}...  last used ${fmtDate(k.last_used_at)}  expires ${fmtDate(k.expires_at)}`)}`,
     );
   }));
 
