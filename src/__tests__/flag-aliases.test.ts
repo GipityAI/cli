@@ -13,6 +13,8 @@ function buildProgram(): Command {
   const fn = program.command('fn');
   fn.command('call <name> [body]').option('--data <json>', 'request body');
   program.command('gmail').command('send').requiredOption('--body <text>', 'email body');
+  program.command('add <name>').option('--title <title>', 'app title').option('--force', 'overwrite').option('-o, --output <path>', 'out');
+  program.command('sandbox').command('run <cmd...>').option('--title <t>', 't');
   return program;
 }
 
@@ -115,6 +117,34 @@ describe('normalizeAliases', () => {
         normalizeAliases(['node', 'gipity', 'gmail', 'send', '--body', 'hello'], program),
         ['node', 'gipity', 'gmail', 'send', '--body', 'hello'],
       );
+    });
+  });
+
+  describe('key=value positional read as the option it names (cli#199)', () => {
+    const p = buildProgram();
+    const run = (...args: string[]) => normalizeAliases(['node', 'gipity', ...args], p).slice(2);
+
+    it('rewrites an excess title=... into --title=...', () => {
+      assert.deepEqual(run('add', '2d-game', 'title=Gip Brick Breaker'), ['add', '2d-game', '--title=Gip Brick Breaker']);
+    });
+
+    it('counts option values so a flag before the operand does not shift positions', () => {
+      assert.deepEqual(run('add', '--output', 'x', '2d-game', 'title=T'), ['add', '--output', 'x', '2d-game', '--title=T']);
+    });
+
+    it('maps an aliased key (out=) through FLAG_ALIASES', () => {
+      assert.deepEqual(run('add', '2d-game', 'out=dir'), ['add', '2d-game', '--output=dir']);
+    });
+
+    it('leaves a k=v that fills a declared positional alone', () => {
+      assert.deepEqual(run('add', 'title=x'), ['add', 'title=x']);
+    });
+
+    it('leaves boolean flags, unknown keys, variadic commands and post-`--` tokens alone', () => {
+      assert.deepEqual(run('add', '2d-game', 'force=true'), ['add', '2d-game', 'force=true']);
+      assert.deepEqual(run('add', '2d-game', 'colour=red'), ['add', '2d-game', 'colour=red']);
+      assert.deepEqual(run('sandbox', 'run', 'echo', 'title=x'), ['sandbox', 'run', 'echo', 'title=x']);
+      assert.deepEqual(run('add', '2d-game', '--', 'title=x'), ['add', '2d-game', '--', 'title=x']);
     });
   });
 });

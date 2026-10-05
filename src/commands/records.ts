@@ -4,7 +4,6 @@ import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { bold, muted } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
-import { confirm } from '../utils.js';
 
 // All commands hit the app API (https://a.gipity.ai/api/<guid>/records/...),
 // which authorizes the logged-in owner via their Bearer token. (The native
@@ -197,6 +196,10 @@ recordsCommand
 // wiring, so `--purge` (the server's ?purge=1) is the one call that really
 // removes it. The plain success line says which of the two happened and names
 // the escape hatch, so nobody has to go spelunking through gipity.js to find it.
+// No confirmation prompt: the call names exactly one row (table + id), the same
+// precision as `records update`, which overwrites without asking. A prompt there
+// only cost every headless cleanup a `--yes` retry (cli#192); prompts stay on the
+// commands with a wide blast radius (a whole function, database or project).
 recordsCommand
   .command('delete <table> <id>')
   .description('Delete a record (soft-delete when the table declares one; --purge removes it for good)')
@@ -204,11 +207,6 @@ recordsCommand
   .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, id: string, opts) => run('Delete', async () => {
-    const what = opts.purge ? `Purge record ${id} from "${table}" (also erases its history)?` : `Delete record ${id} from "${table}"?`;
-    if (!await confirm(what)) {
-      printResult('Cancelled.', opts, { table, id, deleted: false, cancelled: true });
-      return;
-    }
     const api = await recordsHttp(opts);
     const res = await api.del<{ data?: any }>(
       `/api/${api.guid}/records/${table}/${id}${opts.purge ? '?purge=1' : ''}`,

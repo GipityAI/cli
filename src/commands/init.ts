@@ -261,12 +261,12 @@ Working with an existing Gipity project:
         console.log(success('Ready! Open this directory in your AI coding tool.'));
       }
     } catch (err: any) {
-      // `fetch failed` is Node's TypeError when DNS/connect fails. Translate
-      // it to something an agent can act on instead of a cryptic stack line.
+      // `fetch failed: could not reach <origin> (<cause>)` is a DNS/connect
+      // failure (see net.ts). Say what that means for init on top of the cause.
       const msg = err?.message ?? String(err);
-      if (msg === 'fetch failed' || /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN/.test(msg)) {
-        console.error(clrError('Init failed: could not reach Gipity servers.'));
-        console.error(muted('Check your network connection and try again. Sandboxed environments often have no outbound network - run this on a machine with internet access.'));
+      if (msg.startsWith('fetch failed') || /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN/.test(msg)) {
+        console.error(clrError(`Init failed: could not reach Gipity servers. ${msg}`));
+        console.error(muted('Sandboxed environments often have no outbound network (or need HTTPS_PROXY set) - run this on a machine with internet access.'));
       } else {
         console.error(clrError(`Init failed: ${msg}`));
       }

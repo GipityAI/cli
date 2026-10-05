@@ -213,26 +213,23 @@ test('gipity records create --anon posts through the public path', async () => {
   assert.deepEqual(JSON.parse(r.stdout.trim()), { id: 7, title: 'From a visitor' });
 });
 
-// A destructive command that can't get its confirmation in a headless context
-// must FAIL, not cancel quietly: an agent that redirects output
-// (`... --purge >/dev/null 2>&1`) only ever sees the exit code, and a clean 0
-// there reads as "the row is gone" when nothing happened.
-test('gipity records delete without --yes exits non-zero in a non-TTY and deletes nothing', async () => {
+// A single-row delete names its target exactly, so it runs without a
+// confirmation round-trip even headless (cli#192): `--purge` alone is enough.
+test('gipity records delete --purge runs in a non-TTY without --yes', async () => {
   mock.reset();
-  let sawDelete = false;
-  mock.on('DELETE /api/p_TestProj/records/incidents/7', () => {
-    sawDelete = true;
+  let sawUrl = '';
+  mock.on('DELETE /api/p_TestProj/records/incidents/7', (req: any) => {
+    sawUrl = req.url;
     return { body: { data: { id: 7, purged: true } } };
   });
   const r = await fresh(['records', 'delete', 'incidents', '7', '--purge']);
-  assert.notEqual(r.status, 0, 'unanswerable confirmation must be a failure, not a silent cancel');
-  assert.equal(sawDelete, false, 'nothing may be deleted without confirmation');
-  assert.match(r.stderr, /Confirmation required \(non-interactive\)/);
-  // The hint is the exact command to re-run, --purge and all.
-  assert.match(r.stderr, /records delete incidents 7 --purge --yes/);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(sawUrl, /purge=1/);
+  assert.match(r.stdout, /Purged/);
+  assert.doesNotMatch(r.stderr, /Confirmation required/);
 });
 
-test('gipity records delete --purge --yes goes through and says the history is gone', async () => {
+test('gipity records delete --purge --yes (still accepted) goes through and says the history is gone', async () => {
   mock.reset();
   let sawUrl = '';
   mock.on('DELETE /api/p_TestProj/records/incidents/7', (req: any) => {

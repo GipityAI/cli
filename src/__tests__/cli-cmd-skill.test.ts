@@ -127,6 +127,25 @@ test('gipity skill read --section with no match lists the available sections', a
   assert.match(r.stderr, /Sections: app-database, queries, limits/);
 });
 
+test('gipity skill read --section resolves a guessed slug to its clear closest match', async () => {
+  // An agent that hasn't read the doc guesses word order / plurals:
+  // `statements-per` for the real `per-statement` under ## Limits.
+  mockDoc(DOC);
+  const r = await fresh(['skill', 'read', 'app-database', '--section', 'statements-per']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /No section "statements-per"; showing the closest match "per-statement"/);
+  assert.match(r.stdout, /50,000 chars/);
+  assert.doesNotMatch(r.stdout, /Each file runs once\./);
+});
+
+test('gipity skill read --section with an ambiguous guess still lists the sections', async () => {
+  mockDoc(DOC + '\n\n## Query limits\n\nSee above.');
+  // `limit-rules` shares one word with both `limits` and `query-limits`: a tie, so no guess.
+  const amb = await fresh(['skill', 'read', 'app-database', '--section', 'limit-rules']);
+  assert.equal(amb.status, 1);
+  assert.match(amb.stderr, /Sections: app-database, queries, limits/);
+});
+
 test('gipity skill read takes several names in one call', async () => {
   mockDoc(DOC);
   const r = await fresh(['skill', 'read', 'app-database', 'app-auth']);

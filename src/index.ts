@@ -6,6 +6,7 @@ import { dirname, resolve } from 'path';
 import { setApiBaseOverride } from './config.js';
 import { setAutoConfirm } from './utils.js';
 import { installOutputFrame } from './helpers/output.js';
+import { installNetworking } from './net.js';
 import { GIPITY_TAGLINE } from './knowledge.js';
 import { getAuth, sessionExpired } from './auth.js';
 import { loginCommand } from './commands/login.js';
@@ -63,7 +64,7 @@ import { gmailCommand } from './commands/gmail.js';
 import { textCommand } from './commands/text.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
 import { bold, dim, brand, muted, success } from './colors.js';
-import { normalizeAliases } from './flag-aliases.js';
+import { normalizeAliases, resolveTarget } from './flag-aliases.js';
 import { installOutputTrace } from './trace.js';
 
 // With GIPITY_TRACE_OUTPUT=1, tee all stdout/stderr to ~/.gipity/trace/
@@ -72,6 +73,9 @@ import { installOutputTrace } from './trace.js';
 installOutputTrace('index');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// Before any request: honor HTTP(S)_PROXY and give network failures a host + cause.
+installNetworking();
+
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
 
 // Local builds stamp dist/build-info.json (git SHA + dirty flag) via the npm
@@ -204,7 +208,7 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
   if (globalOpts.apiBase) setApiBaseOverride(globalOpts.apiBase);
   // Honor `-y`/`--yes` whether it came before the subcommand (the global flag)
   // or after it (the per-command flag registered by enableYesEverywhere below),
-  // so both `gipity -y records delete ...` and `gipity records delete ... --yes`
+  // so both `gipity -y memory delete ...` and `gipity memory delete ... --yes`
   // skip confirmation identically.
   if (globalOpts.yes || actionCommand.opts().yes) setAutoConfirm(true);
   rejectBlankIdArgs(actionCommand);
@@ -388,38 +392,15 @@ function fullCommandName(cmd: Command): string {
   for (let c: Command | null = cmd; c; c = c.parent) parts.unshift(c.name());
   return parts.join(' ');
 }
-// Resolve the deepest (sub)command the user actually targeted by walking the
-// command tree against the leading positional tokens of argv (skipping flags,
-// and a root value-option's value). Used at error time to render the RIGHT
-// command's help — see enableHelpAfterError below for why we can't just capture
-// the command in a closure.
-function resolveTargetCommand(argv: string[]): Command {
-  const args = argv.slice(2);
-  const rootValueFlags = new Set(
-    program.options.filter(o => o.long && o.required).map(o => o.long as string),
-  );
-  let cmd: Command = program;
-  for (let i = 0; i < args.length; i++) {
-    const tok = args[i];
-    if (tok.startsWith('-')) {
-      if (!tok.includes('=') && rootValueFlags.has(tok)) i++; // consume its value
-      continue;
-    }
-    const next = cmd.commands.find(c => c.name() === tok || c.aliases().includes(tok));
-    if (!next) break; // first non-subcommand operand ends the command chain
-    cmd = next;
-  }
-  return cmd;
-}
-// ── Excess positional → name it, and map `key=value` back to `--key` ──
+// ── Excess positional -> name it ──
 // Commander's stock excess-arguments error is just a count ("Expected 1 argument
-// but got 2"), which leaves an agent to guess WHICH token was wrong. A very
-// common miss is carrying an option over as a positional in `key=value` shape -
-// `gipity add 3d-engine title="Blocks"` - where the fix is `--title`. Override
+// but got 2"), which leaves an agent to guess WHICH token was wrong. Override
 // the message once (the method lives on the shared prototype, so this covers
-// every command) to name the offending token(s) and, when one is key=value
-// shaped, point straight at the flag they meant. Bracketing/help still work:
-// this only changes the string handed to outputError below.
+// every command) to name the offending token(s). A `key=value` positional whose
+// key IS a value option of the command never gets here: normalizeAliases reads
+// it as `--key=value`. One that still arrives names no option, so say so and
+// let the help below list the real ones. Bracketing/help still work: this only
+// changes the string handed to outputError below.
 (Command.prototype as unknown as { _excessArguments(a: string[]): void })._excessArguments =
   function (this: Command, receivedArgs: string[]): void {
     if ((this as unknown as { _allowExcessArguments: boolean })._allowExcessArguments) return;
@@ -430,7 +411,7 @@ function resolveTargetCommand(argv: string[]): Command {
     let message = `error: unexpected extra argument${excess.length === 1 ? '' : 's'} ${list}${forSubcommand}.`;
     const kv = excess.map(a => /^([A-Za-z][\w-]*)=/.exec(a)).find(Boolean);
     if (kv) {
-      message += ` Options are passed as \`--${kv[1]} <value>\`, not \`${kv[1]}=...\` - did you mean \`--${kv[1]}\`?`;
+      message += ` '${this.name()}' has no \`--${kv[1]}\` option; options are passed as \`--name <value>\`.`;
     }
     (this as unknown as { error(m: string, o: { code: string }): void })
       .error(message, { code: 'commander.excessArguments' });
@@ -451,7 +432,8 @@ function enableHelpAfterError(cmd: Command): void {
     // an unknown option on `fn call` would print `fn delete`'s help. Installing
     // one identical, self-resolving handler everywhere sidesteps the clobber.
     outputError: (str, write) => {
-      const target = resolveTargetCommand(process.argv);
+      // Resolve the deepest (sub)command the user actually targeted.
+      const target = resolveTarget(process.argv, program).leaf;
       const msg = str.replace(/\n+$/, '');
       write(`${msg}\n\n`);
       write(`Showing \`${fullCommandName(target)} --help\`:\n\n`);
@@ -465,8 +447,8 @@ enableHelpAfterError(program);
 
 // ── `-y`/`--yes` accepted AFTER any subcommand, not only before it ──────
 // The global `-y` lives on `program`, so Commander parses it only when it
-// precedes the subcommand (`gipity -y records delete ...`). Agents and humans
-// instinctively append it instead (`gipity records delete ... --yes`), which
+// precedes the subcommand (`gipity -y memory delete ...`). Agents and humans
+// instinctively append it instead (`gipity memory delete ... --yes`), which
 // Commander would reject as an unknown option and dump help for. Register the
 // flag on every leaf command so both positions work identically; the preAction
 // hook honors whichever one was set. Skip commands that already declare their
@@ -480,6 +462,22 @@ function enableYesEverywhere(cmd: Command): void {
   if (!hasYes) cmd.addOption(new Option('-y, --yes', 'Skip confirmation prompts').hideHelp());
 }
 enableYesEverywhere(program);
+
+// ── `--help` on a guessed command -> unknown-command error, not the parent's help ──
+// Commander handles `--help` before it resolves operands, so `gipity api-key
+// --help` (no such command) printed the ROOT help and exited 0: a catalog dump
+// that reads as success and never says the command doesn't exist. When the
+// help target is a command group and the token after it names none of its
+// subcommands, report the unknown command (with that group's help, bracketed
+// like every other usage error) instead.
+{
+  const target = resolveTarget(process.argv, program);
+  const helpAsked = process.argv.slice(2).some(a => a === '--help' || a === '-h');
+  if (helpAsked && target.operand !== undefined && target.leaf.commands.length > 0
+      && target.leaf.registeredArguments.length === 0) {
+    target.leaf.error(`error: unknown command '${target.operand}'`, { code: 'commander.unknownCommand' });
+  }
+}
 
 // Auto-fetch related skill docs when --help is run on a doc-bearing TOP-LEVEL
 // command (e.g. `gipity fn --help`, `gipity db --help`). It must NOT fire for a

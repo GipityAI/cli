@@ -40,9 +40,13 @@ export const FLAG_ALIASES: Record<string, string> = {
 export function normalizeAliases(argv: string[], program?: Command): string[] {
   // Flags the targeted command declares for real — never alias these, so a
   // command's own option always wins over a global guess.
-  const realFlags = program ? collectRealFlags(argv, program) : new Set<string>();
+  const target = program ? resolveTarget(argv, program) : null;
+  const realFlags = new Set<string>();
+  for (const c of target?.chain ?? []) {
+    for (const opt of c.options) if (opt.long) realFlags.add(opt.long);
+  }
 
-  return argv.map(tok => {
+  const aliased = argv.map(tok => {
     if (!tok.startsWith('--')) return tok;
     const eq = tok.indexOf('=');
     if (eq > 0) {
@@ -54,16 +58,73 @@ export function normalizeAliases(argv: string[], program?: Command): string[] {
     if (realFlags.has(tok)) return tok;
     return FLAG_ALIASES[tok] ?? tok;
   });
+  return target ? rewriteKeyValuePositionals(aliased, target) : aliased;
+}
+
+/**
+ * `key=value` positional -> `--key=value`, when it can only have meant the flag.
+ *
+ * Agents keep carrying an option over as a bare `key=value` positional
+ * (`gipity add 2d-game title="Brick Breaker"`), the form many CLIs and
+ * Makefiles accept. Rather than error and cost a retry turn, read it as the
+ * option - but only when that is unambiguous: the token sits PAST the
+ * command's declared positionals (so it can't be a real argument that merely
+ * contains `=`, like a SQL string or an env assignment for `sandbox run`), the
+ * command has no variadic argument to soak it up, and `--key` (or its alias) is
+ * a value-taking option the targeted command actually declares. Anything else is
+ * left alone, so commander's excess-argument error still names it.
+ */
+function rewriteKeyValuePositionals(argv: string[], target: ResolvedTarget): string[] {
+  const { leaf, chain, firstOperand } = target;
+  const declared = leaf.registeredArguments;
+  if (leaf.commands.length > 0 || declared.some(a => a.variadic)) return argv;
+  const options = chain.flatMap(c => c.options);
+  const byLong = new Map(options.filter(o => o.long).map(o => [o.long as string, o]));
+  const byShort = new Map(options.filter(o => o.short).map(o => [o.short as string, o]));
+  const takesValue = (tok: string): boolean => {
+    if (tok.includes('=')) return false;
+    const o = byLong.get(tok) ?? byShort.get(tok);
+    return !!o && (o.required || o.optional);
+  };
+
+  const out = argv.slice();
+  let positional = 0;
+  for (let i = firstOperand; i < out.length; i++) {
+    const tok = out[i];
+    if (tok === '--') break; // everything after is a literal operand
+    if (tok.startsWith('-')) {
+      if (takesValue(tok)) i++; // skip its value
+      continue;
+    }
+    const index = positional++;
+    if (index < declared.length) continue;
+    const kv = /^([A-Za-z][\w-]*)=([\s\S]*)$/.exec(tok);
+    if (!kv) continue;
+    const flag = [`--${kv[1]}`, FLAG_ALIASES[`--${kv[1]}`]].find(f => {
+      const o = f ? byLong.get(f) : undefined;
+      return !!o && (o.required || o.optional);
+    });
+    if (flag) out[i] = `${flag}=${kv[2]}`;
+  }
+  return out;
+}
+
+export interface ResolvedTarget {
+  /** program -> ... -> the deepest subcommand argv names. */
+  chain: Command[];
+  leaf: Command;
+  /** Index in argv just past the last subcommand name. */
+  firstOperand: number;
+  /** The first operand that is not a subcommand of `leaf`, if any. */
+  operand?: string;
 }
 
 /**
  * Resolve the deepest subcommand argv targets (descending program → command →
- * subcommand by name/alias) and return every long flag declared on it and its
- * ancestors. Used to suppress an alias when the resolved command owns that flag.
+ * subcommand by name/alias). Used to suppress an alias when the resolved command
+ * owns that flag, and to find the command's operands.
  */
-function collectRealFlags(argv: string[], program: Command): Set<string> {
-  // process.argv is [node, script, ...args]; start scanning at the first arg.
-  const args = argv.slice(2);
+export function resolveTarget(argv: string[], program: Command): ResolvedTarget {
   let cmd: Command = program;
   const chain: Command[] = [program];
 
@@ -74,23 +135,20 @@ function collectRealFlags(argv: string[], program: Command): Set<string> {
     program.options.filter(o => o.long && o.required).map(o => o.long as string),
   );
 
-  for (let i = 0; i < args.length; i++) {
-    const tok = args[i];
+  // process.argv is [node, script, ...args]; start scanning at the first arg.
+  let firstOperand = 2;
+  let operand: string | undefined;
+  for (let i = 2; i < argv.length; i++) {
+    const tok = argv[i];
     if (tok.startsWith('-')) {
       if (!tok.includes('=') && rootValueFlags.has(tok)) i++; // consume its value
       continue;
     }
     const next = cmd.commands.find(c => c.name() === tok || c.aliases().includes(tok));
-    if (!next) break;
+    if (!next) { operand = tok; break; }
     cmd = next;
     chain.push(next);
+    firstOperand = i + 1;
   }
-
-  const flags = new Set<string>();
-  for (const c of chain) {
-    for (const opt of c.options) {
-      if (opt.long) flags.add(opt.long);
-    }
-  }
-  return flags;
+  return { chain, leaf: cmd, firstOperand, operand };
 }

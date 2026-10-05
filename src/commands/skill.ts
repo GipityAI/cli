@@ -105,17 +105,51 @@ function tocText(sections: Section[]): string {
 
 interface ReadOpts { json?: boolean; toc?: boolean; section?: string; grep?: string; }
 
-/** Apply --toc / --section / --grep to a doc. Returns the text to print, or
- *  null when the filter matched nothing (caller reports it and exits 1). */
-function filterContent(content: string, sections: Section[], opts: ReadOpts): string | null {
+// Words that carry no meaning in a guessed slug (`functions-in-gipity-yaml`).
+const SLUG_STOPWORDS = new Set(['a', 'an', 'and', 'the', 'in', 'of', 'on', 'to', 'for', 'with', 'via', 'how', 'from', 'your']);
+function slugWords(slug: string): string[] {
+  return slug.split('-').filter(w => w && !SLUG_STOPWORDS.has(w)).map(w => w.replace(/s$/, ''));
+}
+
+/** The section a guessed slug most plausibly means: the one sharing the most
+ *  meaningful words with it (plural-insensitive, any order), provided it shares
+ *  at least half of them and no other section ties. Slugs are only advertised
+ *  by a full read or --toc, so an agent targeting a doc it hasn't read guesses
+ *  (`functions-in-gipity-yaml` for `gipity-yaml-function-permissions`); serving
+ *  the clear winner, labelled as such, saves the guess-and-correct turn. */
+function closestSection(sections: Section[], want: string): Section | null {
+  const words = [...new Set(slugWords(want))];
+  if (words.length === 0) return null;
+  const scored = sections.map(s => {
+    const have = new Set(slugWords(s.slug));
+    return { s, score: words.filter(w => have.has(w)).length };
+  }).sort((a, b) => b.score - a.score);
+  const [best, second] = scored;
+  if (!best || best.score * 2 < words.length || best.score === 0) return null;
+  if (second && second.score === best.score) return null;
+  return best.s;
+}
+
+/** Apply --toc / --section / --grep to a doc. Returns the text to print (plus a
+ *  note when --section resolved to a closest match rather than the exact slug),
+ *  or null when the filter matched nothing (caller reports it and exits 1). */
+function filterContent(content: string, sections: Section[], opts: ReadOpts): { text: string; note?: string } | null {
   const lines = content.split('\n');
-  if (opts.toc) return tocText(sections);
+  if (opts.toc) return { text: tocText(sections) };
 
   let hits: Section[] = [];
+  let note: string | undefined;
   if (opts.section) {
     const want = slugify(opts.section);
     hits = sections.filter(s => s.slug === want);
     if (hits.length === 0) hits = sections.filter(s => s.slug.includes(want));
+    if (hits.length === 0) {
+      const closest = closestSection(sections, want);
+      if (closest) {
+        hits = [closest];
+        note = `No section "${opts.section}"; showing the closest match "${closest.slug}" (all slugs: --toc).`;
+      }
+    }
   } else if (opts.grep) {
     let re: RegExp;
     try { re = new RegExp(opts.grep, 'i'); }
@@ -131,13 +165,13 @@ function filterContent(content: string, sections: Section[], opts: ReadOpts): st
     });
     hits = sections.filter(s => matched.has(s));
   } else {
-    return content;
+    return { text: content };
   }
 
   if (hits.length === 0) return null;
   // Drop sections already contained in an outer hit so nothing prints twice.
   const outer = hits.filter(s => !hits.some(o => o !== s && o.start <= s.start && s.end <= o.end));
-  return outer.map(s => sectionText(lines, s)).join('\n\n');
+  return { text: outer.map(s => sectionText(lines, s)).join('\n\n'), note };
 }
 
 export const skillCommand = new Command('skill')
@@ -161,7 +195,7 @@ skillCommand
   .command('read <names...>')
   .description('Read one or more skills (whole doc, or one part with --toc/--section/--grep)')
   .option('--toc', 'Print the doc outline (section slugs + line numbers) instead of the content')
-  .option('--section <slug>', 'Print only this section (slug or heading text; subsections included)')
+  .option('--section <slug>', 'Print only this section (slug or heading text; subsections included). A guess that clearly matches one section by its words prints that section')
   .option('--grep <term>', 'Print only the sections matching this term (case-insensitive regex)')
   .option('--json', 'Output as JSON')
   .action((names: string[], opts: ReadOpts) => run('Read', async () => {
@@ -208,7 +242,8 @@ skillCommand
       if (opts.json) {
         jsonDocs.push({
           ...detail,
-          content: filtered,
+          content: filtered.text,
+          ...(filtered.note ? { note: filtered.note } : {}),
           lines: lines.length,
           sections: sections.map(s => ({ slug: s.slug, title: s.title, level: s.level, line: s.start })),
         });
@@ -217,7 +252,8 @@ skillCommand
       if (printed > 0) console.log('');  // blank line between docs in a multi-name read
       if (note) console.log(note);
       console.log(mapLine(name, lines, sections));
-      console.log(filtered);
+      if (filtered.note) console.log(muted(filtered.note));
+      console.log(filtered.text);
       printed++;
     }
 

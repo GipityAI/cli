@@ -97,15 +97,30 @@ describe('cli-smoke: error behavior', () => {
   });
 
   it('excess args print the error AND that command\'s help inline', () => {
-    // Mirrors an agent guessing `gipity add <tmpl> title=...` (positional k=v).
-    const r = runCli(['add', '2d-game', 'title=x']);
+    // A positional k=v whose key is no option of the command (a real option's
+    // key=value is read as the flag; see flag-aliases.test).
+    const r = runCli(['add', '2d-game', 'colour=x']);
     const out = r.stdout + r.stderr;
-    // The error names the offending token and maps the k=v form to the flag.
-    assert.match(out, /unexpected extra argument 'title=x' for 'add'/);
-    assert.match(out, /did you mean `--title`/);
+    // The error names the offending token and says the key is no option.
+    assert.match(out, /unexpected extra argument 'colour=x' for 'add'/);
+    assert.match(out, /'add' has no `--colour` option/);
     assert.match(out, /Showing `gipity add --help`:/);
-    // The help reveals the real flag the agent should have used.
+    // The help reveals the real flags.
     assert.match(out, /--title/);
+  });
+
+  it('`--help` on a guessed command is an unknown-command error, not a help dump (cli#196)', () => {
+    for (const [argv, group] of [[['api-key', '--help'], 'gipity'], [['fn', 'bogus', '--help'], 'gipity fn']] as const) {
+      const r = runCli([...argv]);
+      const out = (r.stdout + r.stderr).replace(/\s+$/, '');
+      assert.notEqual(r.status, 0, `gipity ${argv.join(' ')} should fail`);
+      assert.match(out.slice(out.lastIndexOf('\n') + 1), new RegExp(`error: unknown command '${argv[argv.length - 2]}'`));
+      assert.ok(out.includes(`Showing \`${group} --help\`:`));
+    }
+    // A real command's --help is untouched.
+    const ok = runCli(['fn', 'call', '--help']);
+    assert.equal(ok.status, 0);
+    assert.match(ok.stdout, /Usage: gipity fn call/);
   });
 
   it('excess args on a nested subcommand label the full command path', () => {

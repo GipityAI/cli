@@ -131,7 +131,7 @@ export async function confirm(
     // offer, declining and carrying on is the right answer (`headless: 'no'`).
     // For everything else the command did NOT do what it was asked to do, so
     // exit non-zero: an agent that pipes or suppresses output
-    // (`gipity records delete games 1 --purge >/dev/null 2>&1`) otherwise sees
+    // (`gipity memory delete notes >/dev/null 2>&1`) otherwise sees
     // a clean exit 0 and believes the delete happened, then burns turns
     // discovering it silently cancelled. The exit status is the only signal
     // that survives redirection. The message echoes the exact command to
