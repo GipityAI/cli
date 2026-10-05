@@ -73,6 +73,11 @@ export function normalizeEvalResult(raw: string): { result: string; noValue: boo
   return { result: raw, noValue: false };
 }
 
+// Named on every signed-in run that did not ask for the database undo.
+export const RESTORE_DB_TIP =
+  'Driving a write flow (submit, add, edit, delete)? Add --restore-db: the app database is checkpointed before the ' +
+  'script and rolled back after, so test rows never land in the real data and no cleanup step is needed.';
+
 // Shown when a run returns a structurally empty value ({}, [], or an object whose
 // every field is null/''). That is NOT the same as "no value": the script ran and
 // read the page — it just read it at an instant where the state it wanted did not
@@ -805,6 +810,10 @@ export const pageEvalCommand = new Command('eval')
         console.log(d.auth.established
           ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
           : `${warning('Auth: session NOT established')}${d.auth.detail ? `: ${d.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
+        // A signed-in run is how a write flow gets driven (add, edit, submit,
+        // delete), and every such run writes real rows. Agents found --auth but
+        // not the undo, then hand-scrubbed leaked rows that skewed the next run.
+        if (d.auth.established && !opts.restoreDb) console.log(muted(RESTORE_DB_TIP));
       } else {
         console.log(muted('Auth: anonymous visitor (signed out; pass --auth to run as your Gipity account)'));
       }
@@ -914,8 +923,16 @@ Examples:
 
 Module resolution: dynamic import() specifiers starting with ./ or ../ resolve
 against the PAGE URL, so import('./packages/i18n/index.js') loads the app's own
-module without hand-building the deployed /account/project/ path. Absolute paths
-and full URLs pass through unchanged.
+module without hand-building the deployed /account/project/ path. On app.gipity.ai
+and dev.gipity.ai a root path means the APP root: import('/js/core.js') loads
+/account/project/js/core.js. Full URLs pass through unchanged.
+
+Driving a form or a write flow: the body can fill and submit the real form
+(form.requestSubmit()) and poll for the app's status in the same run. If the run
+fails with "a <form> was submitted and nothing called event.preventDefault()",
+the submit handler was not wired yet (gate with --wait-for on the app's ready
+signal) or prevents default only after an await. Writes go to the real app
+database: add --restore-db and they are rolled back when the run ends.
 
 Time budget: the script runs under a ${EVAL_SCRIPT_BUDGET_MS / 1000}s in-page budget (${EVAL_SCRIPT_BUDGET_CAMERA_MS / 1000}s with --camera/--fake-media),
 counting its own await/setTimeout pauses. Two separate knobs:

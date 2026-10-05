@@ -210,6 +210,14 @@ export const addCommand = new Command('add')
       process.exitCode = 1;
       return;
     }
+    // `name=3d-engine` is an option carried over in key=value shape (the same
+    // miss the excess-argument handler catches for `title=...`). Sent as-is it
+    // comes back "not a known template or kit", which reads as a catalog problem
+    // rather than an argument-shape one, so name the bare positional instead.
+    const kv = /^([A-Za-z][\w-]*)=(.+)$/.exec(name);
+    if (kv && !looksLikePath(name)) {
+      throw new Error(`"${name}" is a key=value pair: the template or kit name is a bare positional, e.g. gipity add ${kv[2]}`);
+    }
     const config = requireConfig();
     // Push local edits first, like deploy does: the install merges into the
     // project's files on the server (a kit edits index.html's import map and

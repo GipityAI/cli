@@ -105,3 +105,11 @@ test('gipity add syncs local edits BEFORE the server-side install, so the instal
   assert.ok(firstSync >= 0 && firstSync < install, `local changes were synced before the install: ${order.join(', ')}`);
 });
 
+
+test('gipity add name=<key> names the bare positional instead of an unknown-template error', async () => {
+  mock.reset();
+  const r = await fresh(['add', 'name=3d-engine', '--title', 'Blocks']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /"name=3d-engine" is a key=value pair.*gipity add 3d-engine/);
+  assert.equal(mock.requests().filter((q) => q.url.endsWith('/add')).length, 0, 'nothing posted');
+});

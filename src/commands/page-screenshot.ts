@@ -51,9 +51,6 @@ type ScreenshotMeta = {
     height: number;
     screenshotSizeBytes: number;
     phase: 'initial-load' | 'reload' | 'no-reload';
-    // VFS persistence result when `save` was sent: the stored reference, or
-    // {error} when that one save failed (the capture itself still succeeded).
-    vfs?: { guid: string; url: string; thumb_url: string | null; path: string } | { error: string };
   }>;
 };
 
@@ -142,15 +139,16 @@ function dimSuffix(vp: Viewport): string {
   return dpr === 1 ? `${vp.width}x${vp.height}` : `${vp.width}x${vp.height}@${dpr}`;
 }
 
-/** Default screenshot directory: `<project-root>/screenshots`, falling back
- *  to `./screenshots` in one-off mode (no linked project). Screenshots are
- *  part of the project's build history: the dir syncs to Gipity (the server
- *  also persists captures to VFS `screenshots/` directly — same names, so
- *  sync reconciles by content hash) but is excluded from every deploy
- *  server-side. Timestamped filenames make the history browsable. */
-function defaultScreenshotDir(): string {
+/** Default screenshot directory: `<project-root>/tmp/screenshots`, falling
+ *  back to `./tmp/screenshots` in one-off mode (no linked project). A
+ *  verification capture is scratch: `tmp/` is the one place that never syncs
+ *  and never deploys, so a shot of a signed-in, private view can't leak into
+ *  the project and nothing needs cleaning up afterwards. A capture worth
+ *  keeping is a deliberate `-o docs/<name>.png` (synced, never deployed).
+ *  Timestamped filenames keep a run's shots in order. */
+export function defaultScreenshotDir(): string {
   const root = getProjectRoot();
-  return join(root ?? '.', 'screenshots');
+  return join(root ?? '.', 'tmp', 'screenshots');
 }
 
 /** `yyyy-mm-dd_hh-mm-ss` per the repo timestamp convention - sorts chronologically,
@@ -248,6 +246,18 @@ function appendOption(value: string, previous: string[] = []): string[] {
 // unambiguous, making it WORK beats making it a better error.)
 const ACTION_ALIAS_FLAGS = ['--eval', '--js', '--javascript', '--script', '--code', '--exec'];
 
+// Same accept-the-reflex-guess pattern for the output file: `--path` and `--out`
+// are what agents type for "save it here" (commander answered `--path` with
+// "Did you mean --auth?", which points nowhere useful). Working hidden aliases
+// for -o/--output.
+const OUTPUT_ALIAS_FLAGS = ['--path', '--out'];
+
+/** True when `--file` names an image: the caller meant the OUTPUT file, but
+ *  --file is the pre-capture SCRIPT. Caught before it is read as JavaScript. */
+export function looksLikeImagePath(p: string): boolean {
+  return /\.(png|jpe?g|webp|gif)$/i.test(p);
+}
+
 /** A capture is worthless if it fires before the app reaches the state you meant
  *  to photograph, and the only lever used to be a blind millisecond delay — so a
  *  camera/vision app got screenshotted with a guessed duration (`--wait 22000`).
@@ -305,12 +315,11 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--action <js>','Run JS in the page before capturing - e.g. click a button to enter a state ("document.getElementById(\'play\').click()"). Runs as an async function body, so const/await and app-relative import(\'./...\') work. Runs after the post-load delay, then settles again before the shot. If it throws, the capture still happens and the failure is reported.')
   .option('--file <path>', 'Read the pre-capture script from a file instead of inline --action (mutually exclusive), or --file - to read it from stdin (pipe a heredoc: --file - <<\'EOF\' ... EOF) with no tmp file. For a multi-step driver - click through a flow, wait for it to render - then capture. Same async-function-body semantics as --action; same --file flag as page eval.')
   .option('--full', 'Capture the full scrollable page (default: viewport only). Scrolls the page through first so scroll-reveal/fade-in-on-scroll (IntersectionObserver) sections render into the shot instead of capturing blank.')
-  .option('-o, --output <file>', 'Output path (default .gipity/screenshots/ss-<host>-<timestamp>.png). With several viewports it is a stem: -o tmp/shot.png --device desktop,mobile writes tmp/shot-desktop.png and tmp/shot-mobile.png.')
+  .option('-o, --output <file>', 'Output path (default tmp/screenshots/ss-<host>-<timestamp>.png in the project: scratch, never synced or deployed). To keep a capture, write it under docs/ (-o docs/home.png: synced, never deployed). With several viewports it is a stem: -o tmp/shot.png --device desktop,mobile writes tmp/shot-desktop.png and tmp/shot-mobile.png.')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern. To capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
   .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture, so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
   .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
-  .option('--ephemeral', 'Skip the project screenshot history: do not persist this capture to Gipity (screenshots/ in the project). Local file is still written.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--post-load-delay <ms>', 'Alias for --wait').hideHelp())
   // (--eval and the other JS-intent guesses are registered in one place from
@@ -346,6 +355,9 @@ export const pageScreenshotCommand = new Command('screenshot')
       throw new Error('Pass either --file <path> or an inline --action script, not both');
     }
     let actionScript = inlineAction;
+    if (opts.file && looksLikeImagePath(opts.file)) {
+      throw new Error(`--file is the pre-capture SCRIPT (JavaScript to run before the shot), not the output image: save the PNG with -o ${opts.file}`);
+    }
     if (opts.file) {
       try {
         actionScript = readScriptFile(opts.file);
@@ -437,17 +449,13 @@ export const pageScreenshotCommand = new Command('screenshot')
     // the no-flag case so the filename stays unsuffixed (no viewport segment).
     const userSpecifiedViewports = customViewports.length > 0;
 
-    // Filenames are decided before the request so the server can persist the
-    // captures to the project VFS under the SAME names the local files get —
-    // the local screenshots/ dir and the VFS screenshot history stay 1:1 and
-    // sync reconciles them by content hash instead of duplicating.
     const slug = slugFromUrl(url);
     const ts = timestampSlug();
     const shotName = (vp?: Viewport) =>
       defaultFilename(slug, ts, vp && userSpecifiedViewports ? dimSuffix(vp) : undefined);
     const names = userSpecifiedViewports ? customViewports.map(shotName) : [shotName()];
     const projectGuid = getConfig()?.projectGuid;
-    const save = !opts.ephemeral && projectGuid ? { project_guid: projectGuid, names } : undefined;
+    const outputArg: string | undefined = opts.output ?? OUTPUT_ALIAS_FLAGS.map((f) => opts[f.slice(2)]).find(Boolean);
 
     // The webcam frame is hosted in the project's public file store for the
     // browser container to fetch, so it needs a linked project. Validate the
@@ -483,7 +491,6 @@ export const pageScreenshotCommand = new Command('screenshot')
       ...(camera ? { cameraUrl: camera.url } : {}),
       ...(opts.auth ? { auth: true } : {}),
       ...(preCapture ? { action: preCapture } : {}),
-      ...(save ? { save } : {}),
     };
 
     // Load + render across viewports runs server-side and can take many
@@ -528,18 +535,18 @@ export const pageScreenshotCommand = new Command('screenshot')
     // file (shot.png → shot-desktop.png, shot-mobile.png) instead of overwriting.
     const usedStems = new Set<string>();
     const outputPath = (i: number) => {
-      if (pngs.length === 1) return opts.output as string;
+      if (pngs.length === 1) return outputArg as string;
       let suffix = viewportLabels[i] ?? dimSuffix(meta.screenshots[i].viewport);
       while (usedStems.has(suffix)) suffix += `-${i + 1}`;
       usedStems.add(suffix);
-      return stemPath(opts.output as string, suffix);
+      return stemPath(outputArg as string, suffix);
     };
     for (let i = 0; i < pngs.length; i++) {
-      const target = opts.output
+      const target = outputArg
         ? outputPath(i)
         : join(dir, names[i] ?? shotName(meta.screenshots[i].viewport));
       // Create the target's parent dir so a `-o` path under a not-yet-existing
-      // directory (e.g. .gipity/screenshots/home.png) writes cleanly instead of
+      // directory (e.g. docs/shots/home.png) writes cleanly instead of
       // failing with a raw ENOENT and forcing a manual `mkdir -p`.
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, pngs[i].buffer);
@@ -571,21 +578,10 @@ export const pageScreenshotCommand = new Command('screenshot')
           size_bytes: s.screenshotSizeBytes,
           full_page: meta.full,
           phase: s.phase,
-          ...(s.vfs ? { gipity: s.vfs } : {}),
         })),
       }));
       return;
     }
-
-    /** One-line VFS-history status for a screenshot ("saved to Gipity" or why not). */
-    const printVfsLine = (s: ScreenshotMeta['screenshots'][number]) => {
-      if (!s.vfs) return;
-      if ('error' in s.vfs) {
-        console.log(`${warning('⚠ Gipity save failed:')} ${s.vfs.error} ${muted('(local file is fine)')}`);
-      } else {
-        console.log(`${label('Gipity history')} ${s.vfs.path} ${muted('(synced, not deployed)')}`);
-      }
-    };
 
     if (meta.screenshots.length === 1) {
       const s = meta.screenshots[0];
@@ -601,7 +597,6 @@ export const pageScreenshotCommand = new Command('screenshot')
       console.log(`${label('Screenshot size')} ${sizePart}`);
       if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
       console.log(`${label('Screenshot file')} ${success(savedFiles[0])}`);
-      printVfsLine(s);
       return;
     }
 
@@ -622,13 +617,13 @@ export const pageScreenshotCommand = new Command('screenshot')
       console.log(`${label('Screenshot size')} ${sizePart}`);
       if (s.width && s.height) console.log(`${label('Screenshot dims')} ${s.width} × ${s.height}`);
       console.log(`${label('Screenshot file')} ${success(savedFiles[i])}`);
-      printVfsLine(s);
     }
   }));
 
 // Register the JS-intent guesses as hidden aliases for --action (value-taking,
 // so they capture the script) — the action folds them into the pre-capture body.
 for (const f of ACTION_ALIAS_FLAGS) pageScreenshotCommand.addOption(new Option(`${f} <js>`, 'Alias for --action').hideHelp());
+for (const f of OUTPUT_ALIAS_FLAGS) pageScreenshotCommand.addOption(new Option(`${f} <file>`, 'Alias for -o/--output').hideHelp());
 
 // `screenshot` captures the page AFTER load + settle (+ optional --wait-for gate
 // and --action). There is no scroll-to-a-position lever (agents reach for
@@ -640,7 +635,8 @@ for (const f of ACTION_ALIAS_FLAGS) pageScreenshotCommand.addOption(new Option(`
 // --full + crop covers off-screen regions; `page eval` reads data, no picture.
 pageScreenshotCommand.addHelpText('after', `
 Examples:
-  gipity page screenshot "https://dev.gipity.ai/me/app/"
+  gipity page screenshot "https://dev.gipity.ai/me/app/"                 # -> tmp/screenshots/ (scratch: never synced or deployed)
+  gipity page screenshot "https://dev.gipity.ai/me/app/" -o docs/home.png # keep it (docs/ syncs, never deploys)
   gipity page screenshot "https://dev.gipity.ai/me/app/" --full          # whole scrollable page (scroll-reveal sections triggered)
   gipity page screenshot "https://dev.gipity.ai/me/app/" --device mobile,desktop
   gipity page screenshot "https://dev.gipity.ai/me/app/" \\

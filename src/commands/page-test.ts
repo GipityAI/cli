@@ -290,6 +290,22 @@ function overlapMs(results: ObserveResult[]): number {
   return Math.max(0, end - start);
 }
 
+/** One explanation for an --observe expression that threw, printed once under
+ *  the client blocks. The bare `ObserveError: Cannot read properties of null`
+ *  sample reads like a quirk of the harness, so it got waved off as "the observe
+ *  context is different" when it was a real selector (or app) bug on the live
+ *  page. Exported for tests. */
+export function observeErrorHint(results: Array<{ samples: unknown[] }>): string | null {
+  const thrown = results.flatMap((r) => r.samples)
+    .find((v): v is string => typeof v === 'string' && v.startsWith('ObserveError:'));
+  if (!thrown) return null;
+  const nullRead = /of null|of undefined/.test(thrown)
+    ? ' "of null" means a querySelector in it matched nothing at that moment: the element is missing, renamed, or not rendered yet.'
+    : '';
+  return `ObserveError = your --observe expression threw. It runs against the live deployed page, the same DOM \`page eval\` sees, so this is the page's real state, not a harness quirk.${nullRead} ` +
+    "Check the selector with `gipity page eval <url> \"!!document.querySelector('<selector>')\"`, or gate the run on it with --wait-for '<selector>'.";
+}
+
 function fmtSamples(samples: unknown[]): string {
   if (samples.length === 0) return muted('(no samples)');
   return samples.map((s) => (typeof s === 'string' ? s : JSON.stringify(s))).join(' → ');
@@ -368,6 +384,8 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
     if (r.error) { console.log(clrError(`✗ ${r.error}`)); continue; }
     console.log(`${muted('samples:')} ${fmtSamples(r.samples)}`);
   }
+  const observeHint = observeErrorHint(results);
+  if (observeHint) console.log(`\n${warning(observeHint)}`);
 
   console.log('');
   if (errored.length > 0) {

@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
@@ -14,7 +14,7 @@ import {
   EVAL_SCRIPT_BUDGET_MIN_MS,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
-import { parseAtSpecs, buildHarness, PAUSED_SAMPLE } from '../commands/page-test.js';
+import { parseAtSpecs, buildHarness, PAUSED_SAMPLE, observeErrorHint } from '../commands/page-test.js';
 
 let mock: MockServer;
 let home: string;
@@ -1478,13 +1478,12 @@ test('gipity page screenshot treats a guessed --eval flag as a working --action 
   assert.equal((req!.body as { action?: string }).action, script, 'the aliased script must reach the server as the pre-capture action');
 });
 
-// ── screenshot VFS history (save payload) ──────────────────────────────────
-// From a linked project dir, the CLI asks the server to persist the capture to
-// the project's screenshots/ history under the SAME filename it writes locally.
+// ── screenshot output location ─────────────────────────────────────────────
+// A verification capture is scratch. With no -o it lands in the project's tmp/
+// (never synced, never deployed), so a shot of a private signed-in view can't
+// ride along into the project, and nothing is persisted server-side.
 
-type SaveBody = { save?: { project_guid: string; names?: string[] } };
-
-test('gipity page screenshot from a linked project sends save with matching names', async () => {
+test('gipity page screenshot from a linked project defaults to tmp/screenshots and persists nothing server-side', async () => {
   mock.reset();
   await mockScreenshot();
   const proj = makeProjectDir();
@@ -1494,56 +1493,30 @@ test('gipity page screenshot from a linked project sends save with matching name
   );
   assert.equal(r.status, 0, r.stderr);
   const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
-  const save = (req!.body as SaveBody).save;
-  assert.ok(save, 'expected a save block when a project is linked');
-  assert.equal(save!.project_guid, 'p_TestProj');
-  assert.equal(save!.names!.length, 1);
-  assert.match(save!.names![0], /^ss-example-com-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.png$/);
-  // The local copy landed in the project's screenshots/ dir under that name.
-  assert.ok(existsSync(join(proj, 'screenshots', save!.names![0])));
+  assert.equal((req!.body as { save?: unknown }).save, undefined, 'no server-side copy of a scratch capture');
+  const shots = readdirSync(join(proj, 'tmp', 'screenshots'));
+  assert.equal(shots.length, 1);
+  assert.match(shots[0], /^ss-example-com-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.png$/);
+  assert.ok(!existsSync(join(proj, 'screenshots')), 'nothing written to a synced dir');
 });
 
-test('gipity page screenshot --ephemeral skips the history save', async () => {
-  mock.reset();
-  await mockScreenshot();
-  const proj = makeProjectDir();
-  const r = await runCliAsync(
-    ['--api-base', mock.apiBase, 'page', 'screenshot', 'https://example.com', '--ephemeral'],
-    { env: { HOME: home }, cwd: proj },
-  );
-  assert.equal(r.status, 0, r.stderr);
-  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
-  assert.equal((req!.body as SaveBody).save, undefined);
+test('gipity page screenshot accepts --path and --out as the output file', async () => {
+  for (const flag of ['--path', '--out']) {
+    mock.reset();
+    await mockScreenshot();
+    const target = join(home, `alias${flag}.png`);
+    const r = await run(['page', 'screenshot', 'https://example.com', flag, target]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(target), `${flag} must write the capture to the named file`);
+  }
 });
 
-test('gipity page screenshot outside a project sends no save block', async () => {
+test('gipity page screenshot --file <image> points at -o instead of reading a PNG as a script', async () => {
   mock.reset();
-  await mockScreenshot();
-  const r = await run(['page', 'screenshot', 'https://example.com', '-o', join(home, 'noproj.png')]);
-  assert.equal(r.status, 0, r.stderr);
-  const req = mock.requests().find((q) => q.url === '/tools/browser/screenshot');
-  assert.equal((req!.body as SaveBody).save, undefined);
-});
-
-test('gipity page screenshot prints the Gipity history line when the server saved to VFS', async () => {
-  mock.reset();
-  await mockScreenshot({
-    screenshots: [{
-      viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
-      width: 1280, height: 720, screenshotSizeBytes: 4, phase: 'initial-load',
-      vfs: {
-        guid: 'file-abc12345', url: '/files/vfs/file-abc12345',
-        thumb_url: '/files/thumbnail/file-abc12345', path: 'screenshots/ss-example-com-x.png',
-      },
-    }],
-  });
-  const proj = makeProjectDir();
-  const r = await runCliAsync(
-    ['--api-base', mock.apiBase, 'page', 'screenshot', 'https://example.com'],
-    { env: { HOME: home }, cwd: proj },
-  );
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Gipity history.*screenshots\/ss-example-com-x\.png/);
+  const r = await run(['page', 'screenshot', 'https://example.com', '--file', 'tmp/home.png']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /--file is the pre-capture SCRIPT.*-o tmp\/home\.png/);
+  assert.equal(mock.requests().length, 0);
 });
 
 // ── screenshot default filename helpers (pure) ─────────────────────────────
@@ -1745,6 +1718,27 @@ test('gipity page eval prints the auth line when the job record carries auth sta
   const r = await run(['page', 'eval', 'https://example.com', 'document.title', '--auth']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /session established/);
+});
+
+test('gipity page eval --auth names --restore-db for write flows', async () => {
+  const mockAuthed = () => {
+    mock.reset();
+    mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-tip', status: 'queued' } } });
+    mock.on('GET /tools/browser/eval/job-tip', { body: { data: {
+      status: 'done', url: 'https://example.com', result: '"hi"', truncated: false,
+      auth: { requested: true, established: true },
+    } } });
+  };
+  mockAuthed();
+  const r = await run(['page', 'eval', 'https://example.com', 'document.title', '--auth']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Add --restore-db/);
+  // Anonymous runs don't get it: they are reads of the public page.
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-anon', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-anon', { body: { data: { status: 'done', url: 'https://example.com', result: '"hi"', truncated: false } } });
+  const anon = await run(['page', 'eval', 'https://example.com', 'document.title']);
+  assert.doesNotMatch(anon.stdout, /--restore-db/);
 });
 
 test('gipity page eval warns when --auth did not establish a session', async () => {
@@ -2120,4 +2114,14 @@ test('page test harness: a slot the page reached late (frozen) reads (paused); l
   const run = new Function(`return (async () => {\n${body}\n})();`) as () => Promise<{ samples: unknown[] }>;
   const out = await run();
   assert.deepEqual(out.samples, ['first', PAUSED_SAMPLE, 'live', 'live', 'live']);
+});
+
+// A thrown --observe used to surface only as a bare `ObserveError: ...` sample,
+// which read like a harness quirk and got waved off. Name it once, plainly.
+test('page test explains an ObserveError sample, and stays quiet on clean samples', () => {
+  const hint = observeErrorHint([{ samples: ["ObserveError: Cannot read properties of null (reading 'textContent')", 'ok'] }]);
+  assert.ok(hint);
+  assert.match(hint!, /your --observe expression threw/);
+  assert.match(hint!, /matched nothing/);
+  assert.equal(observeErrorHint([{ samples: ['ok', { n: 1 }] }]), null);
 });
