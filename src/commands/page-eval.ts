@@ -98,7 +98,8 @@ export const EVAL_EMPTY_STATE_HINT =
 const CAMERA_FRAME_CHECK =
   "in the eval body, run the model on the frame YOURSELF (grab the app's <video> element, or the app's own "
   + "detector on it) and return its RAW output alongside the app's state. Model saw nothing => the frame is at fault: "
-  + 'regenerate it (subject filling the frame, plain background, even light), do not re-run the same one. '
+  + 'regenerate it framed the way a webcam would see it (objects: the scene in view, even light; hands or poses: a '
+  + 'person in frame with the hand raised beside the shoulder, never a close-up of the hand alone), do not re-run the same one. '
   + "Model saw it but the app's state is empty => the bug is in the app's wiring, not the picture.";
 
 // A camera run that comes back empty must NOT be sent down the generic
