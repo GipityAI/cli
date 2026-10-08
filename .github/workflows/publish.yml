@@ -1,0 +1,38 @@
+# Publish the CLI to npm with trusted publishing (OIDC): no npm token, no 2FA
+# prompt. `just cli-publish` bumps the version, commits, and pushes a `v<ver>`
+# tag; that tag triggers this workflow. The npm side is the "Trusted Publisher"
+# entry on the gipity package (repo GipityAI/cli, workflow publish.yml).
+name: Publish to npm
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm exchanges for publish rights
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Node 24 ships npm 11.5.1+, the minimum for trusted publishing.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - name: Tag matches package.json version
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          if [ "v${VER}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${VER}"
+            exit 1
+          fi
+      - run: npm ci
+      # prepack runs the build.
+      - run: npm publish --access public

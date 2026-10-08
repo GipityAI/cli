@@ -20,27 +20,35 @@ sync-docs:
 cli-build:
     just sync-docs && npm run build
 
-# Publish CLI to npm (bump patch, build, publish, record the bump in git).
-# The git steps are best-effort: a publish must never fail on them, but an
-# unrecorded bump means the next publish from a fresh checkout collides with
-# an already-published version — so warn loudly and let `gw ready` flag it.
+# Publish CLI to npm: bump patch, commit, and push a `v<ver>` tag. The tag
+# triggers .github/workflows/publish.yml, which builds and publishes with npm
+# trusted publishing (OIDC), so there is no npm token or 2FA prompt here.
+# sync-docs runs first because CI can't see ../platform: the synced files ride
+# along in the bump commit. Run from a clean main that matches origin/main.
 cli-publish:
     #!/usr/bin/env bash
-    set -e
+    set -euo pipefail
+    [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] || { echo "ERROR: cli-publish runs from main"; exit 1; }
+    [ -z "$(git status --porcelain)" ] || { echo "ERROR: working tree is not clean"; exit 1; }
+    git fetch origin main --tags
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "ERROR: main is not at origin/main (pull or push first)"; exit 1; }
     just sync-docs
     npm version patch --no-git-tag-version
-    npm run build
-    npm publish --access public
     VER=$(node -p "require('./package.json').version")
-    git commit -m "chore: cli v${VER} (npm publish)" -- package.json package-lock.json \
-      || { echo "WARN: could not commit version bump — record v${VER} manually"; exit 0; }
-    git fetch origin main
-    if [ "$(git rev-list --count origin/main..HEAD)" -gt 1 ]; then
-      echo "WARN: checkout has other unpushed commits — v${VER} bump committed locally only"
-      exit 0
-    fi
-    git pull --rebase --autostash origin main && git push origin main \
-      || echo "WARN: push failed — v${VER} bump committed locally; push manually (gw ready will flag it)"
+    git commit -m "chore: cli v${VER} (npm publish)" -- package.json package-lock.json src/provider-docs.ts src/knowledge.ts src/catalog.ts
+    git tag "v${VER}"
+    git push --atomic origin main "v${VER}"
+    SHA=$(git rev-parse HEAD)
+    echo "Pushed v${VER}. Waiting for the publish workflow..."
+    RUN=""
+    for _ in $(seq 1 30); do
+      RUN=$(gh run list --workflow publish.yml --commit "$SHA" --json databaseId --jq '.[0].databaseId // empty')
+      [ -n "$RUN" ] && break
+      sleep 2
+    done
+    [ -n "$RUN" ] || { echo "ERROR: no publish run found for v${VER}: https://github.com/GipityAI/cli/actions/workflows/publish.yml"; exit 1; }
+    gh run watch "$RUN" --exit-status
+    echo "✓ Published gipity@${VER}"
 
 # Run CLI locally without linking (compile + execute, passes args through)
 cli-dev *ARGS:

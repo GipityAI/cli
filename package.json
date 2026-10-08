@@ -44,5 +44,9 @@
     "dist/**/*.js",
     "!dist/__tests__/**"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GipityAI/cli.git"
+  },
   "license": "MIT"
 }
