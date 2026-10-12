@@ -198,7 +198,7 @@ const r = await fetch(`https://a.gipity.ai/api/${APP}/services/llm`, {
       { role: 'system', content: 'Answer concisely.' },
       { role: 'user', content: 'Capital of France?' }
     ],
-    model: 'gpt-5.4-mini'      // optional; default is gpt-5.4-mini
+    model: 'fast'              // optional alias (rides catalog refreshes); default is gpt-6-luna
   })
 });
 const data = await r.json();

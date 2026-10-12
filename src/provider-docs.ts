@@ -6,7 +6,7 @@
  * Run `just sync-docs` to refresh from platform.
  */
 
-export const GEMINI_LLM_MODELS_DOC = `gemini-3.6-flash (Gemini 3.6 Flash, $1.5/$7.5 per 1M tok, 1049K ctx), gemini-3.5-flash (Gemini 3.5 Flash, $1.5/$9 per 1M tok, 1049K ctx), gemini-3.1-pro-preview (Gemini 3.1 Pro, $2/$12 per 1M tok, 1049K ctx), gemini-3.1-flash-lite (Gemini 3.1 Flash-Lite, $0.25/$1.5 per 1M tok, 1049K ctx), gemini-3-flash-preview (Gemini 3 Flash, $0.5/$3 per 1M tok, 1049K ctx), gemini-2.5-flash (Gemini 2.5 Flash, $0.3/$2.5 per 1M tok, 1049K ctx)`;
+export const GEMINI_LLM_MODELS_DOC = `gemini-3.8-flash (Gemini 3.8 Flash, $0.75/$3.75 per 1M tok, 1049K ctx), gemini-3.6-flash (Gemini 3.6 Flash, $0.75/$3.75 per 1M tok, 1049K ctx), gemini-3.5-flash (Gemini 3.5 Flash, $0.75/$3.75 per 1M tok, 1049K ctx), gemini-3.1-pro-preview (Gemini 3.1 Pro, $2/$12 per 1M tok, 1049K ctx), gemini-3.5-flash-lite (Gemini 3.5 Flash-Lite, $0.3/$2.5 per 1M tok, 1049K ctx), gemini-3.1-flash-lite (Gemini 3.1 Flash-Lite, $0.25/$1.5 per 1M tok, 1049K ctx), gemini-3-flash-preview (Gemini 3 Flash, $0.5/$3 per 1M tok, 1049K ctx), gemini-2.5-flash (Gemini 2.5 Flash, $0.3/$2.5 per 1M tok, 1049K ctx)`;
 
 export const GEMINI_TTS_VOICES = [
   'Zephyr',
@@ -109,7 +109,7 @@ export const IMAGE_TIER_ALIAS_IDS = [
   'ultra',
 ] as const;
 
-export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-5.4-nano (cheapest), gpt-5.4-mini (cheap reasoning). Anthropic: claude-haiku-4-5 (cheapest). Gemini: gemini-3.1-flash-lite (cheapest, 1M context)`;
+export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-6-luna (cheapest, 1M context), gpt-6.1-sol (balanced). Anthropic: claude-haiku-5-5 (cheapest, 1M context). Gemini: gemini-3.1-flash-lite (cheapest), gemini-3.5-flash-lite (1M context)`;
 
 export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini, openrouter`;
 
