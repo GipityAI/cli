@@ -69,22 +69,22 @@ export const IMAGE_GEMINI_SIZE_IDS = [
   '4K',
 ] as const;
 
-export const IMAGE_MODELS_DOC = `openai: gpt-image-2. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b. gemini: gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
+export const IMAGE_MODELS_DOC = `openai: gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image. gemini: gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
 
-export const IMAGE_MODELS_TABLE = `  openai  gpt-image-2
-  bfl     flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b
-  gemini  gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
+export const IMAGE_MODELS_TABLE = `  openai  gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst
+  bfl     flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image
+  gemini  gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
 
-export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2\`
-- **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b\`
-- **Gemini/Nano Banana**: \`gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image\``;
+export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst\`
+- **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image\`
+- **Gemini/Nano Banana**: \`gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image\``;
 
 export const IMAGE_PROVIDERS_LIST = `openai, bfl, gemini`;
 
 export const IMAGE_PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  'openai': `OpenAI (gpt-image-2)`,
-  'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b)`,
-  'gemini': `Gemini/Nano Banana (gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image)`,
+  'openai': `OpenAI (gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst)`,
+  'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image)`,
+  'gemini': `Gemini/Nano Banana (gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image)`,
 };
 
 export const IMAGE_PROVIDER_IDS = [
@@ -100,7 +100,7 @@ export const IMAGE_QUALITY_IDS = [
   'auto',
 ] as const;
 
-export const IMAGE_TIER_ALIASES_DOC = `fast (gemini/gemini-3.1-flash-lite-image), standard (openai/gpt-image-2), high (bfl/flux-2-pro), ultra (bfl/flux-2-max)`;
+export const IMAGE_TIER_ALIASES_DOC = `fast (gemini/gemini-3.1-flash-lite-image), standard (openai/gpt-image-2.5-flare), high (bfl/flux-2-pro), ultra (bfl/flux-2-max)`;
 
 export const IMAGE_TIER_ALIAS_IDS = [
   'fast',
@@ -115,7 +115,9 @@ export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini, openrouter`;
 
 export const OPENAI_TTS_VOICES_DOC = `alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse`;
 
-export const TRANSCRIBE_PROVIDERS_DOC = `elevenlabs (default, Scribe v2), openai (GPT-4o Transcribe), gemini (Gemini 2.5 Flash - cheapest, multilingual)`;
+export const TRANSCRIBE_PROVIDERS_DOC = `elevenlabs (default, Scribe v2, word timestamps), openai (GPT Transcribe; diarization via GPT-4o Transcribe Diarize)`;
+
+export const TTS_MODELS_DOC = `elevenlabs: eleven_flash_v2_5 (default), eleven_v4_turbo, eleven_v4. openai: gpt-4o-mini-tts (default). gemini: gemini-3.8-flash-lite-tts (default), gemini-3.8-flash-tts`;
 
 export const TTS_PROVIDERS_LIST = `elevenlabs, openai, gemini`;
 
@@ -131,31 +133,27 @@ export const TTS_PROVIDER_IDS = [
   'gemini',
 ] as const;
 
-export const VIDEO_ASPECT_RATIOS = `16:9 (landscape), 9:16 (portrait), 1:1 (square)`;
+export const VIDEO_ASPECT_RATIOS = `16:9 (landscape), 9:16 (portrait)`;
 
 export const VIDEO_ASPECT_RATIO_IDS = [
   '16:9',
   '9:16',
-  '1:1',
 ] as const;
 
-export const VIDEO_MODELS_DOC = `veo-3.1-generate-preview (best quality, up to 4K, ~$0.40/sec), veo-3.1-fast-generate-preview (faster, ~$0.10/sec), veo-3.1-lite-generate-preview (budget, ~$0.05/sec)`;
+export const VIDEO_MODELS_DOC = `gemini-omni-1.1-flash (3-10s clips with sound, 360p to 4K, ~$0.10/sec at 720p)`;
 
-export const VIDEO_MODELS_LIST = `veo-3.1-generate-preview, veo-3.1-fast-generate-preview, veo-3.1-lite-generate-preview`;
+export const VIDEO_MODELS_LIST = `gemini-omni-1.1-flash`;
 
-export const VIDEO_MODELS_TABLE = `  veo-3.1-generate-preview       best quality, up to 4K, ~$0.40/sec
-  veo-3.1-fast-generate-preview  faster, ~$0.10/sec
-  veo-3.1-lite-generate-preview  budget, ~$0.05/sec`;
+export const VIDEO_MODELS_TABLE = `  gemini-omni-1.1-flash  3-10s clips with sound, 360p to 4K, ~$0.10/sec at 720p`;
 
 export const VIDEO_MODEL_IDS = [
-  'veo-3.1-generate-preview',
-  'veo-3.1-fast-generate-preview',
-  'veo-3.1-lite-generate-preview',
+  'gemini-omni-1.1-flash',
 ] as const;
 
-export const VIDEO_RESOLUTIONS = `720p, 1080p, 4k`;
+export const VIDEO_RESOLUTIONS = `360p, 720p, 1080p, 4k`;
 
 export const VIDEO_RESOLUTION_IDS = [
+  '360p',
   '720p',
   '1080p',
   '4k',

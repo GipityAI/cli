@@ -258,7 +258,7 @@ Examples:
   .addOption(new Option('--provider <provider>', 'Image provider (default: bfl)').choices(IMAGE_PROVIDER_IDS))
   .option('--model <model>', `Model id for the chosen provider, or a tier alias (${IMAGE_TIER_ALIAS_IDS.join(', ')}); see Models below`)
   .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (OpenAI/BFL)')
-  .addOption(new Option('--quality <quality>', 'Quality (gpt-image-2 only)').choices(IMAGE_QUALITY_IDS))
+  .addOption(new Option('--quality <quality>', 'Quality (OpenAI gpt-image models only)').choices(IMAGE_QUALITY_IDS))
   .addOption(new Option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only)').choices(IMAGE_GEMINI_ASPECT_RATIO_IDS))
   .addOption(new Option('--image-size <size>', 'Output resolution (Gemini only)').choices(IMAGE_GEMINI_SIZE_IDS))
   .option('--seed <n>', 'Deterministic seed (BFL only): reuse one seed to keep a set of images visually coherent', (v) => parseInt(v, 10))
@@ -315,29 +315,29 @@ Examples:
 // ── VIDEO ──────────────────────────────────────────────────────────────
 
 const videoCommand = new Command('video')
-  .description('Generate a short video (up to 8 seconds) from a text prompt')
+  .description('Generate a short video (3-10 seconds) from a text prompt')
   .addHelpText('after', `
-Models (default: veo-3.1-generate-preview):
+Models (default: gemini-omni-1.1-flash):
 ${VIDEO_MODELS_TABLE}
 
 Aspect ratios: ${VIDEO_ASPECT_RATIOS}
 
 Tips:
   - Describe the scene, camera movement, lighting, and any dialogue
-  - Generation takes 30-120 seconds depending on model
+  - Generation takes 20-120 seconds
   - Videos include AI-generated audio
 
 Examples:
   gipity generate video "a bird flying over a mountain lake at sunset"
-  gipity generate video "close-up of coffee being poured" --model veo-3.1-fast-generate-preview
+  gipity generate video "close-up of coffee being poured" --duration 5
   gipity generate video "vertical dance video" --aspect 9:16 --resolution 1080p -o dance.mp4
-  gipity generate video "a wave crashing" --duration 4 --model veo-3.1-lite-generate-preview
+  gipity generate video "a wave crashing" --duration 3 --resolution 360p
 `)
   .argument('<prompt>', 'Description of the video scene, action, camera movement, and dialogue')
   .addOption(new Option('--model <model>', 'Video model; see Models below for quality/price').choices(VIDEO_MODEL_IDS))
-  .addOption(new Option('--aspect <ratio>', 'Aspect ratio (landscape, portrait, square)').choices(VIDEO_ASPECT_RATIO_IDS))
+  .addOption(new Option('--aspect <ratio>', 'Aspect ratio (landscape or portrait)').choices(VIDEO_ASPECT_RATIO_IDS))
   .addOption(new Option('--resolution <res>', 'Video resolution').choices(VIDEO_RESOLUTION_IDS))
-  .option('--duration <seconds>', 'Clip length in seconds. Veo models: 4, 6, or 8 (8 required at 1080p/4K); omni-flash: 3-10. Default 8. Billing is per second, so shorter is cheaper.')
+  .option('--duration <seconds>', 'Clip length in whole seconds, 3-10. Default 8. Billing is per second, so shorter is cheaper.')
   .option('-o, --output <file>', 'Output path (default ./generated.mp4). For a clip your app ships, write it into the source tree so it deploys, e.g. -o src/assets/video/clip.mp4; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
@@ -351,7 +351,7 @@ Examples:
         resolution: opts.resolution,
         duration_seconds: opts.duration ? Number(opts.duration) : undefined,
       }, { timeoutMs: LONG_REQUEST_TIMEOUT_MS });
-      // Veo runs 30-120s; the bouncing bar + timer keeps the wait honest.
+      // A render runs 20-120s; the bouncing bar + timer keeps the wait honest.
       const started = Date.now();
       const result = opts.json
         ? await doGenerate()

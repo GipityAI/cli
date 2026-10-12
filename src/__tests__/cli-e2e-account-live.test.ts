@@ -8,7 +8,7 @@
 //   - github connect/repos/disconnect  GitHub App install flow (OAuth); only `github status` runs
 //   - payments connect             Stripe-hosted onboarding
 //   - credits buy / credits manage Stripe checkout / billing portal
-//   - generate video               real per-second Veo cost
+//   - generate video               real per-second video cost
 //   - realtime bench               heavy multi-client load
 //   - job run-local                needs a local Docker daemon
 //   - update                       replaces the installed CLI

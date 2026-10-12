@@ -110,7 +110,7 @@ function mockVideo() {
   mock.on('POST /projects/p_TestProj/generate/video', { body: {
     url: `${mock.apiBase}/files/generated.mp4`,
     content_type: 'video/mp4',
-    model: 'veo-3.1-generate-preview',
+    model: 'gemini-omni-1.1-flash',
     provider: 'gemini',
     size_bytes: 1223680,
     duration_seconds: 4,
@@ -125,7 +125,7 @@ test('gipity generate video reports duration, time, speed, and credits metrics',
   mockVideo();
   const r = await fresh(['generate', 'video', 'a wave crashing']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Generated with gemini\/veo-3\.1-generate-preview/);
+  assert.match(r.stdout, /Generated with gemini\/gemini-omni-1\.1-flash/);
   // One labeled metric per line, so an agent (or human) can scan the column.
   assert.match(r.stdout, /duration: 4s clip/);
   assert.match(r.stdout, /size: 1195KB/);
@@ -141,7 +141,7 @@ test('gipity generate video --json carries the metadata fields through', async (
   const r = await fresh(['generate', 'video', 'a wave crashing', '--json']);
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout.trim().split('\n').pop()!);
-  assert.equal(out.model, 'veo-3.1-generate-preview');
+  assert.equal(out.model, 'gemini-omni-1.1-flash');
   assert.equal(out.duration_seconds, 4);
   assert.equal(out.credits_deducted, 1680);
   assert.equal(out.remaining_balance, 48320);

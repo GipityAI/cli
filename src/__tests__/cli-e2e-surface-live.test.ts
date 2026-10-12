@@ -10,7 +10,7 @@
 //
 // Deliberately NOT covered here (needs a human, real money, or local infra):
 //   - payments connect          Stripe-hosted onboarding (only `payments status` runs)
-//   - generate video            real per-second Veo cost
+//   - generate video            real per-second video cost
 //   - realtime bench            spins N simulated controllers against a live room (heavy)
 //   - job run-local             needs a local Docker daemon
 //   - GPU jobs (gpu-*)          real GPU cost; only a cpu-small bash job runs here

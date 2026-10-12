@@ -235,7 +235,7 @@ new Audio(url).play();
 
 ### Image generation - `POST /services/image`
 
-OpenAI (`gpt-image-2`), BFL/Flux (default), Gemini.
+OpenAI (`gpt-image-2`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`), BFL/Flux (default), Gemini.
 
 ```js
 const r = await fetch(`https://a.gipity.ai/api/${APP}/services/image`, {
@@ -245,7 +245,7 @@ const r = await fetch(`https://a.gipity.ai/api/${APP}/services/image`, {
     prompt: 'A cat wearing a top hat, studio lighting',
     provider: 'openai',           // optional; default 'bfl'
     size: '1024x1024',            // OpenAI: 1024x1024, 1024x1536, 1536x1024
-    quality: 'auto'               // gpt-image-2: low/medium/high/auto
+    quality: 'auto'               // OpenAI gpt-image models: low/medium/high/auto
   })
 });
 const { url } = await r.json();   // permanent CDN PNG/JPEG
@@ -301,7 +301,7 @@ const { text, words, language, duration_seconds } = await r.json();
 
 ### Video - `POST /services/video`
 
-Google Veo 3.1, generates up to 8s with audio. Returns 30–120s after the request.
+Gemini Omni, generates 3-10s clips with audio. Returns 20-120s after the request.
 
 ```js
 const r = await fetch(`https://a.gipity.ai/api/${APP}/services/video`, {
@@ -309,9 +309,9 @@ const r = await fetch(`https://a.gipity.ai/api/${APP}/services/video`, {
   headers: { 'Content-Type': 'application/json', 'X-App-Token': token },
   body: JSON.stringify({
     prompt: 'Close-up of coffee being poured into a cup, slow motion',
-    model: 'veo-3.1-fast-generate-preview',  // or veo-3.1-generate-preview
-    aspect_ratio: '16:9',                     // 16:9 | 9:16 | 1:1
-    resolution: '1080p'                       // 720p | 1080p | 4k
+    aspect_ratio: '16:9',     // 16:9 | 9:16
+    resolution: '720p',       // 360p | 720p | 1080p | 4k
+    duration_seconds: 5       // 3-10, default 8; billed per second
   })
 });
 const { url } = await r.json();   // permanent CDN MP4 with AI audio

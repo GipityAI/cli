@@ -33,7 +33,7 @@ const DOWNLOAD_HEADER_TIMEOUT_MS = 30_000;
 // Media generation (music/video/image/speech, `service call` POSTs) can
 // legitimately run minutes in ONE request/response: a GPU-backed music model
 // waking from scale-to-zero spends 1-3 min booting + loading weights before it
-// renders a note, and Veo video runs 30-120s. The server bounds all of these at
+// renders a note, and a video render runs 20-120s. The server bounds all of these at
 // 300s (its provider fetch budget and the ALB idle timeout are both 300s), so
 // the long-call cap sits just above that ceiling - the server's clearer error
 // always arrives before the CLI gives up. Callers opt in per request; plain
