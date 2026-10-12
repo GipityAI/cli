@@ -273,7 +273,7 @@ echo '{"ok":true}'
     assert.ok(list.some((p) => p.slug === name), 'created project missing from project list');
   });
 
-  it('project create --json prints only JSON on stdout', { todo: 'BUG: finalizeLocalProject setup (Codex hooks line, template-var line) prints to stdout under --json' }, () => {
+  it('project create --json prints only JSON on stdout', () => {
     assert.ok(projectCreateRun, 'project create did not run');
     assert.ok(isPureJson(projectCreateRun!), `stdout is not pure JSON:\n${projectCreateRun!.stdout}`);
   });
@@ -365,7 +365,7 @@ echo '{"ok":true}'
     assert.ok(s.results.some((t: any) => t.name === TEST_NAME && t.status === 'passed'), JSON.stringify(s.results));
   });
 
-  it('test status rejects an empty run guid locally', { todo: 'BUG: test status "" is sent to the server and fails as "Unknown endpoint: GET /projects/<g>/test/status/"' }, () => {
+  it('test status rejects an empty run guid locally', () => {
     const r = cli(['test', 'status', '', '--json']);
     assert.notEqual(r.status, 0);
     assert.doesNotMatch(r.stderr + r.stdout, /Unknown endpoint/, 'empty guid reached the server');
@@ -547,7 +547,7 @@ echo '{"ok":true}'
     assert.ok(existsSync(out) && statSync(out).size > 1000, `no audio at ${out}`);
   });
 
-  it('generate speech --provider openai works without --voice', { todo: 'BUG: /generate/speech defaults voice to the ElevenLabs Kristen id for every provider, so openai 400s' }, () => {
+  it('generate speech --provider openai works without --voice', () => {
     const out = join(scratchDir, 'e2e-default-voice.mp3');
     const r = cliJson(['generate', 'speech', 'Hi.', '--provider', 'openai', '-o', out, '--json'], { timeout: 120000 });
     assert.match(r.url ?? '', /^https?:\/\//);
@@ -700,7 +700,7 @@ echo '{"ok":true}'
     assert.ok(tree.some((f) => f.path === `src/${PAGE}`), 'src/e2e.html missing from the root tree');
   });
 
-  it('file tree <dir> lists paths relative to the directory', { todo: 'BUG: file tree <dir> drops the first character of every path (e2e.html -> 2e.html): off-by-one prefix strip in vfs findFilesWithMeta' }, () => {
+  it('file tree <dir> lists paths relative to the directory', () => {
     const tree = cliJson<any[]>(['file', 'tree', 'src', '--json']);
     assert.ok(tree.some((f) => f.path === PAGE), `paths: ${tree.map((f) => f.path).join(', ')}`);
   });
@@ -711,7 +711,7 @@ echo '{"ok":true}'
     assert.match(u.file_guid, /^fl_/);
   });
 
-  it('file url serves the file content', { todo: 'BUG: /api/:app/files/:guid/serve redirects to the media bucket, but project-file blobs live on the VFS volume: 404 NoSuchKey' }, async () => {
+  it('file url serves the file content', async () => {
     const u = cliJson(['file', 'url', `src/${PAGE}`, '--json']);
     const res = await fetch(u.url);
     assert.equal(res.status, 200);
@@ -782,7 +782,7 @@ echo '{"ok":true}'
     assert.ok(existsSync(join(d.dir, 'functions', `${FN}.js`)), 'function not pulled into the new project dir');
   });
 
-  it('load --json prints only JSON on stdout', { todo: 'BUG: finalizeLocalProject setup (Codex hooks line) prints to stdout under --json' }, () => {
+  it('load --json prints only JSON on stdout', () => {
     assert.ok(loadRun, 'load did not run');
     assert.ok(isPureJson(loadRun!), `stdout is not pure JSON:\n${loadRun!.stdout}`);
   });

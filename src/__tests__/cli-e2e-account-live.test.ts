@@ -81,7 +81,7 @@ describe('cli-e2e-account-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to ru
     const name = `e2e token ${RUN_ID}`;
     const c = cliJson(['token', 'create', '--name', name, '--expires', '1', '--json']);
     assert.match(c.token, /^gip_at_/);
-    const guid = c.shortGuid ?? c.short_guid;
+    const guid = c.short_guid;
     assert.ok(guid, `no token guid: ${JSON.stringify(c)}`);
 
     const list = cliJson<any[]>(['token', 'list', '--json']);
@@ -96,9 +96,9 @@ describe('cli-e2e-account-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to ru
     assert.ok(!after.some((t) => t.short_guid === guid), 'revoked token still listed');
   });
 
-  it('token create --json uses the same guid key as token list', { todo: 'BUG: token create --json returns camelCase shortGuid/expiresAt while token list (and key create/list) use short_guid/expires_at' }, () => {
+  it('token create --json uses the same guid key as token list', () => {
     const c = cliJson(['token', 'create', '--name', `e2e shape ${RUN_ID}`, '--expires', '1', '--json']);
-    const guid = c.shortGuid ?? c.short_guid;
+    const guid = c.short_guid;
     try {
       assert.ok(c.short_guid, `token create --json has no short_guid: ${Object.keys(c).join(',')}`);
     } finally {
