@@ -402,7 +402,7 @@ Examples:
   .option('--voice <voice>', 'Voice ID or name (provider-specific; see Voices below)')
   .option('--language <code>', 'BCP-47 language code, e.g. ja-JP, es-ES (Gemini only, 60+ languages)')
   .option('--speakers <json>', 'Multi-speaker config as JSON array (Gemini only, up to 2 speakers)')
-  .option('-o, --output <file>', 'Output path (default ./speech.mp3). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/sounds/intro.mp3; the cwd default is fine for one-off generation.')
+  .option('-o, --output <file>', 'Output path (default ./speech.mp3; --provider gemini returns WAV, so name it .wav). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/sounds/intro.mp3; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (text: string, opts) => {
     try {

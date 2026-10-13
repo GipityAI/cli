@@ -33,7 +33,7 @@ secretsCommand
   .action((opts) => run('Secrets', async () => {
     const res = await get<{ data: SecretMeta[] }>(`/secrets?${await scopeQuery(opts)}`);
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
-    const scope = opts.account ? 'account-wide' : 'this project';
+    const scope = opts.account ? 'account-wide' : 'project';
     if (res.data.length === 0) {
       console.log(muted(`No ${scope} secrets yet. Add one with: gipity secrets set NAME VALUE${opts.account ? ' --account' : ''}`));
       return;
@@ -54,7 +54,7 @@ secretsCommand
   .action((name, value, opts) => run('Secrets', async () => {
     const res = await put<{ data: SecretMeta }>(`/secrets?${await scopeQuery(opts)}`, { name, value });
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
-    const scope = opts.account ? 'account-wide' : 'this project';
+    const scope = opts.account ? 'account-wide' : 'project';
     console.log(success(`✓ Secret '${res.data.name}' saved (encrypted, ${scope}). Read it in a function with secrets.get('${res.data.name}').`));
   }));
 
