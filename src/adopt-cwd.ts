@@ -54,7 +54,7 @@ export function scanForAdoption(cwd: string): AdoptScan {
     try { entries = readdirSync(dir); } catch { return; }
     for (const name of entries) {
       if (truncated) return;
-      if (isSyncIgnored(name)) continue;
+      if (isSyncIgnored(name, { nested: dir !== cwd })) continue;
       const full = join(dir, name);
       let st;
       try { st = statSync(full); } catch { continue; }
@@ -87,7 +87,7 @@ export function scanForAdoption(cwd: string): AdoptScan {
 export function isLikelyEmpty(cwd: string): boolean {
   let entries: string[];
   try { entries = readdirSync(cwd); } catch { return true; }
-  return entries.every(isSyncIgnored);
+  return entries.every((name) => isSyncIgnored(name));
 }
 
 /** Hide-list for "Use this directory" - places where adopting cwd as a

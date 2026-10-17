@@ -35,7 +35,7 @@ import {
   UPLOAD_MAX_BYTES, UPLOAD_MAX_PATH_CHARS,
   type BatchInitResult, type BatchCompleteItem,
 } from './upload.js';
-import { DEFAULT_SYNC_IGNORE, SCRATCH_IGNORE } from './setup.js';
+import { DEFAULT_SYNC_IGNORE, SCRATCH_IGNORE, anchorPrimerPatterns } from './setup.js';
 import type { ProgressReporter, SpinnerHandle } from './progress.js';
 
 const CONFIG_FILE = '.gipity.json';
@@ -842,7 +842,7 @@ export function readGipityIgnore(root: string): string[] {
  *  list can't re-include scratch; deduped so the matcher cache in
  *  config.ts keys on one canonical pattern set. */
 export function effectiveIgnore(root: string, configIgnore: string[] | undefined): string[] {
-  const base = configIgnore && configIgnore.length ? configIgnore : DEFAULT_SYNC_IGNORE;
+  const base = anchorPrimerPatterns(configIgnore && configIgnore.length ? configIgnore : DEFAULT_SYNC_IGNORE);
   const merged = [...base, GIPITY_IGNORE_FILE, ...readGipityIgnore(root)];
   return [...merged, ...SCRATCH_IGNORE.filter(p => !merged.includes(p))];
 }

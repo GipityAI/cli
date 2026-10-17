@@ -484,3 +484,41 @@ describe('.gipityignore', () => {
     }
   });
 });
+
+// The primer files (CLAUDE.md, AGENTS.md, ...) are workstation artifacts at the
+// project ROOT. A bare `AGENTS.md` pattern matched at any depth and in any case,
+// so an app's own `src/agents.md` (the agent-facing file apps ship) never synced
+// or deployed, with `sync --plan` saying "Up to date".
+describe('primer ignores are root-only', () => {
+  it('the default list hides root primers but not same-named app files', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-primer-'));
+    try {
+      const ignore = effectiveIgnore(root, undefined);
+      for (const p of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) assert.equal(shouldIgnore(p, ignore), true, p);
+      for (const p of ['src/agents.md', 'src/AGENTS.md', 'docs/CLAUDE.md', 'src/gemini.md']) assert.equal(shouldIgnore(p, ignore), false, p);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('an older .gipity.json with bare primer names is read root-anchored', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-primer-'));
+    try {
+      const ignore = effectiveIgnore(root, ['node_modules', '.git', 'CLAUDE.md', 'AGENTS.md']);
+      assert.equal(shouldIgnore('AGENTS.md', ignore), true);
+      assert.equal(shouldIgnore('src/agents.md', ignore), false);
+      assert.equal(shouldIgnore('node_modules/x.js', ignore), true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('walkLocal picks up a nested agents.md and skips the root primer', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gipity-primer-'));
+    try {
+      mkdirSync(join(root, 'src'));
+      writeFileSync(join(root, 'AGENTS.md'), 'primer');
+      writeFileSync(join(root, 'src', 'agents.md'), 'for agents');
+      const files = walkLocal(root, effectiveIgnore(root, ['CLAUDE.md', 'AGENTS.md']), {});
+      const names = [...files.keys()].sort();
+      assert.ok(names.includes('src/agents.md'), names.join(','));
+      assert.ok(!names.includes('AGENTS.md'), names.join(','));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});

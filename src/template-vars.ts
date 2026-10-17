@@ -202,7 +202,7 @@ function* walkTextFiles(root: string): Generator<string> {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const entry of entries) {
-      if (isSyncIgnored(entry.name)) continue;
+      if (isSyncIgnored(entry.name, { nested: dir !== root })) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         stack.push(full);

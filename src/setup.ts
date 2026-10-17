@@ -73,16 +73,35 @@ export const DEFAULT_SYNC_IGNORE = [
   // and reconciling it stalls every relay dispatch's pre-spawn sync.
   '.cache/', '.bash_history', '.bash_logout',
   ...SCRATCH_IGNORE,
-  ...new Set(Object.values(PRIMER_FILES)),
+  ...primerIgnorePatterns(),
 ];
 
-/** True if `name` (a top-level dir entry) is a workstation artifact that
- *  should be excluded from sync, file counts, and collision checks.
- *  Matches exact names, trailing-slash dir patterns, and dotfiles generally. */
-export function isSyncIgnored(name: string): boolean {
+/** The primers live at the project root, so their ignore patterns are anchored
+ *  there (`/AGENTS.md`). A bare `AGENTS.md` matches at any depth and, in
+ *  gitignore matching, in any case, so it silently kept an app's own
+ *  `src/agents.md` (the agent-facing file apps ship) out of sync and deploy. */
+function primerIgnorePatterns(): string[] {
+  return [...new Set(Object.values(PRIMER_FILES))].map((p) => `/${p}`);
+}
+
+/** Rewrite bare primer names in a stored ignore list (older CLIs persisted
+ *  `AGENTS.md` / `CLAUDE.md` into every `.gipity.json`) to their root-anchored
+ *  form, so existing projects stop hiding nested files with the same name. */
+export function anchorPrimerPatterns(patterns: string[]): string[] {
+  const primers = new Set(Object.values(PRIMER_FILES) as string[]);
+  return patterns.map((p) => (primers.has(p) ? `/${p}` : p));
+}
+
+/** True if `name`, a directory entry, is a workstation artifact that should be
+ *  excluded from sync, file counts, and collision checks: exact names,
+ *  trailing-slash dir patterns, and dotfiles generally. The primer files only
+ *  count at the project root (`nested: false`, the default): a `docs/AGENTS.md`
+ *  or `src/agents.md` is the app's own content. */
+export function isSyncIgnored(name: string, opts: { nested?: boolean } = {}): boolean {
   if (name.startsWith('.')) return true;
   if (DEFAULT_SYNC_IGNORE.includes(name)) return true;
   if (DEFAULT_SYNC_IGNORE.includes(`${name}/`)) return true;
+  if (!opts.nested && DEFAULT_SYNC_IGNORE.includes(`/${name}`)) return true;
   return false;
 }
 
