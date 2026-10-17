@@ -65,17 +65,32 @@ envCommand
     }
   }));
 
+interface DataCopy { from: string; databases: Array<{ database: string; tables: number; rows: number }> }
+
+function printCopy(copy: DataCopy | undefined): void {
+  if (!copy) return;
+  for (const d of copy.databases) {
+    console.log(muted(`Copied ${d.rows} rows (${d.tables} tables) from ${copy.from}'s ${d.database} database`));
+  }
+}
+
 envCommand
   .command('create <name>')
-  .description('Create an environment and deploy the app to it (`gipity deploy <name>` does the same)')
+  .description('Create an environment and deploy the app to it (`gipity deploy <name>` does the same, without --data)')
+  .option('--data', 'Copy the rows of prod (or --from) into it, to try a change against real data')
+  .option('--from <env>', 'With --data: the environment to copy from (default prod)')
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Env', async () => {
     if (name === PROD_ENV) {
       console.error(clrError('prod is the app itself. Deploy it with: gipity deploy prod'));
       process.exit(1);
     }
-    const create = () => post<{ data: { name: string; guid: string; url: string; phases: Array<{ name: string; status: string; summary: string }> } }>(
-      `/projects/${appGuid()}/envs`, { name },
+    if (opts.from && !opts.data) {
+      console.error(clrError('--from goes with --data'));
+      process.exit(1);
+    }
+    const create = () => post<{ data: { name: string; guid: string; url: string; phases: Array<{ name: string; status: string; summary: string }>; data?: DataCopy } }>(
+      `/projects/${appGuid()}/envs`, { name, ...(opts.data ? { data: true } : {}), ...(opts.from ? { from: opts.from } : {}) },
     );
     const res = opts.json ? await create() : await withSpinner(`Creating ${name}...`, create, { done: null });
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
@@ -86,7 +101,38 @@ envCommand
       process.exit(1);
     }
     console.log(success(`✓ Created ${name}`));
+    printCopy(res.data.data);
     console.log(`${muted('Live:')} ${brand(res.data.url)}`);
+  }));
+
+envCommand
+  .command('reset <name>')
+  .description('Start an environment over: drop its database, rerun every migration from zero, redeploy')
+  .option('--data', 'Then copy the rows of prod (or --from) into it')
+  .option('--from <env>', 'With --data: the environment to copy from (default prod)')
+  .option('--json', 'Output as JSON')
+  .action((name: string, opts) => run('Env', async () => {
+    if (name === PROD_ENV) {
+      console.error(clrError('prod can\'t be reset.'));
+      process.exit(1);
+    }
+    if (opts.from && !opts.data) {
+      console.error(clrError('--from goes with --data'));
+      process.exit(1);
+    }
+    const ok = await confirm(`Reset ${bold(name)}? Its database is dropped and rebuilt${opts.data ? ` from ${opts.from ?? 'prod'}'s data` : ' empty'}.`, { default: 'no' });
+    if (!ok) { console.log(muted('Aborted.')); process.exit(1); }
+    const reset = () => post<{ data: { name: string; url: string; phases: Array<{ name: string; status: string; summary: string }>; data?: DataCopy } }>(
+      `/projects/${appGuid()}/envs/${encodeURIComponent(name)}/reset`, { ...(opts.data ? { data: true } : {}), ...(opts.from ? { from: opts.from } : {}) },
+    );
+    const res = opts.json ? await reset() : await withSpinner(`Resetting ${name}...`, reset, { done: null });
+    if (opts.json) { console.log(JSON.stringify(res.data)); return; }
+    const failed = res.data.phases.filter((p) => p.status === 'failed');
+    for (const p of failed) console.log(`${clrError('✗')} ${bold(p.name)}: ${p.summary}`);
+    if (failed.length > 0) { console.log(clrError(`Reset ${name}, but its deploy failed.`)); process.exit(1); }
+    console.log(success(`✓ Reset ${name}`));
+    printCopy(res.data.data);
+    if (res.data.url) console.log(`${muted('Live:')} ${brand(res.data.url)}`);
   }));
 
 envCommand

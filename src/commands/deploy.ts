@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { post } from '../api.js';
+import { get, post } from '../api.js';
 import { requireConfig, resolveApiBase, getEnvOption } from '../config.js';
 import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
@@ -16,12 +16,45 @@ function statusIcon(status: string): string {
   return muted('→');
 }
 
+// ── Plan ───────────────────────────────────────────────────────────────
+
+interface DeployPlan {
+  env: string;
+  pending: Array<{ file: string; destructive: string[]; ranOn: Array<{ env: string; appliedAt: string }> }>;
+  changed: string[];
+}
+
+async function printPlan(appGuid: string, env: string, json: boolean): Promise<void> {
+  const res = await get<{ data: DeployPlan }>(`/projects/${appGuid}/envs/${encodeURIComponent(env)}/plan`);
+  const p = res.data;
+  if (json) { console.log(JSON.stringify(p)); return; }
+  console.log(brand(bold(`Deploy plan for ${p.env}`)));
+  console.log(muted('─'.repeat(40)));
+  if (p.pending.length === 0) {
+    console.log(success(`✓ No pending migrations: ${p.env}'s database is up to date.`));
+    return;
+  }
+  for (const m of p.pending) {
+    const where = m.ranOn.length
+      ? muted(`ran on ${m.ranOn.map((r) => `${r.env} ${new Date(r.appliedAt).toLocaleDateString()}`).join(', ')}`)
+      : warning('has not run anywhere yet');
+    const edited = p.changed.includes(m.file) ? muted(' (edited since it ran here; runs again)') : '';
+    console.log(`${m.destructive.length ? clrError('!') : muted('→')} ${bold(m.file)}  ${where}${edited}`);
+    for (const d of m.destructive) console.log(`    ${clrError(d)}`);
+  }
+  if (p.env === 'prod' && p.pending.some((m) => m.destructive.length)) {
+    console.log('');
+    console.log(warning('A prod deploy stops on the destructive statements above until you pass --yes-destructive.'));
+  }
+}
+
 // ── Main Deploy Command ────────────────────────────────────────────────
 
 export const deployCommand = new Command('deploy')
   .description('Deploy the app to prod, or to an environment (created on first deploy)')
   .argument('[env]', 'prod, or an environment name (dev, staging, ...). Omitted: prod while the app has no environments; once it has any, name one')
   .option('--yes-destructive', 'Allow pending prod migrations that destroy data (DROP TABLE/COLUMN, TRUNCATE, DELETE without WHERE, column type changes)')
+  .option('--plan', 'Show the pending migrations this deploy would run (and where each already ran), without deploying')
   .option('--source-dir <dir>', 'Source directory to deploy from')
   .option('--only <phases>', 'Run only specific phases, comma-separated, matched by gipity.yaml phase name or type: files/static, database/sql, functions, workflows, services, jobs, records, realtime, env, auth_branding')
   .option('--force', 'Re-run all phases (ignore checksums) and bypass the sync bulk-deletion guard')
@@ -40,6 +73,11 @@ export const deployCommand = new Command('deploy')
   .action((envArg: string | undefined, opts) => run('Deploy', async () => {
       // `gipity deploy staging` and `gipity deploy --env staging` are the same.
       const env: string | undefined = envArg ?? getEnvOption();
+
+      if (opts.plan) {
+        await printPlan(requireConfig().projectGuid, env ?? 'prod', !!opts.json);
+        return;
+      }
 
       // A settle flag only means one thing on a deploy: "verify the page once it's
       // up, and give it time to come up." Asking for it without --inspect is not an

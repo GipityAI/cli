@@ -203,3 +203,67 @@ test('gipity env delete prod and env create prod are refused locally', async () 
   assert.notEqual(create.status, 0);
   assert.equal(mock.requests().length, 0);
 });
+
+test('gipity env create --data [--from] sends both and reports the copy', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/envs', { status: 201, body: { data: {
+    name: 'staging', guid: 'p_StagEnv', url: 'https://dev.gipity.ai/test-account/test-project--staging/',
+    phases: [{ name: 'database', status: 'ok', summary: 'ok' }],
+    data: { from: 'qa', databases: [{ database: 'default', tables: 3, rows: 42 }] },
+  } } });
+  const r = await cli(['env', 'create', 'staging', '--data', '--from', 'qa']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(mock.requests().find((q) => q.method === 'POST')?.body, { name: 'staging', data: true, from: 'qa' });
+  assert.match(r.stdout, /Copied 42 rows \(3 tables\) from qa's default database/);
+});
+
+test('--from without --data is refused locally', async () => {
+  mock.reset();
+  const r = await cli(['env', 'create', 'staging', '--from', 'qa']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--from goes with --data/);
+  assert.equal(mock.requests().length, 0);
+});
+
+test('gipity env reset posts to the reset route', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/envs/dev/reset', { body: { data: {
+    name: 'dev', url: 'https://dev.gipity.ai/test-account/test-project/', phases: [{ name: 'database', status: 'ok', summary: '1 applied' }],
+    data: { from: 'prod', databases: [{ database: 'default', tables: 2, rows: 7 }] },
+  } } });
+  const r = await cli(['-y', 'env', 'reset', 'dev', '--data']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(mock.requests().find((q) => q.url.endsWith('/reset'))?.body, { data: true });
+  assert.match(r.stdout, /Reset dev/);
+  assert.match(r.stdout, /Copied 7 rows/);
+  const prod = await cli(['-y', 'env', 'reset', 'prod']);
+  assert.notEqual(prod.status, 0);
+});
+
+test('gipity deploy --plan shows pending migrations without deploying', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/envs/prod/plan', { body: { data: {
+    env: 'prod',
+    pending: [
+      { file: '002-drop.sql', destructive: ['drops a column: ALTER TABLE t DROP COLUMN c'], ranOn: [{ env: 'dev', appliedAt: '2026-10-16T20:00:00Z' }] },
+      { file: '003-new.sql', destructive: [], ranOn: [] },
+    ],
+    changed: [],
+  } } });
+  const r = await cli(['deploy', 'prod', '--plan', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Deploy plan for prod/);
+  assert.match(r.stdout, /002-drop\.sql\s+ran on dev/);
+  assert.match(r.stdout, /drops a column/);
+  assert.match(r.stdout, /003-new\.sql\s+has not run anywhere yet/);
+  assert.match(r.stdout, /--yes-destructive/);
+  assert.equal(mock.requests().filter((q) => q.url.endsWith('/deploy')).length, 0);
+});
+
+test('gipity deploy --plan defaults to prod and accepts an env', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/envs/staging/plan', { body: { data: { env: 'staging', pending: [], changed: [] } } });
+  const r = await cli(['deploy', 'staging', '--plan', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /staging's database is up to date/);
+});
