@@ -12,6 +12,7 @@
  * path sidesteps the shell argument entirely.
  */
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { guessMime } from '../upload.js';
 
 /** Read all of stdin synchronously (fd 0). Returns '' if stdin is a TTY. */
@@ -107,4 +108,39 @@ export function resolveJsonBody(raw: string | undefined): unknown {
   } catch (e) {
     throw new Error(`Invalid JSON in ${origin}: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Build a multipart/form-data body from repeatable `--form` specs, curl `-F`
+ * style: `field=@path` attaches a file (sent with its filename and detected
+ * media type), `field=value` sends a text field. This is for endpoints that
+ * take a real file upload rather than a JSON body, e.g. the transcribe service
+ * (`--form audio=@talk.mp3 --form language=en`). Multipart also carries much
+ * larger files than a base64 JSON body can.
+ */
+export function resolveFormBody(specs: string[]): FormData {
+  const form = new FormData();
+  for (const spec of specs) {
+    const eq = spec.indexOf('=');
+    if (eq === -1) {
+      throw new Error(`Invalid --form '${spec}': expected field=@path for a file or field=value for text (e.g. --form audio=@talk.mp3).`);
+    }
+    const field = spec.slice(0, eq).trim();
+    const value = spec.slice(eq + 1);
+    if (!field) throw new Error(`Invalid --form '${spec}': missing field name before '='.`);
+    if (!value.startsWith('@')) {
+      form.append(field, value);
+      continue;
+    }
+    const path = value.slice(1);
+    if (!path) throw new Error(`Invalid --form '${spec}': missing file path after '@'.`);
+    let data: Buffer;
+    try {
+      data = readFileSync(path);
+    } catch (e) {
+      throw new Error(`Cannot read --form '${path}': ${(e as Error).message}`);
+    }
+    form.append(field, new Blob([new Uint8Array(data)], { type: guessMime(path) }), basename(path));
+  }
+  return form;
 }

@@ -1,4 +1,6 @@
 import { test, before, after } from 'node:test';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
@@ -104,4 +106,48 @@ test('gipity service call -d and --field work like fn call', async () => {
   const r = await fresh(['service', 'call', 'llm', '-d', '{"prompt":"hi"}', '--field', 'choices.0.message.content']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'hello');
+});
+
+// ── multipart uploads (--form) ────────────────────────────────────────────────
+// transcribe takes a real multipart upload with an `audio` file field, not the
+// { data, media_type } JSON shape --file builds, so --form sends multipart.
+
+test('gipity service call --form sends multipart with the file and text fields', async () => {
+  mock.reset();
+  let seen: { contentType: string; body: string } | undefined;
+  mock.on('POST /api/p_TestProj/services/transcribe', (req) => {
+    seen = { contentType: String(req.headers['content-type']), body: String(req.body) };
+    return { body: { text: 'hello world', language: 'en' } };
+  });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(dir, 'talk.mp3'), 'ID3fake-audio-bytes');
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'service', 'call', 'transcribe', '--form', 'audio=@talk.mp3', '--form', 'language=en', '--form', 'diarize=true'],
+    { env: { HOME: home }, cwd: dir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /hello world/);
+  assert.ok(seen, 'expected the transcribe endpoint to be called');
+  assert.match(seen.contentType, /^multipart\/form-data; boundary=/);
+  assert.match(seen.body, /name="audio"; filename="talk\.mp3"/);
+  assert.match(seen.body, /Content-Type: audio\/mpeg/);
+  assert.match(seen.body, /ID3fake-audio-bytes/);
+  assert.match(seen.body, /name="language"\r\n\r\nen\r\n/);
+  assert.match(seen.body, /name="diarize"\r\n\r\ntrue\r\n/);
+});
+
+test('gipity service call --form refuses to mix with a JSON body', async () => {
+  mock.reset();
+  const r = await fresh(['service', 'call', 'transcribe', '{"x":1}', '--form', 'language=en']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /cannot be combined/);
+  assert.equal(mock.requests().length, 0);
+});
+
+test('gipity service call --form names a missing file', async () => {
+  mock.reset();
+  const r = await fresh(['service', 'call', 'transcribe', '--form', 'audio=@nope.mp3']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /Cannot read --form 'nope\.mp3'/);
+  assert.equal(mock.requests().length, 0);
 });

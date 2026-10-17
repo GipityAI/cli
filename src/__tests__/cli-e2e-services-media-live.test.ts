@@ -210,6 +210,23 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.ok(existsSync(out) && statSync(out).size > 1000, `expected a non-empty mp3 at ${out}`);
   });
 
+  // transcribe is a multipart upload (field `audio`), not a JSON body, so it is
+  // only reachable through --form. Round-trip: speak a known sentence, then
+  // transcribe it back with the language + diarize fields riding along.
+  it('service call transcribe --form transcribes real speech (costs credits)', () => {
+    const speech = join(projectDir, 'gen-speech.mp3');
+    const gen = cli(['generate', 'speech', 'The quick brown fox jumps over the lazy dog.', '-o', speech, '--json'], { timeout: 120000 });
+    assert.equal(gen.status, 0, `generate speech failed: ${gen.stderr || gen.stdout}`);
+
+    const r = cli(
+      ['service', 'call', 'transcribe', '--form', `audio=@${speech}`, '--form', 'language=en', '--form', 'diarize=true'],
+      { timeout: 120000 },
+    );
+    assert.equal(r.status, 0, `service call transcribe failed: ${r.stderr || r.stdout}`);
+    const body = JSON.parse(r.stdout);
+    assert.match(body.text ?? '', /brown fox/i, `expected the spoken sentence back, got: ${r.stdout}`);
+  });
+
   it('service call rejects invalid JSON before hitting the network', () => {
     const r = cli(['service', 'call', 'llm', 'not-json']);
     assert.notEqual(r.status, 0);

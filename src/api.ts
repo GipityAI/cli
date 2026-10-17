@@ -201,14 +201,23 @@ export async function getAuthHeader(): Promise<string | undefined> {
   return headers.Authorization;
 }
 
+/** A FormData body goes out as multipart/form-data (fetch sets the boundary
+ *  header itself, so callers must not send a JSON Content-Type with it); any
+ *  other body is JSON. */
+function encodeBody(body: unknown): string | FormData | undefined {
+  if (body instanceof FormData) return body;
+  return body ? JSON.stringify(body) : undefined;
+}
+
 async function request<T>(method: string, path: string, body?: unknown, retrying = false, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const headers = await getHeaders();
   const url = `${baseUrl()}${path}`;
+  if (body instanceof FormData) delete headers['Content-Type'];
 
   const res = await fetchWithTimeout(url, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: encodeBody(body),
   }, timeoutMs, `${method} ${path}`);
 
   if (await shouldRetryAfter401(res.status, retrying)) {
@@ -494,13 +503,15 @@ export async function publicRequest<T>(
   path: string,
   body?: unknown,
   extraHeaders?: Record<string, string>,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const url = `${baseUrl()}${path}`;
+  const isForm = body instanceof FormData;
   const res = await fetchWithTimeout(url, {
     method,
-    headers: { ...clientHeaders(), 'Content-Type': 'application/json', ...extraHeaders },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  }, REQUEST_TIMEOUT_MS, `${method} ${path}`);
+    headers: { ...clientHeaders(), ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...extraHeaders },
+    body: isForm ? body : body === undefined ? undefined : JSON.stringify(body),
+  }, timeoutMs, `${method} ${path}`);
 
   if (!res.ok) {
     const json = await res.json().catch(() => null);

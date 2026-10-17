@@ -3,11 +3,12 @@ import { get, post, publicRequest, mintAppToken, ApiError, LONG_REQUEST_TIMEOUT_
 import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { bold, muted } from '../colors.js';
-import { run, emitField, resolveBody } from '../helpers/index.js';
+import { run, emitField, resolveBody, resolveFormBody } from '../helpers/index.js';
 
 /** Known app-service endpoints, shown by `gipity service list` and used to
- *  give a helpful hint on typos. POST endpoints take a JSON body; GET
- *  endpoints (model/voice listings) are reached with `--get`. */
+ *  give a helpful hint on typos. POST endpoints take a JSON body, except
+ *  transcribe, which takes a multipart upload via --form. GET endpoints
+ *  (model/voice listings) are reached with `--get`. */
 const SERVICES: Array<{ name: string; method: 'POST' | 'GET'; desc: string }> = [
   { name: 'llm', method: 'POST', desc: 'Chat completion ({ prompt | messages, model?, ... })' },
   { name: 'llm/models', method: 'GET', desc: 'List available LLM models' },
@@ -19,6 +20,7 @@ const SERVICES: Array<{ name: string; method: 'POST' | 'GET'; desc: string }> = 
   { name: 'music', method: 'POST', desc: 'Music generation ({ prompt, duration_seconds? })' },
   { name: 'music/models', method: 'GET', desc: 'List music models (ids for --model / model)' },
   { name: 'video', method: 'POST', desc: 'Video generation ({ prompt, ... })' },
+  { name: 'transcribe', method: 'POST', desc: 'Speech-to-text, multipart (--form audio=@talk.mp3 [--form language=en] [--form diarize=true])' },
   { name: 'location/ip', method: 'POST', desc: 'IP geolocation ({ ip? })' },
   { name: 'location/geocode', method: 'POST', desc: 'Reverse geocode ({ lat, lon })' },
 ];
@@ -73,7 +75,8 @@ serviceCommand
   .command('call <name> [body]')
   .description('Call an app service by name (e.g. llm, image, music). Uses your logged-in session - no token wrangling; --anon calls it as a signed-out visitor instead.')
   .option('-d, --data <json>', 'JSON request body: inline JSON, @file to read a file, or @- / - for stdin (alternative to the positional [body])')
-  .option('--file <field=@path>', 'Attach a file as { data, media_type } under <field> (the vision/media shape these services expect), repeatable, e.g. --file image=@receipt.png', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--file <field=@path>', 'Attach a file as { data, media_type } under <field> in the JSON body (the shape image/vision services expect), repeatable, e.g. --file image=@receipt.png', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--form <field=value>', 'Send multipart/form-data instead of JSON, curl -F style: field=@path attaches a file, field=value a text field. Repeatable. For upload endpoints like transcribe: --form audio=@talk.mp3 --form language=en', (v: string, acc: string[]) => (acc || []).concat(v))
   .option('--anon', 'Call as an anonymous visitor (the public path a signed-out user of your deployed app hits) instead of as your signed-in account')
   .option('--get', 'Issue a GET (for listing endpoints like llm/models, tts/voices)')
   .option('--field <path>', 'Print only this field of the result (dot path, e.g. choices.0.message.content)')
@@ -87,7 +90,10 @@ serviceCommand
     const [pathPart, query] = name.split('?', 2);
     const path = pathPart.split('/').map(encodeURIComponent).join('/');
     const url = `/api/${config.projectGuid}/services/${path}${query ? `?${query}` : ''}`;
-    const body = resolveBody(bodyArg || opts.data, opts.file);
+    if (opts.form && (bodyArg || opts.data || opts.file || opts.get)) {
+      throw new Error('--form sends a multipart body, so it cannot be combined with a JSON body, --data, --file, or --get.');
+    }
+    const body = opts.form ? resolveFormBody(opts.form) : resolveBody(bodyArg || opts.data, opts.file);
 
     // Name the calling identity (stderr, so stdout stays parseable). An owner
     // call always succeeds regardless of billing mode, so without this line a
@@ -115,7 +121,7 @@ serviceCommand
             `then re-run this command.`,
           );
         }
-        res = await publicRequest<unknown>(opts.get ? 'GET' : 'POST', url, opts.get ? undefined : body, headers);
+        res = await publicRequest<unknown>(opts.get ? 'GET' : 'POST', url, opts.get ? undefined : body, headers, LONG_REQUEST_TIMEOUT_MS);
       } else {
         // Generation services (music, video, image, ...) can hold the request
         // open for minutes - e.g. a GPU music model cold-starting from
