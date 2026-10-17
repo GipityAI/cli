@@ -3,7 +3,8 @@ import { Command, Help, Option } from 'commander';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { setApiBaseOverride, setEnvOption, applyEnvOverride, getConfig } from './config.js';
+import { setApiBaseOverride, setEnvOption, applyEnvOverride, getConfig, getProjectRoot } from './config.js';
+import { refreshExistingPrimers } from './setup.js';
 import { setAutoConfirm } from './utils.js';
 import { installOutputFrame } from './helpers/output.js';
 import { installNetworking } from './net.js';
@@ -219,6 +220,7 @@ program.hook('preAction', async (_thisCommand, actionCommand) => {
   let top: Command = actionCommand;
   while (top.parent && top.parent !== program) top = top.parent;
   if (envName && !SELF_ENV_COMMANDS.has(top.name())) await resolveEnvOverride(envName);
+  refreshPrimersQuietly();
   // Honor `-y`/`--yes` whether it came before the subcommand (the global flag)
   // or after it (the per-command flag registered by enableYesEverywhere below),
   // so both `gipity -y memory delete ...` and `gipity memory delete ... --yes`
@@ -226,6 +228,19 @@ program.hook('preAction', async (_thisCommand, actionCommand) => {
   if (globalOpts.yes || actionCommand.opts().yes) setAutoConfirm(true);
   rejectBlankIdArgs(actionCommand);
 });
+
+/** Keep this project's CLAUDE.md / AGENTS.md Gipity block current with this
+ *  CLI. A failure (read-only file, odd permissions) never blocks the command
+ *  the user ran: it's reported on stderr and the command goes ahead. */
+function refreshPrimersQuietly(): void {
+  const root = getProjectRoot();
+  if (!root) return;
+  try {
+    refreshExistingPrimers(root);
+  } catch (err) {
+    console.error(`Could not refresh this project's Gipity docs block: ${(err as Error).message}`);
+  }
+}
 
 /** Re-point the linked project's config at env `name` for this invocation. */
 async function resolveEnvOverride(name: string): Promise<void> {

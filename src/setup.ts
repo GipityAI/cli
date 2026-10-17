@@ -981,6 +981,30 @@ function writeSkillsFile(relPath: string, wrap?: (block: string) => string): voi
   if (next !== existing) writeFileSync(path, next);
 }
 
+/**
+ * Bring the managed Gipity block up to date in every primer file this project
+ * already has (CLAUDE.md, AGENTS.md, ...), so docs changes in a new CLI reach
+ * existing projects without a re-init. Only files that already carry a Gipity
+ * block are touched; nothing is created; a file is written only when its text
+ * changes. Run before each command (index.ts preAction), which includes the
+ * sync the editor hooks run before every agent turn. Returns the files written.
+ */
+export function refreshExistingPrimers(projectRoot: string): string[] {
+  const written: string[] = [];
+  for (const rel of new Set(Object.values(PRIMER_FILES))) {
+    const path = resolve(projectRoot, rel);
+    if (!existsSync(path)) continue;
+    const existing = readFileSync(path, 'utf-8');
+    if (!existing.includes(GIPITY_BLOCK_BEGIN) && !existing.includes('# Gipity Integration')) continue;
+    const next = applySkillsBlock(existing, resolveApiBase());
+    if (next !== existing) {
+      writeFileSync(path, next);
+      written.push(rel);
+    }
+  }
+  return written;
+}
+
 export function setupClaudeMd(): void {
   writeSkillsFile(PRIMER_FILES.claude);
 }

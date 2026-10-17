@@ -267,3 +267,28 @@ test('gipity deploy --plan defaults to prod and accepts an env', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /staging's database is up to date/);
 });
+
+// Docs changes in a new CLI must reach projects created by an older one: any
+// command refreshes the managed Gipity block in the primers the project has.
+test('any command refreshes an existing primer\'s stale Gipity block, and only that block', async () => {
+  const { readFileSync, writeFileSync, existsSync } = await import('fs');
+  const { join } = await import('path');
+  const { GIPITY_BLOCK_BEGIN, GIPITY_BLOCK_END } = await import('../setup.js');
+  mock.reset();
+  mock.on('GET *', { body: { data: {} } });
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  const stale = `# My notes\n\nkeep me\n\n${GIPITY_BLOCK_BEGIN}\nBuild loop: gipity deploy dev --inspect (old)\n${GIPITY_BLOCK_END}\n\ntrailing user text\n`;
+  writeFileSync(join(d, 'CLAUDE.md'), stale);
+  writeFileSync(join(d, 'AGENTS.md'), '# Just my own agent notes, no Gipity block\n');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'status', '--json'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  const claude = readFileSync(join(d, 'CLAUDE.md'), 'utf-8');
+  assert.match(claude, /^# My notes\n\nkeep me\n/);
+  assert.match(claude, /trailing user text\n$/);
+  assert.doesNotMatch(claude, /\(old\)/);
+  assert.match(claude, /gipity deploy --inspect/);
+  assert.match(claude, /environments/);
+  // A primer with no Gipity block is the user's own: untouched. Nothing is created.
+  assert.equal(readFileSync(join(d, 'AGENTS.md'), 'utf-8'), '# Just my own agent notes, no Gipity block\n');
+  assert.equal(existsSync(join(d, 'GEMINI.md')), false);
+});

@@ -24,7 +24,7 @@ fnCommand
     // The callable address is the deliverable for API-only apps - name it here
     // rather than leaving it to be inferred from a template comment.
     if (!opts.json && res.data.length > 0) {
-      console.log(muted(`Endpoint: POST ${resolveApiBase()}/api/${config.projectGuid}/fn/<name>  (same on dev and prod; public path: gipity fn call <name> --anon)`));
+      console.log(muted(`Endpoint: POST ${resolveApiBase()}/api/${config.projectGuid}/fn/<name>  (this is ${config.env ? `the ${config.env.name} environment` : 'prod'}; each environment has its own address, see --env; public path: gipity fn call <name> --anon)`));
     }
   }));
 
