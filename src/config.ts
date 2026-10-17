@@ -20,14 +20,44 @@ export interface GipityConfig {
    *  daemon both call setupProjectTools() with no arguments, and without this
    *  they would re-add primers for every tool on the next run. */
   tools?: string[];
+  /** Set in memory only, by the global `--env <name>` flag: the config then
+   *  points at that app environment's project (its own guid and slug). Never
+   *  written to `.gipity.json`. `appSlug` is the app's own slug, which the
+   *  env's URL is built from. */
+  env?: { name: string; appSlug: string };
 }
 
 const CONFIG_FILE = '.gipity.json';
+
+/** The app's prod environment name. */
+export const PROD_ENV = 'prod';
 
 export const DEFAULT_API_BASE = 'https://a.gipity.ai';
 
 let cached: GipityConfig | null = null;
 let cachedPath: string | null = null;
+let envOption: string | undefined;
+
+/** Record the global `--env <name>` flag (index.ts preAction). */
+export function setEnvOption(name: string | undefined): void {
+  envOption = name;
+}
+
+/** The `--env <name>` this invocation was given, if any. */
+export function getEnvOption(): string | undefined {
+  return envOption;
+}
+
+/**
+ * Point this invocation's config at an app environment's project, so every
+ * project-scoped command (db, fn, logs, secrets, domain, ...) acts on that env.
+ * In memory only: saveConfig refuses while it is applied.
+ */
+export function applyEnvOverride(env: { name: string; projectGuid: string; projectSlug: string }): void {
+  const base = getConfig();
+  if (!base) throw new Error('--env needs a Gipity project directory');
+  cached = { ...base, projectGuid: env.projectGuid, projectSlug: env.projectSlug, env: { name: env.name, appSlug: base.projectSlug } };
+}
 
 /** Global --api-base override (set from root CLI option, takes precedence over config file) */
 let apiBaseOverride: string | null = null;
@@ -218,11 +248,16 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
  *  resolve). Mirrors the server's deploy URL; `deploy` itself prints the
  *  server-authoritative URL, the read-only commands derive it from config. */
 export function liveUrl(
-  config: Pick<GipityConfig, 'accountSlug' | 'projectSlug'>,
-  target: 'dev' | 'prod' = 'dev',
+  config: Pick<GipityConfig, 'accountSlug' | 'projectSlug' | 'env'>,
+  env: string = config.env?.name ?? PROD_ENV,
 ): string {
-  const host = target === 'prod' ? 'app.gipity.ai' : 'dev.gipity.ai';
-  return `https://${host}/${config.accountSlug}/${config.projectSlug}/`;
+  // The app's own slug, even when --env pointed the config at an env project.
+  const appSlug = config.env?.appSlug ?? config.projectSlug;
+  if (env === PROD_ENV) return `https://app.gipity.ai/${config.accountSlug}/${appSlug}/`;
+  // Every other env is on the dev host: `dev` at the app's bare slug, the
+  // rest at `<slug>--<env>`.
+  const segment = env === 'dev' ? appSlug : `${appSlug}--${env}`;
+  return `https://dev.gipity.ai/${config.accountSlug}/${segment}/`;
 }
 
 export function clearConfigCache(): void {
@@ -237,6 +272,9 @@ export function saveConfig(data: GipityConfig): void {
   // create-on-save here would silently turn that folder - in the wild, often
   // `$HOME` itself - into a Gipity project. Creating a config is always an
   // explicit act and must go through `saveConfigAt(dir, …)`.
+  if (cached?.env || data.env) {
+    throw new Error('Can\'t change the linked project while --env is set: run it without --env.');
+  }
   const path = getConfigPath();
   if (!path) {
     throw new Error(

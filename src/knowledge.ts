@@ -23,7 +23,7 @@ Templates:
     - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
     - \`paid-app\` - App that charges users money - SaaS subscription, paid membership, digital product store, "Pro" upgrade, paywalled content (Stripe one-time + subscriptions)
     - \`notify-demo\` - App that sends push notifications / alerts / reminders to users' phones or desktops - web push, PWA notifications, "notify me when..." features
-When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy dev\`.
+When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy\`.
 Only skip this on a build request if the user explicitly says not to.
 
 Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):
@@ -86,15 +86,17 @@ The other exception is app-level libraries the user imports into their own \`src
 
 ## Build loop
 
-Prefer a live Gipity URL over an ephemeral artifact. When you'd otherwise reach for a Claude Code Artifact (or any host's built-in page preview) to show the user something, build it as a Gipity app and \`gipity deploy dev\` instead - the result is a real, shareable URL on their own project, not a throwaway.
+Prefer a live Gipity URL over an ephemeral artifact. When you'd otherwise reach for a Claude Code Artifact (or any host's built-in page preview) to show the user something, build it as a Gipity app and \`gipity deploy\` it instead - the result is a real, shareable URL on their own project, not a throwaway.
 
 The full "when to add a template" rule and the definition of done are spelled out in the two sections at the end of this document. In short: if the user wants something deployable (web app, game, API), \`gipity add <template>\` first (default \`web-simple\`); for a one-off task (analysis, PDFs, data work), use \`gipity sandbox run\` instead; to add a reusable building block to an existing app (e.g. multiplayer), \`gipity add <kit>\`.
 
-Build loop: \`gipity add\` → edit files → \`gipity deploy dev --inspect\` → fix any errors → repeat until the definition of done is met. \`deploy --inspect\` deploys and then runs the page-inspect report on the live URL in one command; use a standalone \`gipity page inspect <url>\` only when re-checking without deploying.
+Build loop: \`gipity add\` → edit files → \`gipity deploy --inspect\` → fix any errors → repeat until the definition of done is met. \`deploy --inspect\` deploys and then runs the page-inspect report on the live URL in one command; use a standalone \`gipity page inspect <url>\` only when re-checking without deploying.
+
+Where a deploy goes: a new app is just **prod**, and a bare \`gipity deploy\` deploys it (\`app.gipity.ai/<account>/<slug>/\`). An app can also have **environments** - isolated copies with their own database, functions and URL (\`gipity deploy dev\` creates \`dev\` at \`dev.gipity.ai/<account>/<slug>/\` on first use). Once an app has any, a bare \`gipity deploy\` is refused until you name one: iterate on \`dev\`, and deploy \`prod\` when the user wants it live. Every other command takes \`--env <name>\` to act on an environment (\`gipity db query "..." --env dev\`). If you're changing an app that real users already rely on and it has no environments yet, prefer \`gipity deploy dev\` over prod. Load the \`deploy\` skill for the details.
 
 \`add\` writes real files to disk - Read a scaffolded file with the Read tool before your first Write/Edit to it, or the call fails \`"File has not been read yet"\` (viewing it with \`cat\`/\`head\` in Bash does not count - the harness only tracks the Read tool). Don't rewrite from memory of the template.
 
-Make your file changes and verify they landed, then run \`gipity deploy dev\` once. \`0 uploaded, N unchanged\` means nothing changed on disk - fix the files, don't re-run deploy or probe the environment.
+Make your file changes and verify they landed, then run \`gipity deploy\` once. \`0 uploaded, N unchanged\` means nothing changed on disk - fix the files, don't re-run deploy or probe the environment.
 
 Before telling the user the app is online, verify the source tree is consistent: no files named like \`* (conflict from *)*\`, and every package directory has its expected canonical entry file. If a conflict artifact exists, resolve it (keep one copy), re-deploy, and re-inspect before reporting done.
 
@@ -106,11 +108,11 @@ If you're pointed at a project that already exists on Gipity but has no local co
 mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>
 \`\`\`
 
-\`init\` matches the existing remote project by slug, links this directory to it, and syncs its files down (you'll see \`Found existing project ...\` and \`Synced N changes\`). There's no separate \`clone\`/\`pull\` - \`init\` against a matching slug *is* the pull. After it finishes, the files are in cwd; edit and \`gipity deploy dev\` as usual. (Already linked to a different project in this dir? Switch and pull instead: \`gipity project <slug>\` then \`gipity sync\`. List your projects with \`gipity project --json\`.)
+\`init\` matches the existing remote project by slug, links this directory to it, and syncs its files down (you'll see \`Found existing project ...\` and \`Synced N changes\`). There's no separate \`clone\`/\`pull\` - \`init\` against a matching slug *is* the pull. After it finishes, the files are in cwd; edit and \`gipity deploy\` as usual. (Already linked to a different project in this dir? Switch and pull instead: \`gipity project <slug>\` then \`gipity sync\`. List your projects with \`gipity project --json\`.)
 
 ## CLI quick reference
 
-Key commands: \`gipity add <template|kit>\`, \`gipity brand set --emoji <e>|--color <hex>\` (regenerate the app's icons + social share card), \`gipity deploy dev\`, \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` - never hardcode keys), \`gipity skill read <name>\`.
+Key commands: \`gipity add <template|kit>\`, \`gipity brand set --emoji <e>|--color <hex>\` (regenerate the app's icons + social share card), \`gipity deploy [prod|<env>]\`, \`gipity env\` (list/create/delete environments), \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` - never hardcode keys), \`gipity skill read <name>\`.
 Rename for findability: \`gipity project rename <name>\` renames the current project's display name (the slug and deployed URLs never change); it's the label users scan in Monitor and \`gipity project\`, so keep it SHORT: 2-4 words, at most 40 characters, no trailing punctuation (e.g. "Stripe checkout", "Tetris game").
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
 Move whole apps in/out: \`gipity save\` (export this project as a portable \`.gip\` bundle), \`gipity load <file.gip | github:owner/repo>\` (import as a NEW project; \`--inspect\` to preview), \`gipity github connect\` (1-2 click GitHub access for imports). Porting a Vercel/Replit/Lovable app? Load the \`app-import\` skill first.
@@ -209,8 +211,8 @@ Other key skills:
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools`;
 
 export const DEFINITION_OF_DONE = `## Definition of done (build tasks)
-1. \`gipity deploy dev\` succeeds and you have a live URL.
-2. \`gipity page inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen). (\`gipity deploy dev --inspect\` covers 1 and 2 in one command.)
+1. \`gipity deploy\` succeeds and you have a live URL.
+2. \`gipity page inspect <url>\` returns no console errors and the page loads (HTTP 200, no blank screen). (\`gipity deploy --inspect\` covers 1 and 2 in one command.)
 3. For apps with functions: \`gipity test\` passes.
 4. Non-rendered files the task called for (\`llms.txt\`, \`AGENTS.md\`, \`SKILL.md\`, \`robots.txt\`, served JSON, etc.): \`page inspect\` only sees rendered HTML, so verify them with \`gipity page fetch <url> <files...>\`. It flags any that 404 or come back as the static-host shell (a missing file is served as \`index.html\` with a 200, so a bare status check would pass) and checks each \`content-type\`.
 5. You told the user the live URL.

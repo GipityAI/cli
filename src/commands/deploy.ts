@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { post } from '../api.js';
-import { requireConfig, resolveApiBase } from '../config.js';
+import { requireConfig, resolveApiBase, getEnvOption } from '../config.js';
 import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
 import { run, syncBeforeAction } from '../helpers/index.js';
@@ -19,8 +19,9 @@ function statusIcon(status: string): string {
 // ── Main Deploy Command ────────────────────────────────────────────────
 
 export const deployCommand = new Command('deploy')
-  .description('Deploy to dev or prod')
-  .argument('[target]', 'dev or prod', 'dev')
+  .description('Deploy the app to prod, or to an environment (created on first deploy)')
+  .argument('[env]', 'prod, or an environment name (dev, staging, ...). Omitted: prod while the app has no environments; once it has any, name one')
+  .option('--yes-destructive', 'Allow pending prod migrations that destroy data (DROP TABLE/COLUMN, TRUNCATE, DELETE without WHERE, column type changes)')
   .option('--source-dir <dir>', 'Source directory to deploy from')
   .option('--only <phases>', 'Run only specific phases, comma-separated, matched by gipity.yaml phase name or type: files/static, database/sql, functions, workflows, services, jobs, records, realtime, env, auth_branding')
   .option('--force', 'Re-run all phases (ignore checksums) and bypass the sync bulk-deletion guard')
@@ -36,11 +37,9 @@ export const deployCommand = new Command('deploy')
   .option('--wait <ms>', 'With --inspect: sleep this many ms before capturing (max 30000)')
   .option('--wait-for <selector>', "With --inspect: wait until this CSS selector appears before capturing (deterministic; the app's own ready signal)")
   .option('--wait-timeout <ms>', 'With --inspect: max ms to wait for --wait-for before giving up', '5000')
-  .action((target: string, opts) => run('Deploy', async () => {
-      if (target !== 'dev' && target !== 'prod') {
-        console.error(clrError('Target must be "dev" or "prod"'));
-        process.exit(1);
-      }
+  .action((envArg: string | undefined, opts) => run('Deploy', async () => {
+      // `gipity deploy staging` and `gipity deploy --env staging` are the same.
+      const env: string | undefined = envArg ?? getEnvOption();
 
       // A settle flag only means one thing on a deploy: "verify the page once it's
       // up, and give it time to come up." Asking for it without --inspect is not an
@@ -60,6 +59,13 @@ export const deployCommand = new Command('deploy')
         totalBytes: number;
         url: string;
         target: string;
+        /** Where it went: prod or the env's name. */
+        env?: string;
+        /** The deployed project's guid (an env has its own). */
+        appGuid?: string;
+        /** True when this deploy created the env. */
+        created?: boolean;
+        hints?: string[];
         elapsedMs: number;
         batch?: number;
         phases?: Array<{ name: string; status: string; summary: string; elapsedMs?: number }>;
@@ -69,7 +75,8 @@ export const deployCommand = new Command('deploy')
         examples?: string[];
       };
       const doDeploy = () => post<{ data: DeployData }>(`/projects/${config.projectGuid}/deploy`, {
-        target,
+        ...(env ? { env } : {}),
+        ...(opts.yesDestructive ? { yesDestructive: true } : {}),
         sourceDir: opts.sourceDir,
         optimize: opts.optimize,
         force: opts.force,
@@ -77,9 +84,10 @@ export const deployCommand = new Command('deploy')
       });
       const res = opts.json
         ? await doDeploy()
-        : await withSpinner(`Deploying to ${target}...`, doDeploy, { done: null });
+        : await withSpinner(env ? `Deploying to ${env}...` : 'Deploying...', doDeploy, { done: null });
 
       const d = res.data;
+      const where = d.env ?? d.target;
 
       // Deploy + verify in one command: after a successful deploy, run the
       // same inspect pipeline `page inspect` uses against the live URL. An
@@ -114,7 +122,7 @@ export const deployCommand = new Command('deploy')
 
       // Format output
       const batchLabel = d.batch ? muted(` (batch ${d.batch})`) : '';
-      console.log(brand(bold(`Deploy to ${target}`)) + batchLabel);
+      console.log(brand(bold(`Deploy to ${where}`)) + batchLabel + (d.created ? muted(' (new environment)') : ''));
       console.log(muted('─'.repeat(40)));
 
       if (d.phases && d.phases.length > 0) {
@@ -164,7 +172,7 @@ export const deployCommand = new Command('deploy')
         console.log(clrError(`Deploy failed`) + muted(` (${d.elapsedMs}ms)`));
         process.exit(1);
       } else {
-        console.log(success(`✓ Deployed to ${target}`) + muted(` (${d.elapsedMs}ms)`));
+        console.log(success(`✓ Deployed to ${where}`) + muted(` (${d.elapsedMs}ms)`));
         // The live URL is the one thing the caller (often an agent) needs next
         // - to open it, inspect it, or report it. Always surface it so nobody
         // has to reconstruct the URL convention or guess a subdomain.
@@ -177,9 +185,12 @@ export const deployCommand = new Command('deploy')
           // --api-base flag and GIPITY_API_BASE env), not the raw stored
           // config.apiBase - otherwise on any override we'd advertise a host we
           // didn't deploy to and send the caller probing the wrong instance.
-          console.log(`${muted('Functions:')} POST ${brand(`${resolveApiBase()}/api/${config.projectGuid}/fn/<name>`)}`);
-          console.log(muted('  (same address on dev and prod; names: gipity fn list; verify the public path: gipity fn call <name> --anon)'));
+          console.log(`${muted('Functions:')} POST ${brand(`${resolveApiBase()}/api/${d.appGuid ?? config.projectGuid}/fn/<name>`)}`);
+          // Each environment has its own functions at its own address.
+          const envFlag = d.env && d.env !== 'prod' ? ` --env ${d.env}` : '';
+          console.log(muted(`  (names: gipity fn list${envFlag}; verify the public path: gipity fn call <name>${envFlag} --anon)`));
         }
+        for (const hint of d.hints ?? []) console.log(muted(hint));
         await inspectAfter();
       }
   }));

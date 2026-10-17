@@ -35,7 +35,7 @@ function printBrand(d: BrandData): void {
   if (d.branding.tagline) console.log(`${bold('Tagline:')} ${d.branding.tagline}`);
 }
 
-const DEPLOY_HINT = 'Deploy to publish the new assets: gipity deploy dev';
+const DEPLOY_HINT = 'Deploy to publish the new assets: gipity deploy';
 
 export const brandCommand = new Command('brand')
   .description("The app's generated icons + share card (favicons, iOS icon, og-image)")

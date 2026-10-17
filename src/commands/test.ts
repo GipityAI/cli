@@ -296,17 +296,17 @@ export const testCommand = new Command('test')
         console.log('');
       }
 
-      // Tests call functions against the DEPLOYED build, so a function written
-      // but not yet deployed 404s. That ordering (deploy → test) is invisible in
-      // a bare 404, so when we see that failure shape, name the fix once.
+      // `gipity test` registers the working-tree functions/ before every run,
+      // so a 404 from ctx.fn.call means there is no such function file (or it
+      // failed to register). Name that once instead of a bare 404 per test.
       const undeployed = undeployedFunctionsFromFailures(data.results);
       if (undeployed.length > 0) {
         const list = undeployed.map((n) => `'${n}'`).join(', ');
         console.log(warning(
-          `${undeployed.length === 1 ? 'Function' : 'Functions'} ${list} 404'd: tests call functions against the ` +
-          `DEPLOYED build, and ${undeployed.length === 1 ? 'this one is' : 'these are'} not deployed yet.`,
+          `${undeployed.length === 1 ? 'Function' : 'Functions'} ${list} 404'd: \`gipity test\` registers every file in ` +
+          `functions/ before the run, so ${undeployed.length === 1 ? 'that name has' : 'those names have'} no function file, or failed to register.`,
         ));
-        console.log(muted('Deploy first, then re-run: gipity deploy dev && gipity test'));
+        console.log(muted('Check the name against functions/<name>.js (or functions/<name>/index.js) and gipity.yaml.'));
         console.log('');
       }
 

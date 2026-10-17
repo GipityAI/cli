@@ -89,7 +89,8 @@ export function isSyncIgnored(name: string): boolean {
 
 
 // Permissions: auto-allow safe gipity commands in Claude Code
-// Destructive commands (db drop, deploy prod, email, file rm/restore/rollback) are excluded
+// Destructive commands (db drop, email, file rm/restore/rollback) are excluded. Deploy is
+// allowed: prod migrations that destroy data need --yes-destructive server-side.
 export const PERMISSIONS_SETTINGS = {
   permissions: {
     allow: [
@@ -98,7 +99,8 @@ export const PERMISSIONS_SETTINGS = {
       'Bash(gipity push *)',
       'Bash(gipity test *)',
       'Bash(gipity add *)',
-      'Bash(gipity deploy dev *)',
+      'Bash(gipity deploy *)',
+      'Bash(gipity env list *)',
       'Bash(gipity domain *)',
       'Bash(gipity db query *)',
       'Bash(gipity db list *)',

@@ -104,6 +104,7 @@ export const statusCommand = new Command('status')
           apiBase: config.apiBase,
           apiBaseInUse,
           url: liveUrl(config),
+          ...(config.env ? { env: config.env.name } : {}),
         } : null,
         // `valid` reflects the refresh token (the real session) - access
         // tokens auto-renew, so their expiry must not read as "invalid".
@@ -128,6 +129,7 @@ export const statusCommand = new Command('status')
     } else {
       console.log(`${muted('Project:')} ${brand(config.projectSlug)} ${muted(`(${config.projectGuid})`)}`);
       console.log(`${muted('Account:')} ${config.accountSlug}`);
+      if (config.env) console.log(`${muted('Env:')} ${config.env.name}`);
       console.log(`${muted('Live:')} ${liveUrl(config)}`);
       console.log(`${muted('API:')} ${config.apiBase}`);
       // apiBase is only what THIS project recorded - resolveApiBase() is what

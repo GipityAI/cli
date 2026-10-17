@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  liveUrl,
   shouldIgnore,
   saveConfig,
   saveConfigAt,
@@ -238,5 +239,27 @@ describe('saveConfig / saveConfigAt', () => {
       clearConfigCache();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('liveUrl (app environments)', () => {
+  const app = { accountSlug: 'acme', projectSlug: 'shop' };
+
+  it('prod is the app host at the app slug (the default)', () => {
+    assert.equal(liveUrl(app), 'https://app.gipity.ai/acme/shop/');
+    assert.equal(liveUrl(app, 'prod'), 'https://app.gipity.ai/acme/shop/');
+  });
+
+  it('dev keeps the bare dev URL; other envs are <slug>--<env>', () => {
+    assert.equal(liveUrl(app, 'dev'), 'https://dev.gipity.ai/acme/shop/');
+    assert.equal(liveUrl(app, 'staging'), 'https://dev.gipity.ai/acme/shop--staging/');
+  });
+
+  it('under --env, builds from the app slug, not the env project slug', () => {
+    const envConfig = { accountSlug: 'acme', projectSlug: 'shop--staging', env: { name: 'staging', appSlug: 'shop' } };
+    assert.equal(liveUrl(envConfig), 'https://dev.gipity.ai/acme/shop--staging/');
+    assert.equal(liveUrl(envConfig, 'prod'), 'https://app.gipity.ai/acme/shop/');
+    const devConfig = { accountSlug: 'acme', projectSlug: 'shop--dev', env: { name: 'dev', appSlug: 'shop' } };
+    assert.equal(liveUrl(devConfig), 'https://dev.gipity.ai/acme/shop/');
   });
 });

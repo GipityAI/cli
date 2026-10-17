@@ -67,7 +67,7 @@ export function anonBillingHint(name: string, err: unknown): string | null {
     `visitor to a public page is asked to sign in and pay from their own credits. If this app serves the ` +
     `public (a help bubble, a landing page), switch it to owner-pays in gipity.yaml and redeploy:\n` +
     `  deploy:\n    phases:\n      - services\n  service_definitions:\n    - service: ${service}\n      billing_mode: owner_pays\n` +
-    `  gipity deploy dev --only services`
+    `  gipity deploy --only services`
   );
 }
 
@@ -117,7 +117,7 @@ serviceCommand
         if (!headers) {
           throw new Error(
             `Could not mint a visitor token for this project, so there is no anonymous path to call. ` +
-            `That means the app is not deployed on this API base yet: run \`gipity deploy dev\` first, ` +
+            `That means the app is not deployed on this API base yet: run \`gipity deploy\` first, ` +
             `then re-run this command.`,
           );
         }

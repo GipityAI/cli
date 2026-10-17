@@ -108,7 +108,7 @@ function humanBytes(n: number): string {
 
 function buildHeader(opts: ProjectContextOpts): string {
   const deployUrl = opts.accountSlug
-    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
+    ? `https://app.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
   // "Files" line is the agent's at-a-glance signal of project size and
   // shape. Counts are recursive (from the VFS DB), not just top-level -
@@ -200,7 +200,7 @@ const RESPONSE_DIRECTIVE =
  *  (Claude already has the context from the initial start dispatch). */
 export function buildResumeWrap(opts: ProjectIdentityOpts, userMsg: string): string {
   const deployUrl = opts.accountSlug
-    ? `https://dev.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
+    ? `https://app.gipity.ai/${opts.accountSlug}/${opts.projectSlug}/`
     : '(not yet deployed)';
   return [
     `Project: ${opts.projectName} (\`${opts.projectGuid}\`) - ${deployUrl}`,

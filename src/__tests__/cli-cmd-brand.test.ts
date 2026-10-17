@@ -45,7 +45,7 @@ test('gipity brand set --emoji posts icon_glyph and reports regenerated files', 
   assert.ok(req, 'POST /brand was called');
   assert.equal((req!.body as { icon_glyph?: string }).icon_glyph, '🦍');
   assert.match(r.stdout, /Regenerated 4 assets/);
-  assert.match(r.stdout, /gipity deploy dev/);
+  assert.match(r.stdout, /Deploy to publish the new assets: gipity deploy$/m);
 });
 
 test('gipity brand set with no fields errors out', async () => {

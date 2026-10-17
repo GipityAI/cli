@@ -124,9 +124,13 @@ test('gipity deploy treats a settle flag as a request to inspect', async () => {
   assert.equal((req!.body as { waitMs?: number }).waitMs, 3000);
 });
 
-test('gipity deploy fails when target is invalid', async () => {
+test('gipity deploy shows the server\'s reason for a bad env name and fails', async () => {
   mock.reset();
-  const r = await fresh(['deploy', 'staging', '--no-sync']);
+  mock.on('POST /projects/p_TestProj/deploy', { status: 400, body: { error: {
+    code: 'VALIDATION_ERROR',
+    message: 'Env names are 1-20 characters: lowercase letters, digits and single hyphens, starting with a letter',
+  } } });
+  const r = await fresh(['deploy', 'Staging', '--no-sync']);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /Target must be "dev" or "prod"/);
+  assert.match(r.stdout + r.stderr, /Env names are 1-20 characters/);
 });

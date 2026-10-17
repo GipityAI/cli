@@ -3,7 +3,7 @@ import { Command, Help, Option } from 'commander';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { setApiBaseOverride } from './config.js';
+import { setApiBaseOverride, setEnvOption, applyEnvOverride, getConfig } from './config.js';
 import { setAutoConfirm } from './utils.js';
 import { installOutputFrame } from './helpers/output.js';
 import { installNetworking } from './net.js';
@@ -19,6 +19,7 @@ import { syncCommand } from './commands/sync.js';
 import { pushCommand } from './commands/push.js';
 import { uploadCommand } from './commands/upload.js';
 import { deployCommand } from './commands/deploy.js';
+import { envCommand } from './commands/env.js';
 import { dbCommand } from './commands/db.js';
 import { memoryCommand } from './commands/memory.js';
 import { sandboxCommand } from './commands/sandbox.js';
@@ -148,7 +149,7 @@ program.enablePositionalOptions();
 // of its context. Humans get the same win: sections follow the order you
 // actually use them - orient, build, wire the backend, then everything else.
 const startGroup     = [statusCommand, initCommand, skillCommand, projectCommand];
-const buildGroup     = [addCommand, removeCommand, brandCommand, saveCommand, loadCommand, deployCommand, pageCommand, testCommand];
+const buildGroup     = [addCommand, removeCommand, brandCommand, saveCommand, loadCommand, deployCommand, envCommand, pageCommand, testCommand];
 const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCommand, jobCommand, workflowCommand, approvalCommand, memoryCommand];
 const servicesGroup  = [serviceCommand, generateCommand, askCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
@@ -201,11 +202,23 @@ program
   .description(`${brand(bold('Gipity CLI'))} ${dim('-')} ${GIPITY_TAGLINE.replace(/\.$/, '')}\n\n  ${dim('Hosting, databases, deploys, workflows, code execution, and monitoring - one place, agent-tuned. Pair with Claude Code or use standalone.')}`)
   .version(pkg.version, '-v, --version')
   .addOption(new Option('--api-base <url>', 'API base URL').hideHelp())
-  .option('-y, --yes', 'Skip confirmation prompts');
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .option('--env <name>', 'Act on an app environment (dev, staging, ...) instead of prod');
 
-program.hook('preAction', (_thisCommand, actionCommand) => {
+// Commands that read --env themselves instead of having the config re-pointed:
+// deploy creates the env on first use, and `env ...` always acts on the app.
+const SELF_ENV_COMMANDS = new Set(['deploy', 'env']);
+
+program.hook('preAction', async (_thisCommand, actionCommand) => {
   const globalOpts = program.opts();
   if (globalOpts.apiBase) setApiBaseOverride(globalOpts.apiBase);
+  // `--env <name>` before or after the subcommand (registered on every leaf
+  // below, like -y): point this invocation's project at that environment.
+  const envName: string | undefined = actionCommand.opts().env ?? globalOpts.env;
+  setEnvOption(envName);
+  let top: Command = actionCommand;
+  while (top.parent && top.parent !== program) top = top.parent;
+  if (envName && !SELF_ENV_COMMANDS.has(top.name())) await resolveEnvOverride(envName);
   // Honor `-y`/`--yes` whether it came before the subcommand (the global flag)
   // or after it (the per-command flag registered by enableYesEverywhere below),
   // so both `gipity -y memory delete ...` and `gipity memory delete ... --yes`
@@ -213,6 +226,25 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
   if (globalOpts.yes || actionCommand.opts().yes) setAutoConfirm(true);
   rejectBlankIdArgs(actionCommand);
 });
+
+/** Re-point the linked project's config at env `name` for this invocation. */
+async function resolveEnvOverride(name: string): Promise<void> {
+  const config = getConfig();
+  if (!config) {
+    console.error('--env needs a Gipity project directory (run it where .gipity.json is).');
+    process.exit(1);
+  }
+  const { get } = await import('./api.js');
+  try {
+    const res = await get<{ data: { name: string; guid: string; slug: string } }>(
+      `/projects/${config.projectGuid}/envs/${encodeURIComponent(name)}`,
+    );
+    applyEnvOverride({ name, projectGuid: res.data.guid, projectSlug: res.data.slug });
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+}
 
 // An identifier positional (<guid>, <runGuid>, <short_guid>, <id>, ...) passed
 // as "" or whitespace - usually an unset shell variable - would otherwise go
@@ -462,6 +494,18 @@ function enableYesEverywhere(cmd: Command): void {
   if (!hasYes) cmd.addOption(new Option('-y, --yes', 'Skip confirmation prompts').hideHelp());
 }
 enableYesEverywhere(program);
+
+// Same for `--env <name>`: accepted after any leaf command too.
+function enableEnvEverywhere(cmd: Command): void {
+  if (cmd.commands.length > 0) {
+    for (const sub of cmd.commands) enableEnvEverywhere(sub);
+    return;
+  }
+  if (!cmd.options.some(o => o.long === '--env')) {
+    cmd.addOption(new Option('--env <name>', 'Act on an app environment (dev, staging, ...) instead of prod').hideHelp());
+  }
+}
+enableEnvEverywhere(program);
 
 // ── `--help` on a guessed command -> unknown-command error, not the parent's help ──
 // Commander handles `--help` before it resolves operands, so `gipity api-key
