@@ -204,7 +204,7 @@ echo '{"ok":true}'
     mkdirSync(join(projectDir, 'workflows'), { recursive: true });
     writeFileSync(join(projectDir, WF_PATH), wfYaml('E2E surface workflow v1'));
 
-    const deploy = cli(['deploy', 'dev', '--json'], { timeout: 300000 });
+    const deploy = cli(['deploy', '--json'], { timeout: 300000 });
     assert.equal(deploy.status, 0, `deploy failed: ${deploy.stderr || deploy.stdout}`);
     const d = JSON.parse(deploy.stdout) as { url?: string };
     assert.ok(d.url, `deploy did not return a url: ${deploy.stdout}`);

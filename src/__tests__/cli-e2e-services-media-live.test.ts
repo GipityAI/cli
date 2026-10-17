@@ -60,11 +60,11 @@ describe('cli-e2e-services-media-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=
     assert.equal(add.status, 0, `add web-simple failed: ${add.stderr || add.stdout}`);
     writeFileSync(join(projectDir, 'src', 'js', 'main.js'), PROBE_MAIN_JS);
 
-    const deploy = cli(['deploy', 'dev'], { timeout: 120000 });
+    const deploy = cli(['deploy'], { timeout: 120000 });
     assert.equal(deploy.status, 0, `deploy failed: ${deploy.stderr || deploy.stdout}`);
 
     const status = JSON.parse(cli(['status', '--json']).stdout);
-    appUrl = `https://dev.gipity.ai/${status.project.account}/${status.project.slug}/`;
+    appUrl = `https://app.gipity.ai/${status.project.account}/${status.project.slug}/`;
   });
 
   after(() => {

@@ -134,3 +134,14 @@ test('gipity deploy shows the server\'s reason for a bad env name and fails', as
   assert.notEqual(r.status, 0);
   assert.match(r.stdout + r.stderr, /Env names are 1-20 characters/);
 });
+
+test('gipity deploy --json exits 1 when a phase failed (the JSON still prints)', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 0, totalBytes: 0, url: '', target: 'prod', env: 'prod', elapsedMs: 10,
+    phases: [{ name: 'database', status: 'failed', summary: 'Nothing was run: prod has pending migrations that destroy data.' }],
+  } } });
+  const r = await fresh(['deploy', 'prod', '--no-sync', '--json']);
+  assert.equal(r.status, 1);
+  assert.equal(JSON.parse(r.stdout.trim()).phases[0].status, 'failed');
+});

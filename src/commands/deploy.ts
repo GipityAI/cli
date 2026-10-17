@@ -154,7 +154,11 @@ export const deployCommand = new Command('deploy')
       if (opts.json) {
         console.log(JSON.stringify(d));
         const failedJson = d.phases?.some(p => p.status === 'failed');
-        if (!failedJson) await inspectAfter();
+        // The exit code carries the outcome too, so a script reading --json
+        // can't mistake a failed deploy (e.g. a refused destructive migration)
+        // for a good one.
+        if (failedJson) process.exit(1);
+        await inspectAfter();
         return;
       }
 

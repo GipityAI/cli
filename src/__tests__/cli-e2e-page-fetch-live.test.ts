@@ -77,7 +77,7 @@ describe('cli-e2e-page-fetch-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to
   });
 
   it('2. deploys to dev and captures the live URL', () => {
-    const r = cli(['deploy', 'dev', '--json'], { timeout: 120000 });
+    const r = cli(['deploy', '--json'], { timeout: 120000 });
     assert.equal(r.status, 0, `deploy failed: ${r.stderr || r.stdout}`);
     const data = JSON.parse(r.stdout) as { url?: string };
     assert.ok(data.url && /^https?:\/\//.test(data.url), `deploy did not return a url: ${r.stdout}`);

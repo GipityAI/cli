@@ -91,25 +91,25 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
       `export default async function ${FN_NAME.replace(/-/g, '_')}(ctx) {\n  return { ok: true };\n}\n`);
   });
 
-  it('4a. deploy dev succeeds (first deploy)', () => {
-    const r = cli(['deploy', 'dev'], { timeout: 120000 });
+  it('4a. deploy succeeds (a new app deploys prod)', () => {
+    const r = cli(['deploy'], { timeout: 120000 });
     assert.equal(r.status, 0, `deploy failed: ${r.stderr || r.stdout}`);
   });
 
-  it('4b. deploy dev again is idempotent (no changes)', () => {
-    const r = cli(['deploy', 'dev'], { timeout: 60000 });
+  it('4b. deploy again is idempotent (no changes)', () => {
+    const r = cli(['deploy'], { timeout: 60000 });
     assert.equal(r.status, 0);
     // No strict assertion on output text - phases may say "skipped" or "ok"
     // depending on whether checksums caught everything. Just confirm exit 0.
   });
 
-  it('4c. deploy dev --only functions filters phases', () => {
-    const r = cli(['deploy', 'dev', '--only', 'functions'], { timeout: 60000 });
+  it('4c. deploy --only functions filters phases', () => {
+    const r = cli(['deploy', '--only', 'functions'], { timeout: 60000 });
     assert.equal(r.status, 0);
   });
 
-  it('4d. deploy dev --force re-runs all phases', () => {
-    const r = cli(['deploy', 'dev', '--force'], { timeout: 120000 });
+  it('4d. deploy --force re-runs all phases', () => {
+    const r = cli(['deploy', '--force'], { timeout: 120000 });
     assert.equal(r.status, 0);
   });
 
