@@ -50,11 +50,11 @@ Gipity is the cloud platform your project runs on - hosting, databases, deployme
 
 Prefer the cheapest option that works - CLI and sandbox are instant and free, app services are runtime HTTP calls, and a model call (\`gipity ask\`) costs tokens:
 
-1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, page, sync, memory, skill, email, and more. All commands support \`--json\`.
+1. CLI commands (fast, no agent overhead). The \`gipity\` CLI covers add, deploy, db, fn, logs, page, sync, memory, skill, email, and more. Most commands support \`--json\`.
 2. Cloud sandbox via \`gipity sandbox run\` - Docker container with pre-installed tools for media (ffmpeg, ImageMagick, sox), documents (pandoc, LibreOffice), and data (pandas, matplotlib, sqlite3). Run \`gipity skill read sandbox-tools\` for the full toolkit. No network from inside the sandbox - fetch what you need before sending it in.
 3. App services - runtime HTTP endpoints your deployed app calls directly at \`https://a.gipity.ai/api/<PROJECT_GUID>/services/*\`. Available: LLM, TTS, image, sound, music, transcribe, video, file upload, realtime (a function can push into a room with the injected \`realtime.publish()\`, so a page listens instead of polling; see \`app-realtime\`), location, push notifications (Gipity Notify - \`gipity add notify\`, send from a function with the injected \`notify()\`; see \`app-notify\`). Load the matching skill (\`app-llm\`, \`app-tts\`, etc.) before writing service code - they have the schemas, auth pattern, and common-mistake guards. For one-off generation during development, prefer \`gipity generate <image|video|speech|sound|music>\` - direct generation always bills you (the owner), regardless of any service \`billing_mode\` (that setting only governs the deployed app's runtime calls; never flip it just to create assets). \`gipity generate\` saves to a generic file in the current directory by default (e.g. \`./generated.png\`) - pass \`-o <path>\` to write it straight into your source tree so it deploys (e.g. \`gipity generate image "hero banner" -o src/assets/images/hero.png\`) instead of generating at cwd and moving it. For a quick model answer while you work - summarize a log, extract fields, describe a screenshot, a second opinion from a different model - use \`gipity ask "<question>"\`: one call, no history or tools, any model (\`--model sonnet\`, \`--model openai\`), text files with \`--file <path>\` (\`--file -\` for stdin), images with \`--image <path>\`, and a JSON answer with \`--schema '<json schema>'\`.
 
-You are the developer. Write files in this directory - Gipity's editor hooks (installed by \`gipity init\` into Claude Code, Grok, Codex, and opencode) auto-sync them to Gipity. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
+You are the developer. Write files in this directory - Gipity's editor hooks (installed by \`gipity init\` into Claude Code, Codex, Grok, Antigravity, and opencode) auto-sync them to Gipity. Don't run \`npm install\`, \`npm start\`, \`node\`, or \`python\` locally; there is no local runtime. Code runs in the Gipity sandbox.
 
 ## Use first-party services before reaching outside
 
@@ -122,7 +122,7 @@ Run \`gipity --help\` for the full list. Use \`--help\` on any command for detai
 
 Function return shape: \`gipity fn call\`, the in-test \`ctx.fn.call\`/\`callAs\`, and the client \`Gipity.fn\` all return your function's value **unwrapped** - read/assert \`result.field\`. Only raw HTTP/\`curl\` wraps it as \`{ data: ... }\`; never write \`result.data.field\` in a test.
 
-Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.fn.call\`/\`callAs\` at a throwaway copy of your database (your \`migrations/\` + \`seeds/\`), one per test FILE, reset (truncate + reseed) before the file runs - so files can't interfere, test rows never reach the deployed app, and you don't write teardown. Functions see \`ctx.isTest === true\` during a run (use it to skip your own rate limiting); the platform also suppresses \`notify()\` push so a suite can't spam subscribers. Reference data tests need goes in seed files; a runtime-written settings table that isn't seeded goes under \`test.preserve\` in \`gipity.yaml\`. Build per-file fixtures in \`setup(fn)\` → \`ctx.fixtures\`.
+Tests are isolated, not run against your live DB: \`gipity test\` points \`ctx.fn.call\`/\`callAs\` at a throwaway copy of your database (your migrations plus the seed files named by the sql phase's \`seed:\` key in \`gipity.yaml\`), one per test FILE, reset (truncate + reseed) before the file runs - so files can't interfere, test rows never reach the deployed app, and you don't write teardown. Functions see \`ctx.isTest === true\` during a run (use it to skip your own rate limiting); the platform also suppresses \`notify()\` push so a suite can't spam subscribers. Reference data tests need goes in those seed files; a runtime-written settings table that isn't seeded goes under \`test.preserve\` in \`gipity.yaml\`. Build per-file fixtures in \`setup(fn)\` → \`ctx.fixtures\`.
 
 ## Hit friction on the platform? Report it in real time
 
@@ -150,7 +150,7 @@ Every tool call returns its full output with that call. There is no output buffe
 
 This directory is the app root - it holds \`.gipity.json\` (and \`gipity.yaml\` for backends) and is already your cwd, so run app commands here. Don't \`cd\` to a git root (\`git rev-parse --show-toplevel\`): when the app is nested in a larger repo that resolves outside the app.
 
-Write files locally - Gipity's editor hooks (installed into Claude Code, Grok, Codex, and opencode by \`gipity init\`) auto-push every save to Gipity and auto-pull remote changes (sandbox outputs, restored versions) before each turn. Use \`gipity sync\` if things get out of sync (or if the hooks aren't installed - \`gipity status --repair-hooks\` re-enables them). Deletes are safe - \`gipity file rollback <datetime>\` undoes a tree, \`gipity file restore <path> <version>\` a single file.
+Write files locally - Gipity's editor hooks (installed into Claude Code, Codex, Grok, Antigravity, and opencode by \`gipity init\`) auto-push every save to Gipity and auto-pull remote changes (sandbox outputs, restored versions) before each turn. Use \`gipity sync\` if things get out of sync (or if the hooks aren't installed - \`gipity status --repair-hooks\` re-enables them). Deletes are safe - \`gipity file rollback <datetime>\` undoes a tree, \`gipity file restore <path> <version>\` a single file.
 
 Files your deployed app stores at runtime through the app uploads API (users' uploads, \`gipity upload\`, or an external service using a project API key; under \`uploads/\` or any custom path) are user content, not source: they stay in Gipity Storage and never sync into this directory, and sync never deletes them. List them with \`gipity file tree\`, read one with \`gipity file cat <path>\`.
 
@@ -160,7 +160,7 @@ To keep local-only material (research clones, scratch data, vendored references)
 
 ### Where files go: deploy only ships \`src/\`
 
-Deploy is opt-in, not opt-out: the \`files\` phase uploads **only** what's under \`src/\` (plus \`functions/\` and \`migrations/\` as backend, not CDN files). Anything else at the project root is kept but never deployed. Put each kind of file in the right bucket so scratch and reference material can't bloat a deploy:
+Deploy is opt-in, not opt-out: when \`src/\` exists (every template creates it), the \`files\` phase uploads **only** what's under \`src/\` (plus \`functions/\` and \`migrations/\` as backend, not CDN files). Anything else at the project root is kept but never deployed. (A project with no \`src/\` deploys its whole root, so keep \`src/\`.) Put each kind of file in the right bucket so scratch and reference material can't bloat a deploy:
 
 - **\`src/\`** - the app itself. Synced **and** deployed to the CDN. Only app code, assets, and pages belong here.
 - **\`tmp/\`** - ephemeral scratch: file conversions, intermediate outputs, design staging. **Already ignored** (never synced, never deployed) - the one place to do throwaway work. Use this single root. Leave scratch files where they are when you're done; there's nothing to clean up (no \`rm\` turn) - they're invisible to sync and deploy. (\`*_tmp/\` dirs and \`.gipityscratch/\` are auto-ignored too, as a safety net, so legacy scattered scratch like \`_vsd_tmp/\` can't leak - but write new scratch to \`tmp/\`, not scattered dirs.) Because it never syncs, \`tmp/\` is also never mirrored into the sandbox: **don't stage \`gipity sandbox run\` inputs here** - the sandbox won't see them. Stage inputs under \`src/\`/\`docs/\` and delete them after.
@@ -185,7 +185,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-notify\` - web push notifications for deployed apps (incl. iOS home-screen web apps) - notify kit + injected notify() service, platform owns the keys
 - \`app-payments\` - charge end-users real money - Stripe one-time purchases & subscriptions, via the stripe kit (gipity add stripe)
 - \`app-realtime\` - Gipity Realtime rooms, relay vs state
-- \`app-tts\` - voices, multi-speaker, languages
+- \`app-tts\` - voices, models, word timestamps
 - \`app-video\` - Gipity Video: models, aspect, resolution
 
 App development skills:

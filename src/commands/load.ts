@@ -259,5 +259,5 @@ export const loadCommand = new Command('load')
     }
 
     console.log('');
-    console.log(`${muted('Next:')} cd ${dir} && ${brand('gipity deploy')}`);
+    console.log(`${muted('Next:')} cd ${dir} && ${brand('gipity deploy dev')}`);
   }));

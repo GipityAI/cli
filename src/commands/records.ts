@@ -59,7 +59,7 @@ recordsCommand
 recordsCommand
   .command('config <table>')
   .description('Show or set a table\'s Records API config (auth level, search, etc.)')
-  .addOption(new Option('--auth <level>', 'Auth level: public (anonymous writes), member (sign-in), or user').choices(['public', 'member', 'user']))
+  .addOption(new Option('--auth <level>', 'Auth level: public (anonymous writes), user (any signed-in caller), or member (owner and project members only)').choices(['public', 'member', 'user']))
   .option('--searchable <bool>', 'Enable full-text search (true/false)')
   .option('--primary-key <col>', 'Primary key column (default: id)')
   .option('--soft-delete <col>', 'Soft-delete column (pass "none" to clear)')
