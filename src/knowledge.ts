@@ -185,7 +185,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-notify\` - web push notifications for deployed apps (incl. iOS home-screen web apps) - notify kit + injected notify() service, platform owns the keys
 - \`app-payments\` - charge end-users real money - Stripe one-time purchases & subscriptions, via the stripe kit (gipity add stripe)
 - \`app-realtime\` - Gipity Realtime rooms, relay vs state
-- \`app-tts\` - voices, models, word timestamps
+- \`app-tts\` - voices, models, dialogue, languages, word timestamps
 - \`app-video\` - Gipity Video: models, aspect, resolution
 
 App development skills:

@@ -124,7 +124,7 @@ export const TTS_PROVIDERS_LIST = `elevenlabs, openai, gemini`;
 export const TTS_PROVIDER_DESCRIPTIONS: Record<string, string> = {
   'elevenlabs': `ElevenLabs (many premium voices)`,
   'openai': `OpenAI (alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse)`,
-  'gemini': `Gemini (30 voices: Kore, Puck, Zephyr, Charon, Fenrir, Leda, Orus, Aoede, and 22 more)`,
+  'gemini': `Gemini (30 voices: Kore, Puck, Zephyr, Charon, Fenrir, Leda, Orus, Aoede, and 22 more). Two-voice dialogue (speakers) and an explicit language`,
 };
 
 export const TTS_PROVIDER_IDS = [
