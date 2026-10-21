@@ -228,6 +228,18 @@ test('gipity page eval clamps --wait over the 30s cap in the kickoff body', asyn
   assert.match(r.stderr, /30000ms cap/);
 });
 
+test('gipity page eval --json warns on stderr when the result was cut at the cap', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-tr', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-tr', { body: { data: {
+    status: 'done', url: 'https://example.com', result: 'iVBORw0KGgo', truncated: true,
+  } } });
+  const r = await run(['page', 'eval', 'https://example.com', 'b64', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /Result cut at 16 KB/);
+  assert.equal(JSON.parse(r.stdout).truncated, true);
+});
+
 // ── the in-page budget must be a FLAG, not a wall you discover by hitting it ──
 // The server has always taken a per-call script budget (`timeoutMs`, up to 90s)
 // and its overrun message even says to "raise the eval timeout" — but the CLI

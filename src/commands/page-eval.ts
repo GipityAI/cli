@@ -158,6 +158,11 @@ type EvalJobRecord =
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Shown whenever the server cut the result at its cap. */
+export const EVAL_TRUNCATED_NOTE =
+  '⚠ Result cut at 16 KB: the value above is incomplete. Return something smaller (a count, a hash, a summary). '
+  + 'To check a rendered image, use `gipity page screenshot` instead of returning its data.';
+
 // A single browser session is held open synchronously for the whole --wait, so
 // the server caps it at the gateway idle timeout. Longer is impossible in one
 // shot; watching an app past 30s means several windows, not one big wait.
@@ -771,6 +776,9 @@ export const pageEvalCommand = new Command('eval')
       const emptyHint = camera ? EVAL_CAMERA_EMPTY_HINT : EVAL_EMPTY_STATE_HINT;
 
       if (opts.json) {
+        // A cut value inside the JSON is easy to miss (a base64 image decodes to
+        // exactly 12288 bytes and looks like a corrupt file), so say it on stderr.
+        if (d.truncated) console.error(warning(EVAL_TRUNCATED_NOTE));
         console.log(JSON.stringify({
           ...d, result,
           ...(stepOut.length ? { stepResults: stepOut.map((s) => s.result) } : {}),
@@ -824,7 +832,7 @@ export const pageEvalCommand = new Command('eval')
       console.log(`\n${result.trim() ? result : muted('(empty result)')}`);
       if (noValue) console.log(muted(`\n${EVAL_NO_VALUE_HINT}`));
       if (emptyState) console.log(muted(`\n${emptyHint}`));
-      if (d.truncated) console.log(muted('\n(result truncated to fit context - narrow the expression for the full value)'));
+      if (d.truncated) console.log(warning(`\n${EVAL_TRUNCATED_NOTE}`));
       for (let i = 0; i < stepOut.length; i++) {
         const s = stepOut[i];
         console.log(`\n${bold(`Step ${i + 1}`)} ${muted(summarizeExpr(s.expr))} ${muted('(same page load)')}`);
