@@ -12,7 +12,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
-import { makeAuthedHome } from './helpers/test-home.js';
+import { makeAuthedHome, tempDir } from './helpers/test-home.js';
 
 let mock: MockServer;
 let home: string;
@@ -21,7 +21,7 @@ before(async () => { mock = await startMockServer(); home = makeAuthedHome(); })
 after(async () => { await mock.stop(); });
 
 function freshDir(prefix = 'gipity-cli-init-'): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return tempDir(prefix);
 }
 
 function writeConfig(dir: string, slug: string): void {

@@ -1,8 +1,7 @@
 import { spawnSync, spawn, SpawnSyncOptionsWithStringEncoding } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
+import { tempDir } from './test-home.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // __dirname is dist/__tests__/helpers - CLI entry is dist/index.js
@@ -36,7 +35,7 @@ export interface SpawnOptions {
 export function runCli(args: string[], opts: SpawnOptions = {}): SpawnResult {
   const baseEnv: Record<string, string> = {
     PATH: process.env['PATH'] ?? '',
-    HOME: opts.env?.['HOME'] ?? mkdtempSync(`${tmpdir()}/gipity-cli-test-`),
+    HOME: opts.env?.['HOME'] ?? tempDir('gipity-cli-test-'),
     NO_COLOR: '1',
     CI: '1',
   };
@@ -60,7 +59,7 @@ export function runCli(args: string[], opts: SpawnOptions = {}): SpawnResult {
 }
 
 export function makeTmpHome(): string {
-  return mkdtempSync(`${tmpdir()}/gipity-cli-test-`);
+  return tempDir('gipity-cli-test-');
 }
 
 /**
@@ -73,7 +72,7 @@ export function makeTmpHome(): string {
 export async function runCliAsync(args: string[], opts: SpawnOptions = {}): Promise<SpawnResult> {
   const baseEnv: Record<string, string> = {
     PATH: process.env['PATH'] ?? '',
-    HOME: opts.env?.['HOME'] ?? mkdtempSync(`${tmpdir()}/gipity-cli-test-`),
+    HOME: opts.env?.['HOME'] ?? tempDir('gipity-cli-test-'),
     NO_COLOR: '1',
     CI: '1',
   };

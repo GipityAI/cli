@@ -12,10 +12,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runCli, runCliAsync } from './helpers/spawn-cli.js';
+import { tempDir } from './helpers/test-home.js';
 import { startMockServer } from './helpers/mock-server.js';
 
 function freshHome(): string {
-  return mkdtempSync(`${tmpdir()}/gipity-cli-claude-test-`);
+  return tempDir('gipity-cli-claude-test-');
 }
 
 function writeFakeAuth(home: string): void {

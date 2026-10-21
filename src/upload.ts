@@ -96,7 +96,11 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 3): 
       if (i === attempts - 1) break;
       const delay = 500 * Math.pow(2, i);
       await new Promise(r => setTimeout(r, delay));
-      console.error(`[upload] ${label} attempt ${i + 1} failed, retrying in ${delay}ms: ${(err as Error).message}`);
+      // The first failure is usually a pooled connection the storage host had
+      // already closed (ECONNRESET on the first PUT after a pause), and the retry
+      // succeeds. Printing it made agents and reviewers treat a healthy upload as
+      // a network fault, so only a second failure is reported.
+      if (i > 0) console.error(`[upload] ${label} attempt ${i + 1} failed, retrying in ${delay}ms: ${(err as Error).message}`);
     }
   }
   throw lastErr;
