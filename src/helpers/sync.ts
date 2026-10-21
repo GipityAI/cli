@@ -38,6 +38,17 @@ export async function syncBeforeAction(opts: { sync?: boolean; json?: boolean; f
   if (result.errors.length > 0 && !opts.json) {
     for (const e of result.errors) console.error(clrError(`[sync] ${e}`));
   }
+  // A conflict means the server copy won the real path and the local edit was
+  // moved aside. Carrying on would run the action on code the caller never
+  // wrote (a GipRunner build deployed every function public this way), so stop.
+  const conflicts = result.plan.actions.filter(a => a.kind === 'conflict');
+  if (conflicts.length > 0) {
+    const lines = conflicts.map(a => `  ${a.path}: the server copy changed too; your local edit was saved as "${a.renamedLocalTo ?? '(conflict copy)'}"`);
+    throw new Error(
+      `Stopped before running: local edits conflicted with newer server copies.\n${lines.join('\n')}\n`
+      + 'Nothing was run against the server. Put the version you want at the real path (often: re-apply your edit on top of the server copy), delete the conflict copy, then run the command again.',
+    );
+  }
 }
 
 /**
