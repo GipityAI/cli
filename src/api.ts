@@ -479,7 +479,10 @@ export async function putToPresignedUrl(
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, 'S3_UPLOAD', `Storage upload failed: ${res.status} ${text.slice(0, 200)}`);
+    // The storage host answers in provider XML; keep only its error code so the
+    // message stays one readable line and doesn't name the provider.
+    const code = /<Code>([^<]+)<\/Code>/.exec(text)?.[1];
+    throw new ApiError(res.status, 'S3_UPLOAD', `Gipity Storage upload failed: HTTP ${res.status}${code ? ` (${code})` : ''}`);
   }
   const etag = (res.headers.get('etag') ?? '').replace(/^"|"$/g, '');
   return etag;

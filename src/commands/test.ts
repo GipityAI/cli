@@ -255,17 +255,24 @@ export const testCommand = new Command('test')
         // subdirectory must not read this as "the project has no tests" for
         // the wrong reason (cli#120).
         const root = getProjectRoot();
+        let listing: { files?: Array<{ path: string }>; skipped?: Array<{ path: string; reason: string }> } = {};
+        try {
+          listing = (await get<{ data: typeof listing }>(`/projects/${config.projectGuid}/test/list`)).data;
+        } catch { /* advisory - fall through to the generic message */ }
+        const files = listing.files ?? [];
+        if (files.length > 0) {
+          // Files exist but registered nothing: almost always a file that
+          // exports its tests instead of calling the harness's global test().
+          console.log(clrError(`No tests ran - found ${files.length} test file(s) but none registered a test: ${files.map(f => f.path).join(', ')}`));
+          console.log(muted("Each file must call the global test('name', async (ctx) => { ... }) at top level. Exported tests (export default { tests }) are not run, and test/assert must not be imported."));
+          process.exit(1);
+        }
         console.log(muted(`No tests ran - no tests/*.test.js files under the project root${root ? ` (${root})` : ''}.`));
         console.log(muted('gipity test runs server-function tests only; a frontend-only app (no functions/) has nothing here to run.'));
         console.log(muted('Verify a frontend app by driving the live page: gipity page inspect <url> (or gipity page eval).'));
         // Enumerate test-looking files the runner deliberately skips (kit
         // tests, .spec.*) so this answer never contradicts what's on disk.
-        try {
-          const listRes = await get<{ data: { skipped?: Array<{ path: string; reason: string }> } }>(
-            `/projects/${config.projectGuid}/test/list`,
-          );
-          printSkippedCandidates(listRes.data.skipped ?? []);
-        } catch { /* the skipped list is advisory - never fail the run over it */ }
+        printSkippedCandidates(listing.skipped ?? []);
         return;
       }
 

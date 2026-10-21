@@ -271,6 +271,25 @@ test('gipity test (run) with zero tests fetches and prints the skipped candidate
   assert.match(r.stdout, /src\/packages\/kit\/tests\/unit\.test\.js/);
 });
 
+test('gipity test (run) with test files that register nothing names the files and the test() shape', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/test/run', { body: { data: { runGuid: RUN_GUID, status: 'running' } } });
+  mock.on(`GET /projects/p_TestProj/test/status/${RUN_GUID}`, { body: { data: {
+    runGuid: RUN_GUID, status: 'passed', total: 0, passed: 0, failed: 0, skipped: 0,
+    durationMs: 12, totalFiles: 1, completedFiles: 1,
+    startedAt: '2026-05-01T10:00:00Z', updatedAt: '2026-05-01T10:00:01Z', finishedAt: '2026-05-01T10:00:01Z',
+    results: [],
+  } } });
+  mock.on('GET /projects/p_TestProj/test/list', { body: { data: {
+    files: [{ path: 'tests/receipts.test.js', name: 'receipts', vfsPath: '/tests/receipts.test.js' }], total: 1, skipped: [],
+  } } });
+  const r = await fresh(['test', '--no-sync']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /found 1 test file\(s\) but none registered a test: tests\/receipts\.test\.js/);
+  assert.match(r.stdout, /global test\('name'/);
+  assert.doesNotMatch(r.stdout, /frontend-only app/);
+});
+
 test('gipity test history shows recent runs', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/test/history', { body: { data: [
