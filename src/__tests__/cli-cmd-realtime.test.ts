@@ -77,8 +77,28 @@ test('gipity realtime room create passes seat holds; info shows them and never n
   assert.equal(i.status, 0, i.stderr);
   assert.match(i.stdout, /Seat hold:\s+30s \(host 90s\)/);
   assert.match(i.stdout, /Handoff:\s+off/);
+  assert.match(i.stdout, /Server-only:\s+none/);
   assert.match(i.stdout, /Gipity Realtime unreachable/);
   assert.doesNotMatch(i.stdout, /Colyseus/);
+});
+
+test('gipity realtime room create passes server-only channels; info lists them', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/realtime-rooms', { body: { data: {
+    name: 'updates', room_type: 'state', auth_level: 'user', max_clients: 50, config: { server_channels: ['alerts', 'jobs'] },
+  } } });
+  const c = await fresh(['realtime', 'room', 'create', 'updates', '--auth', 'user', '--server-channels', 'jobs, alerts']);
+  assert.equal(c.status, 0, c.stderr);
+  const post = mock.requests().find((q) => q.method === 'POST');
+  assert.deepEqual(post?.body, { name: 'updates', room_type: 'state', auth_level: 'user', server_channels: ['jobs', 'alerts'] });
+
+  mock.on('GET /projects/p_TestProj/realtime-rooms/updates', { body: { data: {
+    room: { name: 'updates', room_type: 'state', auth_level: 'user', max_clients: 50, config: { server_channels: ['alerts', 'jobs'] } },
+    live: { instances: 0, clients: 0 },
+  } } });
+  const i = await fresh(['realtime', 'room', 'info', 'updates']);
+  assert.equal(i.status, 0, i.stderr);
+  assert.match(i.stdout, /Server-only:\s+alerts, jobs/);
 });
 
 test('gipity realtime bench validates its options before connecting', async () => {

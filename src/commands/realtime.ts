@@ -45,6 +45,7 @@ const roomCommand = new Command('room')
   .option('--host-hold <seconds>', 'create: how long the host role waits for a dropped or reloading host (0-600, default 60)')
   .option('--host-handoff', 'create: move the host role to another player when the host is gone')
   .option('--host-grace <seconds>', 'create: with handoff, how long the host may be unreachable before the role moves (1-60, default 5)')
+  .option('--server-channels <names>', 'create: comma-separated channels only the app\'s functions may publish on (realtime.publish)')
   .option('--json', 'Output as JSON')
   .action((action: string, name: string | undefined, opts) => run('Realtime room', async () => {
     const config = requireConfig();
@@ -71,6 +72,9 @@ const roomCommand = new Command('room')
         if (opts.hostHold !== undefined) body.host_hold_seconds = Number(opts.hostHold);
         if (opts.hostHandoff) body.host_handoff = true;
         if (opts.hostGrace !== undefined) body.host_grace_seconds = Number(opts.hostGrace);
+        if (opts.serverChannels !== undefined) {
+          body.server_channels = String(opts.serverChannels).split(',').map((c: string) => c.trim()).filter(Boolean);
+        }
         const res = await post<{ data: RealtimeRoom }>(base, body);
         if (opts.json) {
           console.log(JSON.stringify(res.data));
@@ -122,6 +126,8 @@ const roomCommand = new Command('room')
           console.log(`Max clients: ${room.max_clients}`);
           console.log(`Seat hold:   ${room.config?.seat_hold_seconds ?? 30}s (host ${room.config?.host_hold_seconds ?? 60}s)`);
           console.log(`Handoff:     ${room.config?.host_handoff ? `on, after ${room.config?.host_grace_seconds ?? 5}s` : 'off'}`);
+          const serverChannels = Array.isArray(room.config?.server_channels) ? room.config.server_channels as string[] : [];
+          console.log(`Server-only: ${serverChannels.length ? serverChannels.join(', ') : 'none'}`);
           console.log(`Live:        ${live ? `${live.instances} instance(s), ${live.clients} client(s)` : muted('Gipity Realtime unreachable')}`);
         }
         break;
