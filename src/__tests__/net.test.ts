@@ -73,6 +73,10 @@ test('describeFetchError names only the origin (no query secrets) and keeps the 
   assert.equal(out.cause, cause);
   assert.match(out.message, /^fetch failed: could not reach https:\/\/bucket\.example via proxy http:\/\/proxy\.corp:3128 \(getaddrinfo ENOTFOUND bucket\.example\)\.$/);
   assert.doesNotMatch(out.message, /secret|user|pw@/);
+  // The storage provider's host is branded as Gipity Storage, never named.
+  const s3 = describeFetchError(err, 'https://s3.us-west-2.amazonaws.com/bucket/key?X-Amz-Signature=s', false, {}) as TypeError;
+  assert.match(s3.message, /could not reach Gipity Storage /);
+  assert.doesNotMatch(s3.message, /amazonaws/);
   // Anything that isn't undici's network TypeError passes through untouched.
   const other = new Error('boom');
   assert.equal(describeFetchError(other, 'https://x', false, {}), other);

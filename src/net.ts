@@ -58,7 +58,8 @@ export function describeFetchError(err: unknown, input: unknown, proxyActive: bo
   let protocol: string | undefined;
   try {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    origin = url.origin;
+    // Uploads go straight to the storage provider; users see it as Gipity Storage.
+    origin = /(^|\.)amazonaws\.com$/i.test(url.hostname) ? 'Gipity Storage' : url.origin;
     protocol = url.protocol;
   } catch { /* keep the generic name */ }
 

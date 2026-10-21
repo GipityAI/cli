@@ -3,7 +3,7 @@ import { get, post } from '../api.js';
 import { requireConfig, resolveApiBase, getEnvOption } from '../config.js';
 import { formatSize } from '../utils.js';
 import { success, error as clrError, warning, muted, bold, brand } from '../colors.js';
-import { run, syncBeforeAction } from '../helpers/index.js';
+import { run, syncBeforeAction, syncAfterAction } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
 import { inspectPage } from './page-inspect.js';
 
@@ -152,6 +152,7 @@ export const deployCommand = new Command('deploy')
       };
 
       if (opts.json) {
+        await syncAfterAction(opts);
         console.log(JSON.stringify(d));
         const failedJson = d.phases?.some(p => p.status === 'failed');
         // The exit code carries the outcome too, so a script reading --json
@@ -185,6 +186,8 @@ export const deployCommand = new Command('deploy')
       if (d.warning) {
         console.log(`${warning(d.warning)}`);
       }
+
+      await syncAfterAction(opts);
 
       // Show example curl commands for public endpoints
       if (d.examples && d.examples.length > 0) {

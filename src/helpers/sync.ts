@@ -39,3 +39,20 @@ export async function syncBeforeAction(opts: { sync?: boolean; json?: boolean; f
     for (const e of result.errors) console.error(clrError(`[sync] ${e}`));
   }
 }
+
+/**
+ * Pull down files the action itself wrote on the server. A deploy can rewrite
+ * source (auto-declared functions in gipity.yaml, a share card re-synced to the
+ * page title); the editor hooks only pull before the next user turn, so an agent
+ * editing right after the deploy would read the stale local copy.
+ */
+export async function syncAfterAction(opts: { sync?: boolean; json?: boolean }): Promise<void> {
+  if (opts.sync === false) return;
+  const result = await sync({ interactive: false });
+  if (result.applied > 0 && !opts.json) {
+    console.log(muted(`Pulled ${result.applied} file${result.applied > 1 ? 's' : ''} the deploy updated`));
+  }
+  if (result.errors.length > 0 && !opts.json) {
+    for (const e of result.errors) console.error(clrError(`[sync] ${e}`));
+  }
+}
