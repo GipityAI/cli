@@ -58,18 +58,22 @@ recordsCommand
 
 recordsCommand
   .command('config <table>')
-  .description('Show or set a table\'s Records API config (auth level, search, etc.)')
+  .description('Show or set a table\'s Records API config (auth level, search, auto-numbering, etc.)')
   .addOption(new Option('--auth <level>', 'Auth level: public (anonymous writes), user (any signed-in caller), or member (owner and project members only)').choices(['public', 'member', 'user']))
   .option('--searchable <bool>', 'Enable full-text search (true/false)')
   .option('--primary-key <col>', 'Primary key column (default: id)')
   .option('--soft-delete <col>', 'Soft-delete column (pass "none" to clear)')
+  .option('--auto-number <prefix>', 'Number new records automatically, e.g. INC -> INC0001001 (pass "none" to turn off). Same as auto_number in gipity.yaml')
+  .option('--auto-number-pad <n>', 'Zero-pad width of the auto-number (default 7)')
+  .option('--auto-number-column <col>', 'Column the auto-number is written to (default: number)')
   .option('--json', 'Output as JSON')
   .action((table: string, opts) => run('Config', async () => {
     const config = requireConfig();
     const base = `/api/${config.projectGuid}/records/${table}/config`;
 
     // No setter flags → just show the current config.
-    const setting = opts.auth || opts.searchable !== undefined || opts.primaryKey || opts.softDelete;
+    const setting = opts.auth || opts.searchable !== undefined || opts.primaryKey || opts.softDelete
+      || opts.autoNumber || opts.autoNumberPad || opts.autoNumberColumn;
     if (!setting) {
       const res = await get<{ data: any }>(base);
       printResult(JSON.stringify(res.data, null, 2), opts, res.data);
@@ -81,11 +85,22 @@ recordsCommand
     if (opts.searchable !== undefined) body.searchable = /^(true|1|on|yes)$/i.test(String(opts.searchable));
     if (opts.primaryKey) body.primary_key_column = opts.primaryKey;
     if (opts.softDelete) body.soft_delete_column = opts.softDelete === 'none' ? null : opts.softDelete;
+    if (opts.autoNumber) body.auto_number_prefix = opts.autoNumber === 'none' ? null : opts.autoNumber;
+    if (opts.autoNumberPad) {
+      const pad = Number(opts.autoNumberPad);
+      if (!Number.isInteger(pad)) throw new Error(`--auto-number-pad must be a whole number (got '${opts.autoNumberPad}')`);
+      body.auto_number_pad = pad;
+    }
+    if (opts.autoNumberColumn) body.auto_number_column = opts.autoNumberColumn;
 
     const res = await patch<{ data: any }>(base, body);
+    const d = res.data;
+    const autoNumber = d.auto_number_prefix
+      ? `${d.auto_number_prefix} (pad ${d.auto_number_pad}, column ${d.auto_number_column})`
+      : 'off';
     printResult(
-      `Configured "${table}": auth=${res.data.auth_level}, searchable=${res.data.searchable}, pk=${res.data.primary_key_column}`,
-      opts, res.data,
+      `Configured "${table}": auth=${d.auth_level}, searchable=${d.searchable}, pk=${d.primary_key_column}, auto-number=${autoNumber}`,
+      opts, d,
     );
   }));
 

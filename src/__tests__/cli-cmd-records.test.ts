@@ -42,6 +42,33 @@ test('gipity records config <table> --auth public PATCHes the table config', asy
   assert.match(r.stdout, /auth=public/);
 });
 
+test('gipity records config <table> --auto-number sets numbering; "none" turns it off', async () => {
+  mock.reset();
+  mock.on('PATCH /api/p_TestProj/records/incidents/config', ({ body }) => {
+    const b = body as Record<string, unknown>;
+    return { body: { data: {
+      table_name: 'incidents', auth_level: 'member', searchable: false, primary_key_column: 'id',
+      auto_number_prefix: b.auto_number_prefix ?? null,
+      auto_number_pad: b.auto_number_prefix ? (b.auto_number_pad ?? 7) : null,
+      auto_number_column: b.auto_number_prefix ? (b.auto_number_column ?? 'number') : null,
+    } } };
+  });
+
+  const on = await fresh(['records', 'config', 'incidents', '--auto-number', 'INC', '--auto-number-pad', '5', '--auto-number-column', 'ticket_no']);
+  assert.equal(on.status, 0, on.stderr);
+  assert.deepEqual(mock.requests().at(-1)?.body, { auto_number_prefix: 'INC', auto_number_pad: 5, auto_number_column: 'ticket_no' });
+  assert.match(on.stdout, /auto-number=INC \(pad 5, column ticket_no\)/);
+
+  const off = await fresh(['records', 'config', 'incidents', '--auto-number', 'none']);
+  assert.equal(off.status, 0, off.stderr);
+  assert.deepEqual(mock.requests().at(-1)?.body, { auto_number_prefix: null });
+  assert.match(off.stdout, /auto-number=off/);
+
+  const bad = await fresh(['records', 'config', 'incidents', '--auto-number', 'INC', '--auto-number-pad', 'seven']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr + bad.stdout, /--auto-number-pad must be a whole number/);
+});
+
 test('gipity records config <table> with no flags shows current config', async () => {
   mock.reset();
   mock.on('GET /api/p_TestProj/records/incidents/config', { body: { data: {
