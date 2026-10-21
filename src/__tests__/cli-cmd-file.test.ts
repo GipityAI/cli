@@ -49,6 +49,9 @@ test('gipity file tree lists paths with sizes', async () => {
   assert.match(r.stdout, /src\/index\.html/);
   assert.match(r.stdout, /src\/css/);
   assert.doesNotMatch(r.stdout, /undefined/);
+  // A listing includes app runtime uploads (sync leaves them out).
+  const req = mock.requests().find(q => q.url.includes('/files/tree'));
+  assert.match(req!.url, /include=app_uploads/);
 });
 
 test('gipity file rm <path> deletes and prints confirmation', async () => {

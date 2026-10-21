@@ -2,7 +2,7 @@
  * sync.ts - Shared sync-before-action helper.
  */
 
-import { sync, isLocalTreeClean } from '../sync.js';
+import { sync, isLocalTreeClean, appUploadNote } from '../sync.js';
 import { muted, error as clrError } from '../colors.js';
 import { createProgressReporter } from '../progress.js';
 
@@ -33,6 +33,8 @@ export async function syncBeforeAction(opts: { sync?: boolean; json?: boolean; f
   if (result.applied > 0 && !opts.json) {
     console.log(muted(`Synced ${result.applied} change${result.applied > 1 ? 's' : ''}`));
   }
+  const note = appUploadNote(result.appUploadsLeftLocal);
+  if (note && !opts.json) console.log(muted(note));
   if (result.errors.length > 0 && !opts.json) {
     for (const e of result.errors) console.error(clrError(`[sync] ${e}`));
   }

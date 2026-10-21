@@ -163,4 +163,33 @@ describe('cli-e2e-sync-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' 
     assert.equal(down.status, 0, `delete download failed: ${down.stderr || down.stdout}`);
     assert.ok(!existsSync(join(dirB, 'readme.md')), 'deletion propagated through the server');
   });
+
+  it('8. app runtime uploads stay in Gipity Storage: never pulled, never deleted by sync, still listed', () => {
+    // An app upload (here via `gipity upload`, the same app uploads API an
+    // external service with a project key uses) lands in the project's storage
+    // under uploads/<guid>/. Sync must leave it out of every working directory.
+    const scratch = mkdtempSync(join(tmpdir(), 'gipity-sync-upload-'));
+    try {
+      writeFileSync(join(scratch, 'generated.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
+      const up = cli(['upload', join(scratch, 'generated.png'), '--json']);
+      assert.equal(up.status, 0, `upload failed: ${up.stderr || up.stdout}`);
+      const guid = JSON.parse(up.stdout).guid as string;
+      const uploadPath = `uploads/${guid}/generated.png`;
+
+      for (const dir of [dirA, dirB]) {
+        const plan = planOf(dir);
+        assert.equal(plan.plan.downloads, 0, `no download planned in ${dir}`);
+        assert.equal(plan.plan.deletesRemote, 0, `no remote delete planned in ${dir}`);
+        const r = cli(['sync', '--prune', '-y'], { cwd: dir });
+        assert.equal(r.status, 0, `sync failed: ${r.stderr || r.stdout}`);
+        assert.ok(!existsSync(join(dir, 'uploads')), `upload not pulled into ${dir}`);
+      }
+
+      const tree = cli(['file', 'tree', '--json']);
+      assert.equal(tree.status, 0, `file tree failed: ${tree.stderr || tree.stdout}`);
+      assert.ok(JSON.stringify(JSON.parse(tree.stdout)).includes(uploadPath), 'upload still on the server and listed');
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 });

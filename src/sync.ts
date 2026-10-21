@@ -73,6 +73,11 @@ export interface Baseline {
    *  re-run" to "this is a wedge - report it" instead of printing the same
    *  soothing message forever (GipityAI/cli#133). Absent/0 when converged. */
   deletesSkippedStreak?: number;
+  /** Paths the server reported as app runtime uploads on the last sync (see
+   *  fetchRemote). They aren't part of the synced tree, so a local copy left
+   *  over from before they were excluded must not read as a local change to the
+   *  clean-tree probe. Absent when there are none. */
+  appUploads?: string[];
 }
 
 interface LocalFileInfo {
@@ -172,6 +177,10 @@ export interface SyncResult {
    *  Non-interactive callers (deploy/test/sandbox) defer silently; surface this
    *  where it's useful (e.g. `gipity sync` hints at `--prune`). */
   deferredDeletes: number;
+  /** Local copies of app runtime uploads that earlier syncs pulled down, found
+   *  in the baseline this run. Their baseline entries are dropped and the files
+   *  are LEFT IN PLACE (never deleted on either side); the summary says so once. */
+  appUploadsLeftLocal: string[];
   /** True when the user declined the uncertain-merge confirmation: nothing was
    *  applied, the directory is left exactly as it was. Callers should not treat
    *  this as a normal "synced" result. */
@@ -302,6 +311,7 @@ export function readBaseline(projectGuid: string): Baseline {
       files: parsed.files ?? {},
       lastFullSync: parsed.lastFullSync ?? null,
       ...(parsed.deletesSkippedStreak ? { deletesSkippedStreak: parsed.deletesSkippedStreak } : {}),
+      ...(parsed.appUploads?.length ? { appUploads: parsed.appUploads } : {}),
     };
   } catch {
     return { projectGuid, files: {}, lastFullSync: null };
@@ -436,9 +446,16 @@ export function resolveInRoot(root: string, relPath: string): string {
   return full;
 }
 
-async function fetchRemote(projectGuid: string): Promise<Map<string, RemoteFileInfo>> {
-  const res = await get<{ data: RemoteFileRaw[] }>(`/projects/${projectGuid}/files/tree`);
+/** The server's sync manifest. `files` is the project's source tree. App runtime
+ *  uploads (end-user content written through the app uploads API, e.g. images an
+ *  external service generates into `uploads/` or any custom path) are left out
+ *  of it by the server and named separately in `appUploads`, so sync can tell
+ *  "an upload, not synced" apart from "deleted remotely": their absence must
+ *  never turn into a local delete, a re-upload, or a remote delete. */
+async function fetchRemote(projectGuid: string): Promise<{ files: Map<string, RemoteFileInfo>; appUploads: Set<string> }> {
+  const res = await get<{ data: RemoteFileRaw[]; appUploads?: string[] }>(`/projects/${projectGuid}/files/tree`);
   const out = new Map<string, RemoteFileInfo>();
+  const appUploads = new Set((res.appUploads ?? []).map(normalizeTreePath));
   for (const f of res.data) {
     if (f.type !== 'file') continue;
     const path = normalizeTreePath(f.path);
@@ -450,7 +467,7 @@ async function fetchRemote(projectGuid: string): Promise<Map<string, RemoteFileI
       modified: f.modified,
     });
   }
-  return out;
+  return { files: out, appUploads };
 }
 
 /**
@@ -781,6 +798,24 @@ export function formatPlan(p: PlanSummary): string {
   return lines.join('\n');
 }
 
+/** The one-time note for leftover local copies of app uploads (see syncInner),
+ *  or '' when there are none. Shown only on the run that drops their baseline
+ *  entries, so it never repeats. */
+export function appUploadNote(leftLocal: string[]): string {
+  const n = leftLocal.length;
+  if (!n) return '';
+  const first = leftLocal[0];
+  const where = first.includes('/') ? `${first.split('/')[0]}/` : first;
+  return `${n} app upload${n === 1 ? '' : 's'} (files your app stored at runtime, e.g. in ${where}) ` +
+    `${n === 1 ? 'is' : 'are'} no longer synced: ${n === 1 ? 'it stays' : 'they stay'} in Gipity Storage. ` +
+    `The local ${n === 1 ? 'copy was' : 'copies were'} left in place and ${n === 1 ? 'is' : 'are'} safe to delete.`;
+}
+
+function withAppUploadNote(summary: string, leftLocal: string[]): string {
+  const note = appUploadNote(leftLocal);
+  return note ? `${summary}\n${note}` : summary;
+}
+
 async function bulkDeleteGuard(
   p: PlanSummary, knownFiles: number, opts: SyncOptions,
 ): Promise<boolean> {
@@ -861,6 +896,8 @@ export function isLocalTreeClean(): boolean {
     const baseline = readBaseline(config.projectGuid);
     if (!baseline.lastFullSync) return false;
     const local = walkLocal(root, effectiveIgnore(root, config.ignore), baseline.files);
+    // Leftover local copies of app uploads aren't part of the synced tree.
+    for (const path of baseline.appUploads ?? []) local.delete(path);
     const baselineFiles = baseline.files;
     if (local.size !== Object.keys(baselineFiles).length) return false;
     for (const [path, info] of local) {
@@ -902,7 +939,29 @@ async function syncInner(
   p?.phase('Scanning local files...');
   const local = walkLocal(root, ignore, baseline.files);
   p?.phase('Checking Gipity for changes...');
-  const remote = await fetchRemote(projectGuid);
+  const { files: remote, appUploads } = await fetchRemote(projectGuid);
+  // App runtime uploads stay in Gipity Storage and out of the working tree. Take
+  // them off EVERY side before planning, so no cell of the decision table can
+  // act on them: a local copy (pulled by an older sync, or committed to git) is
+  // never uploaded, and a baseline entry for one is never read as "deleted
+  // remotely" (which would delete the local copy) or, once the local copy is
+  // gone, as "deleted locally" (which would delete the user's upload on the
+  // server). The baseline entry is dropped and the local file left in place.
+  //
+  // Paths known from earlier syncs stay excluded while a local copy remains,
+  // even once the upload is gone from the server (the app deleted it): a
+  // leftover copy must not be pushed back as a new source file.
+  const appUploadsLeftLocal: string[] = [];
+  const knownUploads = new Set([...appUploads, ...(baseline.appUploads ?? []).filter(p => local.has(p))]);
+  for (const path of knownUploads) {
+    if (baseline.files[path]) {
+      if (local.has(path)) appUploadsLeftLocal.push(path);
+      delete baseline.files[path];
+    }
+    local.delete(path);
+  }
+  if (knownUploads.size) baseline.appUploads = [...knownUploads].sort();
+  else delete baseline.appUploads;
   // Ignored paths are invisible on BOTH sides: filtering only the local walk
   // would classify a remote copy as "added" (pull it), then next pass as a
   // local deletion (delete it remotely) - a churn loop. Filtering remote too
@@ -930,8 +989,9 @@ async function syncInner(
   if (opts.plan) {
     return {
       plan: planned, applied: 0, skipped: 0, errors: [],
-      summary: formatPlan(planned),
+      summary: withAppUploadNote(formatPlan(planned), appUploadsLeftLocal),
       deferredDeletes: 0,
+      appUploadsLeftLocal,
     };
   }
 
@@ -964,7 +1024,7 @@ async function syncInner(
         ...shape,
         `Re-run with --yes to merge, or sync into an empty folder.`,
       ].join('\n'),
-      deferredDeletes: 0, aborted: true,
+      deferredDeletes: 0, aborted: true, appUploadsLeftLocal: [],
     });
 
     if (getAutoConfirm()) {
@@ -1531,8 +1591,9 @@ async function syncInner(
     applied,
     skipped: skippedByGuard,
     errors,
-    summary: formatPlan(planned),
+    summary: withAppUploadNote(formatPlan(planned), appUploadsLeftLocal),
     deferredDeletes: skippedByGuard,
+    appUploadsLeftLocal,
   };
 }
 
@@ -1603,6 +1664,9 @@ export async function pushFile(filePath: string): Promise<void> {
   const releaseLock = await acquireLock();
   try {
     const baseline = readBaseline(config.projectGuid);
+    // A leftover local copy of an app upload is not source: never push it back
+    // over the user's upload (same rule as the full sync).
+    if (baseline.appUploads?.includes(rel)) return;
     const baseEntry = baseline.files[rel];
     const result = await uploadOneFile(config.projectGuid, filePath, rel, {
       expectedServerVersion: baseEntry ? baseEntry.serverVersion : null,

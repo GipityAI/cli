@@ -77,9 +77,12 @@ fileCommand
   .option('--json', 'Output as JSON')
   .action((path: string | undefined, opts) => run('Tree', async () => {
     const { config } = await resolveProjectContext();
-    const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    // A listing shows everything, app runtime uploads included (sync leaves
+    // those out; they stay in Gipity Storage).
+    const qs = new URLSearchParams({ include: 'app_uploads' });
+    if (path) qs.set('path', path);
     const res = await get<{ data: Array<{ path: string; size: number; type: string }> }>(
-      `/projects/${config.projectGuid}/files/tree${query}`
+      `/projects/${config.projectGuid}/files/tree?${qs.toString()}`
     );
 
     printList(res.data, opts, '(empty)', f => {

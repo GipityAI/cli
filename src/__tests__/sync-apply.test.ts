@@ -1047,3 +1047,152 @@ describe('sync() - empty directory cleanup', () => {
     assert.ok(existsSync(join(projectDir, 'assets', 'stay.png')), 'survivor untouched');
   });
 });
+
+// ─── App runtime uploads stay out of the working tree ────────────
+// Regression (bug_uc2v7cue): an external service uploaded generated images
+// through the app uploads API under `pixtella/`; sync pulled them into the
+// working directory and git committed them. The server now leaves app uploads
+// out of the manifest and names them in `appUploads`. Sync must never pull them,
+// never push a local copy, and - the critical part - never turn their absence
+// from the manifest into a local or a remote delete.
+
+describe('sync() - app runtime uploads', () => {
+  const UP = 'pixtella/fl_gen1/gen.png';
+  const SRC = 'src/index.html';
+
+  async function shaOf(s: string): Promise<string> {
+    const { createHash } = await import('crypto');
+    return createHash('sha256').update(s).digest('hex');
+  }
+
+  /** Stub a server that lists SRC as source and UP as an app upload. Records
+   *  every request; anything but the tree listing is a failure (no tar pull, no
+   *  upload, no DELETE). */
+  async function stubServer(calls: string[]): Promise<void> {
+    const srcSha = await shaOf('<p>hi</p>');
+    stubFetch(async (url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({
+          data: [{ path: SRC, size: 9, modified: '2026', type: 'file', guid: 'fl_src', contentHash: srcSha, serverVersion: 2 }],
+          appUploads: [UP],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+  }
+
+  async function writeSrc(): Promise<Record<string, unknown>> {
+    mkdirSync(join(projectDir, 'src'), { recursive: true });
+    writeFileSync(join(projectDir, SRC), '<p>hi</p>');
+    // Real mtime, so the clean-tree probe sees the source file as unchanged.
+    const { statSync } = await import('fs');
+    const mtime = statSync(join(projectDir, SRC)).mtime.toISOString();
+    return { [SRC]: { size: 9, mtime, sha256: await shaOf('<p>hi</p>'), serverVersion: 2 } };
+  }
+
+  async function run() {
+    const { clearConfigCache } = await import('../config.js');
+    clearConfigCache();
+    const { sync, readBaseline } = await import('../sync.js');
+    const result = await sync({ interactive: false });
+    return { result, baseline: readBaseline('proj_apply') };
+  }
+
+  it('a fresh sync does not pull an app upload', async () => {
+    const files = await writeSrc();
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({ projectGuid: 'proj_apply', files, lastFullSync: null }));
+    const calls: string[] = [];
+    await stubServer(calls);
+    const { result, baseline } = await run();
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.plan.actions.length, 0);
+    assert.ok(!existsSync(join(projectDir, 'pixtella')), 'upload not written locally');
+    assert.equal(calls.length, 1, `only the tree listing, got: ${calls.join(', ')}`);
+    assert.equal(baseline.files[UP], undefined);
+    assert.deepEqual(baseline.appUploads, [UP]);
+  });
+
+  it('transition: a copy an older sync pulled is left in place, its baseline entry dropped, and nothing is deleted anywhere', async () => {
+    const files = await writeSrc();
+    mkdirSync(join(projectDir, 'pixtella', 'fl_gen1'), { recursive: true });
+    writeFileSync(join(projectDir, UP), 'png');
+    files[UP] = { size: 3, mtime: '2024', sha256: await shaOf('png'), serverVersion: 1 };
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({ projectGuid: 'proj_apply', files, lastFullSync: null }));
+
+    const calls: string[] = [];
+    await stubServer(calls);
+    const { result, baseline } = await run();
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.plan.deletesLocal, 0);
+    assert.equal(result.plan.deletesRemote, 0);
+    assert.equal(result.plan.uploads, 0);
+    assert.equal(readFileSync(join(projectDir, UP), 'utf-8'), 'png', 'local copy kept');
+    assert.ok(!calls.some(c => !c.startsWith('GET ')), `no writes or deletes, got: ${calls.join(', ')}`);
+    assert.deepEqual(result.appUploadsLeftLocal, [UP]);
+    assert.match(result.summary, /1 app upload .*no longer synced.*Gipity Storage.*left in place/);
+    assert.equal(baseline.files[UP], undefined, 'baseline entry dropped');
+    assert.ok(baseline.files[SRC], 'source entry kept');
+
+    // The note is one-time; the next sync is a clean noop that still keeps the copy.
+    const again = await run();
+    assert.deepEqual(again.result.appUploadsLeftLocal, []);
+    assert.doesNotMatch(again.result.summary, /app upload/);
+    assert.equal(again.result.plan.actions.length, 0);
+    assert.ok(existsSync(join(projectDir, UP)));
+
+    // The leftover copy doesn't make the tree read dirty (deploy's sync skip).
+    const { isLocalTreeClean } = await import('../sync.js');
+    assert.equal(isLocalTreeClean(), true);
+
+    // The app later deletes the upload: the server stops naming it. The leftover
+    // local copy must still not be pushed back as a new source file.
+    const srcSha = await shaOf('<p>hi</p>');
+    const later: string[] = [];
+    stubFetch(async (url, init) => {
+      later.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.includes('/files/tree') && !url.includes('content=tar')) {
+        return new Response(JSON.stringify({
+          data: [{ path: SRC, size: 9, modified: '2026', type: 'file', guid: 'fl_src', contentHash: srcSha, serverVersion: 2 }],
+          appUploads: [],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+    const gone = await run();
+    assert.deepEqual(gone.result.errors, []);
+    assert.equal(gone.result.plan.uploads, 0, 'leftover copy not resurrected as source');
+    assert.equal(later.length, 1, `only the tree listing, got: ${later.join(', ')}`);
+    assert.deepEqual(gone.baseline.appUploads, [UP]);
+  });
+
+  it('deleting the local copy of a baselined upload never deletes the upload on the server', async () => {
+    const files = await writeSrc();
+    files[UP] = { size: 3, mtime: '2024', sha256: await shaOf('png'), serverVersion: 1 };
+    // No local copy: an older sync would read this as "deleted locally".
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({ projectGuid: 'proj_apply', files, lastFullSync: null }));
+    const calls: string[] = [];
+    await stubServer(calls);
+    const { result, baseline } = await run();
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.plan.deletesRemote, 0);
+    assert.ok(!calls.some(c => c.startsWith('DELETE ')), `no DELETE, got: ${calls.join(', ')}`);
+    assert.equal(baseline.files[UP], undefined);
+    assert.deepEqual(result.appUploadsLeftLocal, [], 'no note when there is no local copy');
+  });
+
+  it('a local copy with no baseline entry (e.g. checked out from git) is never pushed', async () => {
+    const files = await writeSrc();
+    mkdirSync(join(projectDir, 'pixtella', 'fl_gen1'), { recursive: true });
+    writeFileSync(join(projectDir, UP), 'edited-png');
+    writeFileSync(join(projectDir, '.gipity', 'sync-state.json'), JSON.stringify({ projectGuid: 'proj_apply', files, lastFullSync: null }));
+    const calls: string[] = [];
+    await stubServer(calls);
+    const { result } = await run();
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.plan.uploads, 0);
+    assert.equal(result.plan.conflicts, 0);
+    assert.equal(calls.length, 1, `only the tree listing, got: ${calls.join(', ')}`);
+    assert.equal(readFileSync(join(projectDir, UP), 'utf-8'), 'edited-png');
+  });
+});
