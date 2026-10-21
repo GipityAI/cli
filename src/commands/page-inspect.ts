@@ -244,7 +244,9 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
         ? `${muted('Auth:')} ${success('session established')}${who ? muted(` as ${who}`) : ''} ${muted('(what the page renders with it is app-defined)')}`
         : `${warning('Auth: session NOT established')}${b.auth.detail ? `: ${b.auth.detail}` : ''} ${muted('(this is the anonymous view)')}`);
     } else {
-      console.log(muted('Auth: anonymous visitor (signed out; pass --auth to load as your Gipity account)'));
+      // A full command, not "pass --auth": this also prints under
+      // `deploy --inspect`, and deploy has no --auth flag.
+      console.log(muted(`Auth: anonymous visitor (signed out). Signed-in view: gipity page inspect ${url} --auth`));
     }
     console.log(`${muted('Title:')} ${b.title || '(none)'}`);
     console.log(`${muted('Elements:')} ${b.elementCount || 0}`);
