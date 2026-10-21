@@ -849,7 +849,10 @@ export const pageEvalCommand = new Command('eval')
       if (restoreDb) {
         try {
           const r = await restoreCheckpoint(restoreDb.projectGuid, restoreDb.database);
-          console.error(muted(`Rolled ${r.tables.length} table(s) back to the checkpoint (${r.rows} row(s)) - nothing this eval wrote survives.`));
+          // The app tables are restored; Records change history lives in the
+          // platform audit log and is not part of the checkpoint, so don't
+          // promise that nothing survives.
+          console.error(muted(`Rolled ${r.tables.length} table(s) back to the checkpoint (${r.rows} row(s)). Not rolled back: Records change history (gipity records history) and id sequences, so rows this eval created can still show there.`));
         } catch (err) {
           console.error(warning(`⚠ Could not roll back the database - the checkpoint is still there, retry with: gipity db restore (${(err as Error).message})`));
         }
