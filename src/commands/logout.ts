@@ -4,12 +4,13 @@ import { success } from '../colors.js';
 
 export const logoutCommand = new Command('logout')
   .description('Log out')
-  .action(() => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { json?: boolean }) => {
     const auth = getAuth();
-    if (!auth) {
-      console.log('Not logged in.');
-    } else {
-      clearAuth();
-      console.log(success(`Logged out (${auth.email}).`));
+    if (auth) clearAuth();
+    if (opts.json) {
+      console.log(JSON.stringify({ loggedOut: !!auth, email: auth?.email ?? null }));
+      return;
     }
+    console.log(auth ? success(`Logged out (${auth.email}).`) : 'Not logged in.');
   });

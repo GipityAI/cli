@@ -42,3 +42,11 @@ test('gipity rbac delete --yes calls DELETE', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Policy deleted/);
 });
+
+test('gipity rbac delete --json prints the deleted policy key', async () => {
+  mock.reset();
+  mock.on('DELETE /projects/p_TestProj/rbac', { body: { data: { deleted: true } } });
+  const r = await fresh(['--yes', 'rbac', 'delete', 'incidents', '--role', 'editor', '--op', 'select', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { success: true, table: 'incidents', role: 'editor', operation: 'select' });
+});

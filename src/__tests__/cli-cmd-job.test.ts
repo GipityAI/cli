@@ -240,3 +240,39 @@ test('gipity job logs <guid> --follow parses SSE events and prints stdout/stderr
   assert.match(r.stderr, /running/);
   assert.match(r.stderr, /success/);
 });
+
+test('gipity job run-local --json captures the job output into one JSON result', async () => {
+  const { mkdtempSync, writeFileSync, mkdirSync, chmodSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(`${tmpdir()}/gipity-runlocal-json-`);
+  const projDir = join(root, 'proj');
+  mkdirSync(join(projDir, 'jobs', 'hello'), { recursive: true });
+  writeFileSync(join(projDir, 'jobs', 'hello', 'main.sh'), 'echo hi\n');
+  writeFileSync(join(projDir, '.gipity.json'), JSON.stringify({
+    projectGuid: 'p_TestProj', projectSlug: 'proj', accountSlug: 'me', apiBase: mock.apiBase, ignore: [],
+  }));
+  // Fake docker: `info` succeeds; `run` prints like a job would and exits 3.
+  const fakeBin = join(root, 'bin');
+  mkdirSync(fakeBin, { recursive: true });
+  writeFileSync(join(fakeBin, 'docker'), `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then exit 0; fi
+echo "job says hi"
+echo "job warns" >&2
+exit 3
+`);
+  chmodSync(join(fakeBin, 'docker'), 0o755);
+
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'job', 'run-local', 'hello', '--json'], {
+    env: { HOME: home, PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+    cwd: projDir,
+  });
+  assert.equal(r.status, 3, 'exit status mirrors the job');
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.name, 'hello');
+  assert.equal(out.runtime, 'bash');
+  assert.equal(out.exitCode, 3);
+  assert.equal(out.stdout, 'job says hi\n');
+  assert.equal(out.stderr, 'job warns\n');
+  assert.equal(typeof out.durationMs, 'number');
+});

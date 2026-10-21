@@ -53,6 +53,7 @@ rbacCommand
   .description('Delete a policy')
   .requiredOption('--role <role>', 'Role')
   .requiredOption('--op <operation>', 'Operation')
+  .option('--json', 'Output as JSON')
   .action((table: string, opts) => run('Delete', async () => {
     if (!await confirm(`Delete RBAC policy for "${table}"?`)) {
       console.log('Cancelled.');
@@ -64,5 +65,5 @@ rbacCommand
       role: opts.role,
       operation: opts.op,
     });
-    printResult('Policy deleted.', { json: false });
+    printResult('Policy deleted.', opts, { success: true, table, role: opts.role, operation: opts.op });
   }));

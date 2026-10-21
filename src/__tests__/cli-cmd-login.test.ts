@@ -120,3 +120,41 @@ test('gipity login --email (no code) warns before the code is entered when it wo
   assert.match(r.stdout, /will CREATE a new one/);
   assert.match(r.stdout, /my-app/);
 });
+
+test('gipity login --email --code --json prints one JSON result and sends the new-account warning to stderr', async () => {
+  mock.reset();
+  mock.on('POST /auth/verify', { body: { accessToken: makeJwt(), refreshToken: 'refresh-token', isNewUser: true } });
+  const home = mkdtempSync(join(tmpdir(), 'gipity-login-'));
+  const dir = makeProjectDir({ projectSlug: 'my-app', accountSlug: 'acct-original' });
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'login', '--email', 'ec-test@914-6.com', '--code', '914914', '--json'],
+    { env: { HOME: home }, cwd: dir },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.loggedIn, true);
+  assert.equal(out.email, 'ec-test@914-6.com');
+  assert.equal(out.newAccount, true);
+  assert.ok(!Number.isNaN(Date.parse(out.expiresAt)), 'expiresAt is an ISO date');
+  assert.equal(out.queuedBugReportsDelivered, 0);
+  assert.match(r.stderr, /NEW, empty account/);
+  const auth = JSON.parse(readFileSync(join(home, '.gipity', 'auth.json'), 'utf-8'));
+  assert.equal(auth.email, 'ec-test@914-6.com');
+});
+
+test('gipity login --email --json reports the sent code and the next command', async () => {
+  mock.reset();
+  mock.on('POST /auth/login', { body: { isNewUser: false } });
+  const home = mkdtempSync(join(tmpdir(), 'gipity-login-'));
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'login', '--email', 'ec-test@914-6.com', '--json'],
+    { env: { HOME: home } },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), {
+    codeSent: true,
+    email: 'ec-test@914-6.com',
+    newAccount: false,
+    next: 'gipity login --email ec-test@914-6.com --code <code>',
+  });
+});

@@ -70,11 +70,13 @@ export function decodeJwtExp(token: string): number | null {
  *  indefinitely on a closed stdin, hanging the dispatch until the web
  *  CLI's 8-second latch gives up. Turning that into a loud error lets
  *  the daemon ack the dispatch cleanly and surface a real message. */
-export function prompt(question: string): Promise<string> {
+/** `output` is where the question is written: stderr keeps a `--json` command's
+ *  stdout parse-clean while it still asks interactively. */
+export function prompt(question: string, output: NodeJS.WritableStream = process.stdout): Promise<string> {
   if (!process.stdin.isTTY) {
     return Promise.reject(new Error(`prompt() called without a TTY: ${question.trim()}`));
   }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({ input: process.stdin, output });
   return new Promise(resolve => {
     rl.question(question, answer => {
       rl.close();
@@ -103,7 +105,7 @@ export function getAutoConfirm(): boolean { return _autoConfirm; }
 
 /** Reconstruct the current invocation with `--yes` appended, for self-correcting
  *  non-interactive confirmation hints. Shell-quotes args that need it. */
-function rerunWithYes(): string {
+export function rerunWithYes(): string {
   const args = process.argv.slice(2);
   if (!args.some(a => a === '--yes' || a === '-y')) args.push('--yes');
   const quote = (a: string) => (/[^\w@%+=:,./-]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a);

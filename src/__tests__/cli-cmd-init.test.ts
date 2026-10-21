@@ -180,3 +180,49 @@ test('gipity init on an older project with no captureHooks key leaves it recordi
   assert.equal(r.status, 0, r.stderr);
   assert.equal('captureHooks' in JSON.parse(readFileSync(join(dir, '.gipity.json'), 'utf-8')), false);
 });
+
+test('gipity init --json creates a project and prints one JSON result', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'test-acct' } } });
+  mock.on('GET /projects', { body: { data: [], totalCount: 0 } });
+  mock.on('POST /projects', { body: { data: { short_guid: 'p_NewInitJs0', name: 'json-app', slug: 'json-app' } } });
+  mock.on('GET /projects/p_NewInitJs0/files/tree', { body: { data: [] } });
+
+  const dir = freshDir();
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init', 'json-app', '--for', 'claude', '--json'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.linked, true);
+  assert.equal(out.alreadyLinked, false);
+  assert.equal(out.created, true);
+  assert.deepEqual(out.project, { guid: 'p_NewInitJs0', slug: 'json-app', name: 'json-app' });
+  assert.equal(out.synced, 0);
+  assert.deepEqual(out.primers, ['claude']);
+  assert.equal(out.captureHooks, false);
+  assert.ok(existsSync(join(dir, '.gipity.json')), 'init --json still writes .gipity.json');
+});
+
+test('gipity init --json in an already-linked directory reports the existing link', async () => {
+  mock.reset();
+  const dir = freshDir();
+  writeConfig(dir, 'linked-json');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init', '--json'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.alreadyLinked, true);
+  assert.deepEqual(out.project, { guid: 'p_linked-json', slug: 'linked-json' });
+});
+
+test('gipity init --json refuses a y/N confirmation instead of prompting on stdout', async () => {
+  mock.reset();
+  const parent = freshDir();
+  writeConfig(parent, 'outer-json');
+  const child = join(parent, 'inner');
+  mkdirSync(child);
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'init', '--json'], { env: { HOME: home }, cwd: child });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.stdout.trim(), '', 'no prompt or decoration on stdout');
+  assert.match(r.stderr, /Confirmation required in --json mode/);
+  assert.match(r.stderr, /gipity .*init --json --yes/);
+  assert.equal(existsSync(join(child, '.gipity.json')), false);
+});

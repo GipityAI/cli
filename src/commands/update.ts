@@ -4,9 +4,22 @@ import { success, warning, info, dim } from '../colors.js';
 
 export const updateCommand = new Command('update')
   .description('Update the CLI')
-  .action(async () => {
-    console.log(info('Checking for updates...'));
+  .option('--json', 'Output as JSON')
+  .action(async (opts: { json?: boolean }) => {
+    if (!opts.json) console.log(info('Checking for updates...'));
     const result = await runCheck({ force: true, verbose: true });
+    if (opts.json) {
+      // upToDate is distinct from a failed update, which carries `reason`.
+      console.log(JSON.stringify({
+        updated: result.updated,
+        upToDate: result.reason === 'up-to-date',
+        from: result.from ?? null,
+        to: result.to ?? null,
+        reason: result.updated || result.reason === 'up-to-date' ? null : result.reason ?? null,
+      }));
+      if (!result.updated && result.reason !== 'up-to-date') process.exitCode = 1;
+      return;
+    }
     console.log('');
     if (result.updated) {
       console.log(success(`Updated ${result.from} → ${result.to}`));

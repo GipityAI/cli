@@ -23,33 +23,36 @@ function newAccountWouldBeUnexpected(email: string, priorAuth: AuthData | null):
   return !!getConfig() || priorAuth?.email.toLowerCase() === email.toLowerCase().trim();
 }
 
+/** Both warnings take a `log` sink so `gipity login --json` can send them to
+ *  stderr and keep stdout to the one JSON result. */
+
 /** Called right after `/auth/login` (send-code), before the code is entered -
  *  the server already knows at this point whether the email matches an
  *  existing account (bug cli#S2: logging into the wrong/new account was
  *  previously silent until a later "not found" error). */
-export function warnBeforeCodeIfUnexpectedNewAccount(isNewUser: boolean | undefined, email: string, indent = ''): void {
+export function warnBeforeCodeIfUnexpectedNewAccount(isNewUser: boolean | undefined, email: string, indent = '', log: (line: string) => void = console.log): void {
   if (isNewUser !== true) return;
   const priorAuth = getAuth();
   if (!newAccountWouldBeUnexpected(email, priorAuth)) return;
   const config = getConfig();
-  console.log(`${indent}${warning(`No existing Gipity account for ${email}: entering the code will CREATE a new one.`)}`);
+  log(`${indent}${warning(`No existing Gipity account for ${email}: entering the code will CREATE a new one.`)}`);
   if (config) {
-    console.log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}). If you meant to log into that account, stop and re-check the email before entering the code.`)}`);
+    log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}). If you meant to log into that account, stop and re-check the email before entering the code.`)}`);
   }
 }
 
 /** Called right after `/auth/verify` succeeds. `priorAuth` must be captured
  *  BEFORE `saveAuth()` overwrites the cache - it's the only way to tell "this
  *  machine already had a session for this email" from "first login ever". */
-export function warnIfUnexpectedNewAccount(isNewUser: boolean | undefined, email: string, priorAuth: AuthData | null, indent = ''): void {
+export function warnIfUnexpectedNewAccount(isNewUser: boolean | undefined, email: string, priorAuth: AuthData | null, indent = '', log: (line: string) => void = console.log): void {
   if (isNewUser !== true) return;
   if (!newAccountWouldBeUnexpected(email, priorAuth)) return;
   const config = getConfig();
-  console.log(`${indent}${warning(`Logged into a NEW, empty account for ${email}: no prior account existed for this email.`)}`);
+  log(`${indent}${warning(`Logged into a NEW, empty account for ${email}: no prior account existed for this email.`)}`);
   if (config) {
-    console.log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}), which the new account does not own: project / skill / sync commands will fail with "not found".`)}`);
+    log(`${indent}${muted(`This directory is linked to project ${config.projectSlug} (account ${config.accountSlug}), which the new account does not own: project / skill / sync commands will fail with "not found".`)}`);
   }
-  console.log(`${indent}${muted('If you expected an existing account, run gipity status, then gipity login again with the correct email.')}`);
+  log(`${indent}${muted('If you expected an existing account, run gipity status, then gipity login again with the correct email.')}`);
 }
 
 /** Prompt for email + 6-digit code, persist the tokens, and return the new

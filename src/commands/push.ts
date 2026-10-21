@@ -8,6 +8,7 @@ export const pushCommand = new Command('push')
   .argument('<files...>', 'File path(s) to push')
   .option('--quiet', 'Suppress output')
   .option('--background', 'Fork and exit immediately')
+  .option('--json', 'Output as JSON')
   .action(async (files: string[], opts) => {
     try {
       const fullPaths = files.map(f => resolve(f));
@@ -24,17 +25,22 @@ export const pushCommand = new Command('push')
           stdio: 'ignore',
         });
         child.unref();
+        if (opts.json) console.log(JSON.stringify({ background: true, files }));
         return;
       }
 
       // Sequential on purpose: pushFile takes the per-project sync lock, so
       // parallel pushes would just contend on it. One process pushing N files
       // still beats the old N processes × N lock acquisitions.
-      for (const fullPath of fullPaths) {
-        await pushFile(fullPath);
+      const pushed: string[] = [];
+      const skipped: string[] = [];
+      for (let i = 0; i < fullPaths.length; i++) {
+        (await pushFile(fullPaths[i]) ? pushed : skipped).push(files[i]);
       }
 
-      if (!opts.quiet) {
+      if (opts.json) {
+        console.log(JSON.stringify({ pushed, skipped }));
+      } else if (!opts.quiet) {
         console.log(success(files.length === 1 ? `Pushed ${files[0]}` : `Pushed ${files.length} files`));
       }
     } catch (err: any) {

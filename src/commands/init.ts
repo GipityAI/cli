@@ -2,12 +2,12 @@ import { Command } from 'commander';
 import { basename, resolve, dirname } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { getAccountSlug } from '../api.js';
-import { getConfig, getConfigPath, saveConfigAt } from '../config.js';
+import { getConfig, getConfigPath, saveConfigAt, captureEnabled } from '../config.js';
 import { getAuth } from '../auth.js';
 import { slugify, setupProjectTools, SUPPORTED_TOOLS, DEFAULT_TOOLS, DEFAULT_SYNC_IGNORE, resolveProjectTools, type SupportedTool } from '../setup.js';
 import { AGENT_ADAPTERS } from '../agents/index.js';
 import { success, error as clrError, info, muted, bold, brand, warning } from '../colors.js';
-import { confirm } from '../utils.js';
+import { confirm, getAutoConfirm, rerunWithYes } from '../utils.js';
 import {
   scanForAdoption,
   adoptCurrentDir,
@@ -53,11 +53,11 @@ function resolveTools(forFlag: string | undefined): SupportedTool[] {
 
 /** Recording sessions needs this machine registered as a device. Best-effort:
  *  a failure only means sessions aren't recorded yet, so say so and move on. */
-async function pairForCapture(): Promise<void> {
+async function pairForCapture(log: (line: string) => void): Promise<void> {
   try {
     await ensureDevicePaired();
   } catch (err: any) {
-    console.log(warning(`Couldn't register this machine for session recording (${err.message}); run \`gipity init --capture\` again to retry.`));
+    log(warning(`Couldn't register this machine for session recording (${err.message}); run \`gipity init --capture\` again to retry.`));
   }
 }
 
@@ -71,6 +71,7 @@ export const initCommand = new Command('init')
     '--for <tools>',
     `Which AI tool primer files to write (comma-separated). Default: the tools detected on this machine. An explicit --for is remembered in .gipity.json, so later commands don't re-add the others. Choices: ${TOOL_KEYS.join(', ')}, all`,
   )
+  .option('--json', 'Output a structured result as JSON (confirmations need -y; notes go to stderr)')
   .addHelpText('after', `
 Examples:
   $ gipity init                          Link cwd as a new project (slug = dir name);
@@ -94,6 +95,19 @@ Working with an existing Gipity project:
         $ gipity sync                    Pull the project's files down.
 `)
   .action(async (name: string | undefined, opts) => {
+    // JSON mode: stdout carries only the final result object. Human progress
+    // lines are dropped, warnings go to stderr, and the y/N confirmations
+    // can't share stdout, so they need -y up front.
+    const json = !!opts.json;
+    const say = (line: string): void => { if (!json) console.log(line); };
+    const note = (line: string): void => { (json ? console.error : console.log)(line); };
+    const ask = async (question: string, def: 'yes' | 'no'): Promise<boolean> => {
+      if (!json) return confirm(question, { default: def });
+      if (getAutoConfirm()) return true;
+      console.error(clrError(`Confirmation required in --json mode: ${question}`));
+      console.error(`Re-run with --yes:\n  ${rerunWithYes()}`);
+      process.exit(1);
+    };
     // Resolve the requested tool primer set up front so a bad --for value
     // fails fast with a clear message instead of going through the catch.
     let tools: SupportedTool[];
@@ -130,7 +144,7 @@ Working with an existing Gipity project:
       // shadowed by a parent project's config the way walk-up commands are.
       if (existsSync(resolve(cwd, '.gipity.json'))) {
         const existing = getConfig();
-        console.log(`Already linked to ${info(`"${existing?.projectSlug ?? ''}"`)} ${muted(`(${existing?.projectGuid ?? ''})`)}`);
+        say(`Already linked to ${info(`"${existing?.projectSlug ?? ''}"`)} ${muted(`(${existing?.projectGuid ?? ''})`)}`);
         // Re-run setup in case primers/hooks/skills are missing - each tool's
         // integration self-gates on its binary and current-version state.
         setupProjectTools(tools);
@@ -161,11 +175,22 @@ Working with an existing Gipity project:
           }
           if (changed) saveConfigAt(cwd, existing);
         }
-        console.log(success(`Refreshed primer files: ${primerSummary}.`));
-        if (skippedNote) console.log(skippedNote);
+        if (json) {
+          if (opts.capture) await pairForCapture(note);
+          console.log(JSON.stringify({
+            linked: true, alreadyLinked: true, created: false,
+            project: { guid: existing?.projectGuid ?? null, slug: existing?.projectSlug ?? null },
+            dir: cwd, synced: 0,
+            primers: tools.map(t => t.key), skippedTools: skipped.map(t => t.key),
+            captureHooks: captureEnabled(existing ?? null),
+          }));
+          return;
+        }
+        say(success(`Refreshed primer files: ${primerSummary}.`));
+        if (skippedNote) say(skippedNote);
         if (opts.capture !== undefined) {
-          if (opts.capture) await pairForCapture();
-          console.log(success(`Session recording ${opts.capture ? 'enabled' : 'disabled'} for this project (captureHooks: ${opts.capture} in .gipity.json).`));
+          if (opts.capture) await pairForCapture(note);
+          say(success(`Session recording ${opts.capture ? 'enabled' : 'disabled'} for this project (captureHooks: ${opts.capture} in .gipity.json).`));
         }
         return;
       }
@@ -181,12 +206,9 @@ Working with an existing Gipity project:
       // Heads-up if this would create a project nested inside an existing one.
       const ancestorConfigPath = getConfigPath();
       if (ancestorConfigPath) {
-        console.log(muted(`Note: ${formatCwdLabel(dirname(ancestorConfigPath))} is already a Gipity project.`));
-        const ok = await confirm(
-          `Create a separate nested project at ${bold(formatCwdLabel(cwd))}?`,
-          { default: 'no' },
-        );
-        if (!ok) { console.log(muted('Aborted.')); process.exit(1); }
+        note(muted(`Note: ${formatCwdLabel(dirname(ancestorConfigPath))} is already a Gipity project.`));
+        const ok = await ask(`Create a separate nested project at ${bold(formatCwdLabel(cwd))}?`, 'no');
+        if (!ok) { say(muted('Aborted.')); process.exit(1); }
       }
 
       // Resolve project name. Server caps name at 100 chars; clamp so a very
@@ -210,11 +232,8 @@ Working with an existing Gipity project:
         process.exit(1);
       }
       if (scan.tier === 'moderate') {
-        const ok = await confirm(
-          `About to adopt ${bold(String(scan.files))} files (${bold(formatBytes(scan.bytes))}) at ${bold(formatCwdLabel(process.cwd()))}. Continue?`,
-          { default: 'yes' },
-        );
-        if (!ok) { console.log(muted('Aborted.')); process.exit(1); }
+        const ok = await ask(`About to adopt ${bold(String(scan.files))} files (${bold(formatBytes(scan.bytes))}) at ${bold(formatCwdLabel(process.cwd()))}. Continue?`, 'yes');
+        if (!ok) { say(muted('Aborted.')); process.exit(1); }
       }
 
       const accountSlug = await getAccountSlug();
@@ -223,16 +242,18 @@ Working with an existing Gipity project:
         projectName,
         projectSlug,
         accountSlug,
-        confirmDeletions: true,
+        // No y/N on stdout in JSON mode: a non-interactive sync fails safe
+        // (aborts rather than deleting) instead of asking.
+        confirmDeletions: !json,
         tools,
       });
 
       if (adopted.isNew) {
-        console.log(success(`Created project "${adopted.project.name}" (${adopted.project.slug})`));
+        say(success(`Created project "${adopted.project.name}" (${adopted.project.slug})`));
       } else {
-        console.log(`Found existing project ${info(`"${adopted.project.name}"`)} ${muted(`(${adopted.project.slug})`)}`);
+        say(`Found existing project ${info(`"${adopted.project.name}"`)} ${muted(`(${adopted.project.slug})`)}`);
       }
-      if (adopted.applied > 0) console.log(`Synced ${adopted.applied} change${adopted.applied > 1 ? 's' : ''} with Gipity.`);
+      if (adopted.applied > 0) say(`Synced ${adopted.applied} change${adopted.applied > 1 ? 's' : ''} with Gipity.`);
 
       // Session recording choice. Written after adopt so it lands in the
       // freshly created .gipity.json regardless of how the link happened.
@@ -245,20 +266,32 @@ Working with an existing Gipity project:
           saveConfigAt(cwd, cfg);
         } catch { /* config missing/unreadable - nothing to record */ }
       }
-      if (opts.capture) await pairForCapture();
+      if (opts.capture) await pairForCapture(note);
 
-      console.log(success(`Wrote primer files: ${primerSummary}.`));
-      if (skippedNote) console.log(skippedNote);
+      if (json) {
+        const cfg = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8'));
+        console.log(JSON.stringify({
+          linked: true, alreadyLinked: false, created: adopted.isNew,
+          project: { guid: adopted.project.short_guid, slug: adopted.project.slug, name: adopted.project.name },
+          dir: cwd, synced: adopted.applied,
+          primers: tools.map(t => t.key), skippedTools: skipped.map(t => t.key),
+          captureHooks: captureEnabled(cfg),
+        }));
+        return;
+      }
+
+      say(success(`Wrote primer files: ${primerSummary}.`));
+      if (skippedNote) say(skippedNote);
       if (wantsClaude) {
-        console.log(success(`Ready! Run your coding agent here (${AGENT_ADAPTERS.map(a => a.key).join(', ')}), or \`gipity build\` to launch one with a picker.`));
+        say(success(`Ready! Run your coding agent here (${AGENT_ADAPTERS.map(a => a.key).join(', ')}), or \`gipity build\` to launch one with a picker.`));
         // Say which way session recording is set - consent should be
         // explicit, not discovered later.
         const recording = JSON.parse(readFileSync(resolve(cwd, '.gipity.json'), 'utf-8')).captureHooks !== false;
-        console.log(muted(recording
+        say(muted(recording
           ? 'Claude Code sessions here are recorded to your Gipity project (Chats in your Gipity dashboard). Turn off: gipity init --no-capture.'
           : 'Claude Code sessions here are not recorded. To keep them in your Gipity project (Chats in your dashboard): gipity init --capture.'));
       } else {
-        console.log(success('Ready! Open this directory in your AI coding tool.'));
+        say(success('Ready! Open this directory in your AI coding tool.'));
       }
     } catch (err: any) {
       // `fetch failed: could not reach <origin> (<cause>)` is a DNS/connect

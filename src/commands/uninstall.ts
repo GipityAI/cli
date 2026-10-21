@@ -113,8 +113,16 @@ async function revokeDeviceBestEffort(): Promise<void> {
 export const uninstallCommand = new Command('uninstall')
   .description('Uninstall Gipity')
   .option('--yes', 'Skip confirmation prompts')
-  .action(async (opts: { yes?: boolean }) => {
+  .option('--json', 'Output a structured result as JSON (requires --yes)')
+  .action(async (opts: { yes?: boolean; json?: boolean }) => {
     const autoYes = opts.yes || getAutoConfirm();
+    // JSON mode can't share stdout with a y/N prompt, so it needs consent up front.
+    if (opts.json && !autoYes) {
+      console.error(clrError('uninstall --json needs --yes (there is no prompt in JSON mode).'));
+      process.exit(1);
+    }
+    // Human progress lines; silent in JSON mode, where one result object is printed at the end.
+    const say = (line: string): void => { if (!opts.json) console.log(line); };
     const gipityDir = join(homedir(), '.gipity');
     // Installs from install.sh / install.ps1 keep the launcher binary itself
     // under ~/.gipity/launcher/bin, so wiping ~/.gipity removes the binary too -
@@ -124,88 +132,102 @@ export const uninstallCommand = new Command('uninstall')
     const launcherBin = join(gipityDir, 'launcher', 'bin', 'gipity');
     const installedViaLauncher = existsSync(launcherBin);
 
-    console.log(`${bold('Gipity uninstall')} - this will:`);
-    console.log(`• Stop the running relay daemon (if any)`);
-    console.log(`• Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
-    console.log(`• Revoke this device on the server (best-effort)`);
-    console.log(`• Remove the Gipity Claude Code plugin enablement (all Gipity hooks)`);
-    console.log(`• Delete ${gipityDir}/${installedViaLauncher ? dim(' (includes the gipity launcher binary itself)') : ''}`);
-    if (installedViaLauncher) console.log(`• Remove the launcher PATH line from your shell startup files`);
-    console.log('');
+    say(`${bold('Gipity uninstall')} - this will:`);
+    say(`• Stop the running relay daemon (if any)`);
+    say(`• Remove the OS autostart service (launchd / systemd / Task Scheduler)`);
+    say(`• Revoke this device on the server (best-effort)`);
+    say(`• Remove the Gipity Claude Code plugin enablement (all Gipity hooks)`);
+    say(`• Delete ${gipityDir}/${installedViaLauncher ? dim(' (includes the gipity launcher binary itself)') : ''}`);
+    if (installedViaLauncher) say(`• Remove the launcher PATH line from your shell startup files`);
+    say('');
     if (installedViaLauncher) {
-      console.log(`${dim('The `gipity` launcher lives under ~/.gipity, so this removes the binary too - no separate `npm uninstall` needed.')}`);
+      say(`${dim('The `gipity` launcher lives under ~/.gipity, so this removes the binary too - no separate `npm uninstall` needed.')}`);
     } else {
-      console.log(`${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
+      say(`${dim('It will NOT remove the `gipity` binary. Run `npm uninstall -g gipity` afterward if you want that too.')}`);
     }
-    console.log('');
+    say('');
 
     if (!autoYes) {
       const ok = await confirm('Proceed?');
       if (!ok) {
-        console.log(`${muted('Cancelled.')}`);
+        say(`${muted('Cancelled.')}`);
         return;
       }
     }
 
     // 1. Stop daemon.
     await stopDaemon();
-    console.log(`${success('Daemon stopped.')}`);
+    say(`${success('Daemon stopped.')}`);
 
     // 2. Remove OS service.
     const svc = removeServiceUnit();
-    if (svc.ran && svc.ok) console.log(`${success('Autostart service removed.')} ${svc.note ? dim(`(${svc.note})`) : ''}`);
-    else if (svc.ran) console.log(`${muted('Autostart service not installed or already gone.')}`);
-    else console.log(`${muted(svc.note ?? 'Autostart skipped.')}`);
+    if (svc.ran && svc.ok) say(`${success('Autostart service removed.')} ${svc.note ? dim(`(${svc.note})`) : ''}`);
+    else if (svc.ran) say(`${muted('Autostart service not installed or already gone.')}`);
+    else say(`${muted(svc.note ?? 'Autostart skipped.')}`);
 
     // 3. Revoke device on server.
     await revokeDeviceBestEffort();
-    console.log(`${success('Device revoked on server (or was already revoked).')}`);
+    say(`${success('Device revoked on server (or was already revoked).')}`);
 
     // 4. Remove each detected agent's Gipity integration: the Claude Code
     //    plugin enablement + legacy hook blocks, the Grok plugin, and the
     //    skills the CLI copied into Codex's/Antigravity's skill roots. Every
     //    step is best-effort - none existing is the common case.
-    let anyAgentIntegration = false;
+    const agentNotes: string[] = [];
     for (const agent of AGENT_ADAPTERS) {
       const note = agent.setup?.uninstall();
       if (note) {
-        console.log(`${success(note)}`);
-        anyAgentIntegration = true;
+        say(`${success(note)}`);
+        agentNotes.push(note);
       }
     }
-    if (!anyAgentIntegration) {
-      console.log(`${muted('No Gipity entries in any detected coding agent.')}`);
+    if (!agentNotes.length) {
+      say(`${muted('No Gipity entries in any detected coding agent.')}`);
     }
 
     // 5. Wipe ~/.gipity/ (this also removes the agent-hooks scripts and the
     //    agent-skills manifest, which live under it).
+    let gipityDirRemoved = false;
     if (existsSync(gipityDir)) {
       try {
         rmSync(gipityDir, { recursive: true, force: true });
-        console.log(`${success(`Removed ${gipityDir}/`)}`);
+        gipityDirRemoved = true;
+        say(`${success(`Removed ${gipityDir}/`)}`);
       } catch (err: any) {
         console.error(`${clrError(`Could not remove ${gipityDir}: ${err?.message || err}`)}`);
       }
     } else {
-      console.log(`${muted(`${gipityDir}/ already gone.`)}`);
+      say(`${muted(`${gipityDir}/ already gone.`)}`);
     }
 
     // 6. Strip the launcher PATH line the installer added to shell rc files, so
     //    we don't leave a dangling entry pointing at the dir we just deleted.
     const touchedRc = removeInstallerPathLines();
+    if (opts.json) {
+      console.log(JSON.stringify({
+        success: true,
+        autostartService: svc.ran ? (svc.ok ? 'removed' : 'not_installed') : 'skipped',
+        agentIntegrationsRemoved: agentNotes,
+        gipityDir,
+        gipityDirRemoved,
+        shellRcFilesUpdated: touchedRc,
+        binaryRemoved: installedViaLauncher,
+      }));
+      return;
+    }
     if (touchedRc.length) {
-      console.log(`${success('Removed the launcher PATH line from')} ${dim(touchedRc.map(tildify).join(', '))}`);
+      say(`${success('Removed the launcher PATH line from')} ${dim(touchedRc.map(tildify).join(', '))}`);
     }
 
-    console.log('');
-    console.log(`${success('Uninstall complete.')}`);
+    say('');
+    say(`${success('Uninstall complete.')}`);
     if (installedViaLauncher) {
-      console.log(`${dim('The launcher binary was under ~/.gipity and is now gone - nothing left to remove.')}`);
+      say(`${dim('The launcher binary was under ~/.gipity and is now gone - nothing left to remove.')}`);
     } else {
-      console.log(`${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the `gipity` binary too.')}`);
+      say(`${dim('Run')} ${brand('npm uninstall -g gipity')} ${dim('to remove the `gipity` binary too.')}`);
     }
     // The current shell caches the removed binary's path in its command hash, so
     // the next `gipity` here reports "No such file or directory" until it's
     // cleared. A new terminal always fixes it; `hash -r` fixes this one.
-    console.log(`${dim('Open a new terminal - or run')} ${brand('hash -r')} ${dim('in this one - so your shell forgets the removed binary’s path.')}`);
+    say(`${dim('Open a new terminal - or run')} ${brand('hash -r')} ${dim('in this one - so your shell forgets the removed binary’s path.')}`);
   });

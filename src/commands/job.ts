@@ -292,6 +292,7 @@ jobCommand
   .description('Run the job in a local Docker container against your local filesystem (no platform round-trip)')
   .option('--image <image>', 'Docker image to run inside', 'easyclaw/sandbox:latest')
   .option('--no-deps', 'Skip pip/npm install even if a deps file is present')
+  .option('--json', "Capture the job's output and print one JSON result (exitCode, stdout, stderr) instead of streaming it")
   .action(async (name: string, opts) => {
     const { existsSync, statSync } = await import('node:fs');
     const { resolve, join } = await import('node:path');
@@ -347,7 +348,13 @@ jobCommand
     }
 
     const runArgs = ['run', ...sharedArgs, '--entrypoint', 'sh', opts.image, '-c', shellCmd];
-    const child = spawnCommand('docker', runArgs, { stdio: 'inherit' });
+    const startedAt = Date.now();
+    const child = spawnCommand('docker', runArgs, { stdio: opts.json ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
+    const captured = { stdout: '', stderr: '' };
+    if (opts.json) {
+      child.stdout?.on('data', (d: Buffer) => { captured.stdout += d.toString(); });
+      child.stderr?.on('data', (d: Buffer) => { captured.stderr += d.toString(); });
+    }
     // A missing `docker` binary is reported asynchronously via 'error' (not a
     // throw), so a try/catch can't stop it - without this handler Node crashes
     // with a raw stack trace instead of a clear message.
@@ -357,7 +364,16 @@ jobCommand
         : `Failed to launch docker: ${err.message}`));
       process.exit(1);
     });
-    child.on('exit', (code) => {
+    // 'close' (not 'exit') so the captured pipes are fully drained in JSON mode.
+    child.on('close', (code) => {
+      if (opts.json) {
+        console.log(JSON.stringify({
+          name, runtime: picked.runtime, image: opts.image,
+          exitCode: code, durationMs: Date.now() - startedAt,
+          stdout: captured.stdout, stderr: captured.stderr,
+        }));
+        process.exit(code ?? 1);
+      }
       if (code === 0) console.error(muted(`[run-local] ${success('done')}`));
       else console.error(muted(`[run-local] ${clrError('failed')} (exit ${code})`));
       process.exit(code ?? 1);

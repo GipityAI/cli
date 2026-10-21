@@ -203,7 +203,7 @@ gipity push <file>   # Push one or more files
 
 Run `gipity --help` for the full list, and `gipity <command> --help` for details.
 
-Most commands support `--json` for scripted/programmatic use.
+All commands support `--json` for scripted/programmatic use, except `gipity build`, which hands the terminal to your coding agent.
 
 ### deploy
 

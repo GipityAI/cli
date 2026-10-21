@@ -1639,19 +1639,22 @@ function cleanupEmptyDirs(root: string, emptiedDirs: Set<string>): void {
 
 // ─── Single-file push (used by `gipity push <file>`) ───────────
 
-export async function pushFile(filePath: string): Promise<void> {
+/** Returns false when the path is out of sync scope (ignored, a symlink, gone,
+ *  or a local copy of an app upload) and nothing was uploaded. */
+
+export async function pushFile(filePath: string): Promise<boolean> {
   const config = requireConfig();
   const root = projectDir();
   const rel = relative(root, filePath).replace(/\\/g, '/');
-  if (shouldIgnore(rel, effectiveIgnore(root, config.ignore))) return;
+  if (shouldIgnore(rel, effectiveIgnore(root, config.ignore))) return false;
 
   // Skip symlinks (FIX M6b): `walkLocal` (the full-sync scanner) ignores symlink
   // dirents, so if the push path followed a link and uploaded it, the next full
   // sync would see a remote path with no local counterpart and plan delete-remote
   // - churn, and eventual remote loss. Both sides must agree symlinks are out of
   // scope. lstat (not stat) so we inspect the link itself, not its target.
-  try { if (lstatSync(filePath).isSymbolicLink()) return; }
-  catch { return; /* gone/unreadable - nothing to push */ }
+  try { if (lstatSync(filePath).isSymbolicLink()) return false; }
+  catch { return false; /* gone/unreadable - nothing to push */ }
 
   // Serialize against `gipity sync` and other concurrent pushes by holding the
   // same per-project lock `sync()` uses. Both paths read-modify-write the shared
@@ -1666,7 +1669,7 @@ export async function pushFile(filePath: string): Promise<void> {
     const baseline = readBaseline(config.projectGuid);
     // A leftover local copy of an app upload is not source: never push it back
     // over the user's upload (same rule as the full sync).
-    if (baseline.appUploads?.includes(rel)) return;
+    if (baseline.appUploads?.includes(rel)) return false;
     const baseEntry = baseline.files[rel];
     const result = await uploadOneFile(config.projectGuid, filePath, rel, {
       expectedServerVersion: baseEntry ? baseEntry.serverVersion : null,
@@ -1678,6 +1681,7 @@ export async function pushFile(filePath: string): Promise<void> {
       sha256, serverVersion: result.serverVersion,
     };
     writeBaseline(baseline);
+    return true;
   } catch (err) {
     if (err instanceof UploadConflictError) {
       throw new Error(
