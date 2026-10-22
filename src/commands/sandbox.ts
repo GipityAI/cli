@@ -2,9 +2,9 @@ import { Command, Option } from 'commander';
 import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync } from 'fs';
 import { dirname, extname, relative, resolve, sep } from 'path';
 import { post } from '../api.js';
-import { resolveProjectContext, getConfigPath, getProjectRoot, shouldIgnore } from '../config.js';
+import { resolveProjectContext, getConfigPath, getProjectRoot, shouldIgnore, requireConfig } from '../config.js';
 import { SCRATCH_IGNORE } from '../setup.js';
-import { sync } from '../sync.js';
+import { sync, localEmptyDirs, effectiveIgnore } from '../sync.js';
 import { error as clrError, dim } from '../colors.js';
 import { run, parseDuration } from '../helpers/index.js';
 import { createProgressReporter, withSpinner } from '../progress.js';
@@ -240,6 +240,9 @@ export function isWriteTarget(code: string, p: string): boolean {
   const afterInputFlag = /(?:^|[\s'"`])(?:-i|--input)[= ]\s*['"`]?$/.test(before);
   return cmd === 'ffmpeg' && !afterInputFlag;
 }
+
+/** Most empty local directories sent with one run (matches the server cap). */
+const MAX_INPUT_DIRS = 500;
 
 /** Project-relative path from the process cwd, or undefined when there's
  *  no local config (one-off mode) or the cwd is at/above the project root. */
@@ -489,8 +492,15 @@ GCC/Rust).
     // namespaces above, which sync ignores and so the mirror never carries.
     // Bidirectional + CAS, so it's a cheap manifest check when nothing changed.
     // Symmetric with the post-run pull below. Skip in one-off mode (no project).
+    // Sync carries files only, so a directory the caller just made locally
+    // (`mkdir -p docs`) and hasn't put a file in yet would be missing from /work.
+    // Send those directories so the run sees the same layout (cli#208).
+    let inputDirs: string[] | undefined;
     if (getConfigPath()) {
       await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });
+      const root = dirname(getConfigPath()!);
+      const dirs = localEmptyDirs(root, effectiveIgnore(root, requireConfig().ignore));
+      if (dirs.length) inputDirs = dirs.slice(0, MAX_INPUT_DIRS);
     }
 
     type SandboxResponse = {
@@ -517,6 +527,7 @@ GCC/Rust).
       language,
       timeout: isNaN(timeout) ? 30 : timeout,
       input_files: opts.input,
+      input_dirs: inputDirs,
       cwd,
       // The filter must run SERVER-side (in the output extractor): skipping
       // only in the CLI would still write the files into project storage and

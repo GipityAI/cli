@@ -614,8 +614,8 @@ echo '{"ok":true}'
 
   let recordId = '';
 
-  it('records list shows the table declared in gipity.yaml', () => {
-    const t = cliJson<any[]>(['records', 'list', '--json']);
+  it('records tables shows the table declared in gipity.yaml', () => {
+    const t = cliJson<any[]>(['records', 'tables', '--json']);
     const row = t.find((x) => x.table_name === TABLE);
     assert.ok(row, `table ${TABLE} not configured: ${JSON.stringify(t)}`);
     assert.equal(row.auth_level, 'member');
@@ -641,8 +641,8 @@ echo '{"ok":true}'
     assert.equal(u.name, 'beta');
   });
 
-  it('records query finds the record', () => {
-    const q = cliJson(['records', 'query', TABLE, '--filter', 'name:eq:beta', '--json']);
+  it('records list finds the record', () => {
+    const q = cliJson(['records', 'list', TABLE, '--filter', 'name:eq:beta', '--json']);
     assert.equal(q.meta.total, 1);
     assert.equal(String(q.data[0].id), recordId);
   });
@@ -656,11 +656,11 @@ echo '{"ok":true}'
 
   it('records delete soft-deletes and restore brings it back', () => {
     cliJson(['-y', 'records', 'delete', TABLE, recordId, '--json']);
-    const bin = cliJson(['records', 'query', TABLE, '--only-deleted', '--json']);
+    const bin = cliJson(['records', 'list', TABLE, '--only-deleted', '--json']);
     assert.ok(bin.data.some((r: any) => String(r.id) === recordId), 'row not in the recycle bin');
 
     cliJson(['records', 'restore', TABLE, recordId, '--json']);
-    const live = cliJson(['records', 'query', TABLE, '--json']);
+    const live = cliJson(['records', 'list', TABLE, '--json']);
     assert.ok(live.data.some((r: any) => String(r.id) === recordId), 'restored row not live');
 
     const p = cliJson(['-y', 'records', 'delete', TABLE, recordId, '--purge', '--json']);

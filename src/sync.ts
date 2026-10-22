@@ -371,6 +371,48 @@ export function walkLocal(
   return result;
 }
 
+/**
+ * Directories in the local tree that hold no syncable file at any depth. Sync
+ * carries files, not directories, so these never reach the server and the
+ * sandbox auto-mirror can't recreate them in /work: an agent that runs
+ * `mkdir -p docs` locally and then writes `docs/report.pdf` from a sandbox run
+ * would hit "No such file or directory" (cli#208). `gipity sandbox run` sends
+ * this list so the run starts with the same directory layout. Same ignore rules
+ * and nested-project boundary as walkLocal.
+ */
+export function localEmptyDirs(root: string, ignorePatterns: string[]): string[] {
+  const empty: string[] = [];
+  // Returns true when `dir` (or anything under it) holds a syncable file.
+  function walk(dir: string): boolean {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return true; // unreadable: don't claim it is empty
+    }
+    let hasFile = false;
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      const rel = relative(root, full).replace(/\\/g, '/');
+      if (shouldIgnore(rel, ignorePatterns)) continue;
+      if (entry.isDirectory()) {
+        // Directory patterns (`tmp/`, `.gipity/`) match what's inside, so ask
+        // with the trailing slash too, or the scratch dirs themselves leak in.
+        if (shouldIgnore(rel + '/', ignorePatterns) || shouldIgnore(rel + '/x', ignorePatterns)) continue;
+        if (existsSync(join(full, CONFIG_FILE))) continue;
+        if (walk(full)) hasFile = true;
+        else empty.push(rel);
+      } else if (entry.isFile()) {
+        hasFile = true;
+      }
+    }
+    return hasFile;
+  }
+  walk(root);
+  // Keep only the deepest empty dirs: `a/b/c` implies `a/b` and `a`.
+  return empty.filter(d => !empty.some(o => o.startsWith(d + '/'))).sort();
+}
+
 async function ensureLocalHashes(
   root: string, local: Map<string, LocalFileInfo>, paths: Iterable<string>,
 ): Promise<void> {

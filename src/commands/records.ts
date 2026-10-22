@@ -44,10 +44,10 @@ async function recordsHttp(opts: { anon?: boolean }) {
 }
 
 recordsCommand
-  .command('list')
-  .description('List record tables')
+  .command('tables')
+  .description('List the tables exposed through Gipity Records')
   .option('--json', 'Output as JSON')
-  .action((opts) => run('List', async () => {
+  .action((opts) => run('Tables', async () => {
     const config = requireConfig();
     const res = await get<{ data: any[] }>(`/api/${config.projectGuid}/records-config`);
 
@@ -105,8 +105,8 @@ recordsCommand
   }));
 
 recordsCommand
-  .command('query <table>')
-  .description('List records (full-text search, filter, sort, recycle bin)')
+  .command('list <table>')
+  .description('List a table\'s records (full-text search, filter, sort, recycle bin)')
   .option('-q, --q <text>', 'Full-text search across the table\'s text columns (needs `--searchable true` on the table)')
   .option('--filter <filter>', 'AND filter string, "col:op:value" comma-joined. Ops: eq, neq, gt, gte, lt, lte, like, ilike, in (pipe-separated values), is_null, not_null. Full grammar: gipity skill read app-records')
   .option('--any <filter>', 'OR filter group, same grammar and ops as --filter (e.g., "owner:eq:me,shared:eq:true")')
@@ -118,7 +118,7 @@ recordsCommand
   .option('--only-deleted', 'Only soft-deleted rows - the recycle bin (owner/editor)')
   .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
-  .action((table: string, opts) => run('Query', async () => {
+  .action((table: string, opts) => run('List', async () => {
     const api = await recordsHttp(opts);
     const params = new URLSearchParams();
     if (opts.q) params.set('q', opts.q);
@@ -230,7 +230,7 @@ recordsCommand
     printResult(
       data.purged
         ? 'Purged - the row and its audit history are gone.'
-        : `Deleted. If "${table}" declares a soft-delete column the row is only stamped deleted (see it with \`gipity records query ${table} --only-deleted\`, bring it back with \`gipity records restore ${table} ${id}\`, remove it for good with \`--purge\`).`,
+        : `Deleted. If "${table}" declares a soft-delete column the row is only stamped deleted (see it with \`gipity records list ${table} --only-deleted\`, bring it back with \`gipity records restore ${table} ${id}\`, remove it for good with \`--purge\`).`,
       opts, data,
     );
   }));

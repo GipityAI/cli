@@ -18,13 +18,13 @@ function fresh(args: string[]) {
 // All records commands hit the app API (/api/<guid>/records/...), the only
 // records surface that exists server-side. (The old /projects/<guid>/records-*
 // paths never existed and 404'd.)
-test('gipity records list shows configured tables', async () => {
+test('gipity records tables shows configured tables', async () => {
   mock.reset();
   mock.on('GET /api/p_TestProj/records-config', { body: { data: [
     { table_name: 'incidents', auth_level: 'user', primary_key_column: 'id', database_name: 'main' },
     { table_name: 'comments',  auth_level: 'public', primary_key_column: 'id', database_name: 'main' },
   ] } });
-  const r = await fresh(['records', 'list']);
+  const r = await fresh(['records', 'tables']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /incidents/);
   assert.match(r.stdout, /pk=id/);
@@ -79,13 +79,13 @@ test('gipity records config <table> with no flags shows current config', async (
   assert.match(r.stdout, /member/);
 });
 
-test('gipity records query <table> prints total + rows as JSON lines', async () => {
+test('gipity records list <table> prints total + rows as JSON lines', async () => {
   mock.reset();
   mock.on('GET /api/p_TestProj/records/incidents', { body: {
     data: [{ id: 1, title: 'Disk full' }, { id: 2, title: 'Auth bug' }],
     meta: { total: 2 },
   } });
-  const r = await fresh(['records', 'query', 'incidents']);
+  const r = await fresh(['records', 'list', 'incidents']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /2 total records/);
   assert.match(r.stdout, /Disk full/);
@@ -95,14 +95,14 @@ test('gipity records query <table> prints total + rows as JSON lines', async () 
 // The CLI must cover the whole documented query surface (q / any / recycle
 // bin), not just filter+sort - otherwise verifying `searchable: true` or a
 // soft delete from the CLI is impossible and the agent hand-rolls HTTP.
-test('gipity records query passes -q, --any and the recycle-bin flags through', async () => {
+test('gipity records list passes -q, --any and the recycle-bin flags through', async () => {
   mock.reset();
   let seen = '';
   mock.on('GET /api/p_TestProj/records/incidents', (req: any) => {
     seen = req.url;
     return { body: { data: [{ id: 1, title: 'Disk full' }], meta: { total: 1 } } };
   });
-  const r = await fresh(['records', 'query', 'incidents', '-q', 'disk', '--any', 'a:eq:1,b:eq:2', '--only-deleted']);
+  const r = await fresh(['records', 'list', 'incidents', '-q', 'disk', '--any', 'a:eq:1,b:eq:2', '--only-deleted']);
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stderr, /unknown option/);
   assert.match(seen, /q=disk/);
@@ -110,16 +110,34 @@ test('gipity records query passes -q, --any and the recycle-bin flags through', 
   assert.match(seen, /only_deleted=1/);
 });
 
-test('gipity records query --include-deleted sets include_deleted=1', async () => {
+test('gipity records list --include-deleted sets include_deleted=1', async () => {
   mock.reset();
   let seen = '';
   mock.on('GET /api/p_TestProj/records/incidents', (req: any) => {
     seen = req.url;
     return { body: { data: [], meta: { total: 0 } } };
   });
-  const r = await fresh(['records', 'query', 'incidents', '--include-deleted']);
+  const r = await fresh(['records', 'list', 'incidents', '--include-deleted']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(seen, /include_deleted=1/);
+});
+
+// cli#209: `list` takes the table positionally, like create/update/delete/history.
+test('gipity records list <table> --json prints the rows (same table shape as its siblings)', async () => {
+  mock.reset();
+  mock.on('GET /api/p_TestProj/records/games', { body: { data: [{ id: 1, title: 'Catan' }], meta: { total: 1 } } });
+  const r = await fresh(['records', 'list', 'games', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.meta.total, 1);
+  assert.equal(out.data[0].title, 'Catan');
+});
+
+test('gipity records list with no table says the table is required', async () => {
+  mock.reset();
+  const r = await fresh(['records', 'list']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /missing required argument 'table'/);
 });
 
 test('gipity records get <table> <id> prints record JSON', async () => {
@@ -212,7 +230,7 @@ test('gipity records history <table> with no id reads the table-wide feed', asyn
 
 // --anon exercises the signed-out visitor path: an app token is minted and no
 // owner Authorization header is sent.
-test('gipity records query --anon mints an app token and sends no owner auth', async () => {
+test('gipity records list --anon mints an app token and sends no owner auth', async () => {
   mock.reset();
   let sawAuthHeader: unknown = 'unset';
   mock.on('POST /api/token', { body: { data: { token: 'app_tok_123' } } });
@@ -221,7 +239,7 @@ test('gipity records query --anon mints an app token and sends no owner auth', a
     assert.equal(req.headers['x-app-token'], 'app_tok_123');
     return { body: { data: [{ id: 1, title: 'Public row' }], meta: { total: 1 } } };
   });
-  const r = await fresh(['records', 'query', 'incidents', '--anon']);
+  const r = await fresh(['records', 'list', 'incidents', '--anon']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(sawAuthHeader, null, 'anonymous call must not carry the owner Bearer token');
   assert.match(r.stdout, /Public row/);

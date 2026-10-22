@@ -740,3 +740,27 @@ test('gipity sandbox run rejects --code plus a positional arg', async () => {
   assert.match(r.stderr, /either positionally or via --code/);
   assert.equal(mock.requests().length, 0, 'must fail before any API call');
 });
+
+// cli#208: sync carries files only, so a directory made locally with nothing in
+// it never reached /work and a run writing into it failed. The run now sends
+// the empty local dirs (deepest only; ignored and scratch dirs left out).
+test('gipity sandbox run sends empty local directories as input_dirs', async () => {
+  resetMock();
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(d, 'docs'), { recursive: true });
+  mkdirSync(join(d, 'out', 'charts'), { recursive: true });
+  mkdirSync(join(d, 'src'), { recursive: true });
+  writeFileSync(join(d, 'src', 'index.html'), '<p>hi</p>');
+  mkdirSync(join(d, 'tmp', 'scratch'), { recursive: true });
+  mkdirSync(join(d, 'node_modules', 'x'), { recursive: true });
+  mock.on('PUT /projects/p_TestProj/files/content', { body: { data: { serverVersion: 1 } } });
+  mock.on('POST /projects/p_TestProj/files/upload', { body: { data: {} } });
+  let sent: unknown = 'unset';
+  mock.on('POST /projects/p_TestProj/sandbox/execute', async (req) => {
+    sent = (req.body as { input_dirs?: string[] }).input_dirs;
+    return { body: { data: { exitCode: 0, stdout: '', stderr: '', durationMs: 5, timedOut: false } } };
+  });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'sandbox', 'run', '--language', 'bash', 'true'], { env: { HOME: home }, cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(sent, ['docs', 'out/charts']);
+});
