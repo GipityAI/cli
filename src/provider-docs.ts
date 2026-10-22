@@ -62,6 +62,8 @@ export const IMAGE_GEMINI_ASPECT_RATIO_IDS = [
 
 export const IMAGE_GEMINI_SIZES = `512, 1K, 2K, 4K`;
 
+export const IMAGE_GEMINI_SIZES_BY_MODEL = `gemini-nano-banana-2.1 (1K, 2K, 4K); gemini-3.1-flash-lite-image (1K); gemini-2.5-flash-image (1K); gemini-3.1-flash-image (512, 1K, 2K, 4K); gemini-3-pro-image (1K, 2K, 4K)`;
+
 export const IMAGE_GEMINI_SIZE_IDS = [
   '512',
   '1K',
@@ -111,7 +113,7 @@ export const IMAGE_TIER_ALIAS_IDS = [
 
 export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-6-luna (cheapest, 1M context), gpt-6.1-sol (balanced). Anthropic: claude-haiku-5-5 (cheapest, 1M context). Gemini: gemini-3.1-flash-lite (cheapest), gemini-3.5-flash-lite (1M context)`;
 
-export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini, openrouter`;
+export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini, openrouter, gipity`;
 
 export const OPENAI_TTS_VOICES_DOC = `alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse`;
 
