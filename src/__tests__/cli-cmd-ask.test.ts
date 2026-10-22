@@ -112,3 +112,32 @@ test('buildAskPrompt joins the question and files', () => {
   assert.equal(buildAskPrompt([], [{ path: '-', content: 'x\n' }]), 'x');
   assert.equal(buildAskPrompt(['q'], [{ path: 'f.txt', content: 'y' }]), 'q\n\n--- f.txt ---\ny');
 });
+
+test('gipity ask waits out MODEL_WARMING once, then prints the answer', async () => {
+  mock.reset();
+  let calls = 0;
+  mock.on(ASK_URL, () => {
+    calls++;
+    return calls === 1
+      ? { status: 503, body: { error: { code: 'MODEL_WARMING', message: 'The model is loading.', retry_after_s: 0 } } }
+      : { body: ANSWER };
+  });
+  const r = await ask(['hi', '--model', 'gipity-qwen3.6-35b']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(calls, 2);
+  assert.match(r.stderr, /model is loading; retrying in 0s/);
+  assert.equal(r.stdout.trim(), '425 means Too Early.');
+});
+
+test('gipity ask gives up after one warm retry', async () => {
+  mock.reset();
+  let calls = 0;
+  mock.on(ASK_URL, () => {
+    calls++;
+    return { status: 503, body: { error: { code: 'MODEL_WARMING', message: 'The model is loading.', retry_after_s: 0 } } };
+  });
+  const r = await ask(['hi', '--model', 'gipity-qwen3.6-35b']);
+  assert.notEqual(r.status, 0);
+  assert.equal(calls, 2);
+  assert.match(r.stderr, /model is loading/);
+});

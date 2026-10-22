@@ -27,6 +27,7 @@ import { sandboxCommand } from './commands/sandbox.js';
 import { projectCommand } from './commands/project.js';
 import { workflowCommand } from './commands/workflow.js';
 import { creditsCommand } from './commands/credits.js';
+import { accountCommand } from './commands/account.js';
 import { fileCommand } from './commands/file.js';
 import { storageCommand } from './commands/storage.js';
 import { buildCommand, claudeCommand } from './commands/build.js';
@@ -155,7 +156,7 @@ const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCo
 const servicesGroup  = [serviceCommand, generateCommand, askCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
 const utilitiesGroup = [sandboxCommand, emailCommand, gmailCommand, locationCommand, textCommand, bugCommand];
-const connectGroup   = [loginCommand, logoutCommand, buildCommand, githubCommand, creditsCommand, doctorCommand, updateCommand, uninstallCommand];
+const connectGroup   = [loginCommand, logoutCommand, buildCommand, githubCommand, creditsCommand, accountCommand, doctorCommand, updateCommand, uninstallCommand];
 
 const HELP_SECTIONS: Array<{ title: string; cmds: Command[] }> = [
   { title: 'Start here',        cmds: startGroup },
@@ -185,6 +186,7 @@ const SKILL_DOCS: Record<string, string> = {
   fn: 'app-development',
   notify: 'app-notify',
   payments: 'app-payments',
+  account: 'plans',
   records: 'app-records',
   key: 'app-auth',
   secrets: 'app-function-services',

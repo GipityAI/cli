@@ -179,7 +179,7 @@ gipity push <file>   # Push one or more files
 | `gipity approval` | List, create, answer, or cancel pending approvals |
 | `gipity memory` | Read/write project memory used by workflow llm steps |
 | `gipity ask "<question>"` | Ask a model one question and print the answer |
-| `gipity generate` | Generate images, video, speech, sound effects, or music |
+| `gipity generate` | Generate images, video, speech, sound effects, or music; `generate models`, `status`, `cancel` and `list` for queued Gipity GPU images |
 | `gipity service` | Call an app service (llm, tts, image, transcribe, ...) |
 | `gipity notify` | Send a test web push notification, count or remove subscriptions |
 | `gipity payments` | Connect Stripe to charge your users |

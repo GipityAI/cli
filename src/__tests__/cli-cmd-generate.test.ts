@@ -324,3 +324,197 @@ test('generate music rejects --lyrics with --lyrics-file before any request', as
   assert.equal(mock.requests().filter(q => q.url.includes('/generate/')).length, 0,
     'the conflict must be caught before a paid generation request leaves the machine');
 });
+
+// ── Queued (async) image generations: Gipity GPU models ─────────────────
+
+const GENS = '/projects/p_TestProj/generate/image/generations';
+
+function gen(over: Record<string, unknown> = {}) {
+  return {
+    id: 'gen_aaaa1111', object: 'image.generation', status: 'queued', model: 'gipity-krea2-realistic',
+    prompt: 'a red canoe', seed: 42, width: 832, height: 1216, metadata: null,
+    queue_position: 3, eta_ms: 95_000, phase: null, step: null, total: null, progress: 0,
+    outputs: null, error: null, credits_charged: null, created_at: '2026-10-22T10:00:00Z', started_at: null, finished_at: null,
+    ...over,
+  };
+}
+
+function done(id: string, url: string, over: Record<string, unknown> = {}) {
+  return gen({
+    id, status: 'succeeded', queue_position: null, eta_ms: null, progress: 1, credits_charged: 8,
+    outputs: { full: { url, mime: 'image/jpeg', bytes: 12, width: 832, height: 1216 } }, ...over,
+  });
+}
+
+/** Run with a fast poll so the wait loop doesn't slow the suite. */
+function freshFast(dir: string, args: string[]) {
+  return runCliAsync(['--api-base', mock.apiBase, ...args], { env: { HOME: home, GIPITY_GENERATE_POLL_MS: '10' }, cwd: dir });
+}
+
+test('gipity generate image with a gipity-* model queues, waits through the states, and saves the file', async () => {
+  mock.reset();
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('\x00\x10JFIF\x00')]);
+  mock.on(`POST ${GENS}`, { status: 202, body: { data: [gen()] } });
+  const states = [
+    gen({ queue_position: 1 }),
+    gen({ status: 'running', queue_position: null, phase: 'sampling', step: 4, total: 8, progress: 0.5 }),
+    done('gen_aaaa1111', `${mock.apiBase}/files/canoe.jpg`),
+  ];
+  let polls = 0;
+  mock.on(`GET ${GENS}`, () => ({ body: { data: [states[Math.min(polls++, states.length - 1)]] } }));
+  mock.on('GET /files/canoe.jpg', { contentType: 'image/jpeg', raw: jpeg });
+
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'image', 'a red canoe', '--model', 'gipity-krea2-realistic', '--aspect', 'portrait', '--seed', '42']);
+  assert.equal(r.status, 0, r.stderr);
+
+  const submit = mock.requests().find((q) => q.method === 'POST' && q.url === GENS)!;
+  assert.deepEqual(submit.body, { model: 'gipity-krea2-realistic', prompt: 'a red canoe', aspect: 'portrait', seed: 42 });
+  // Non-TTY: one plain line per state change, never a \r redraw.
+  assert.match(r.stdout, /queued: 2 ahead, about 2 min/);
+  assert.match(r.stdout, /queued: next up, about 2 min/);
+  assert.match(r.stdout, /rendering 4\/8/);
+  assert.doesNotMatch(r.stdout, /\r/);
+  assert.match(r.stdout, /Generated with gipity\/gipity-krea2-realistic/);
+  assert.match(r.stdout, /credits: 8/);
+  assert.match(r.stdout, /Saved gen_aaaa1111 to \/.*\/generated\.jpg/);
+  assert.equal(readFileSync(join(dir, 'generated.jpg'))[0], 0xff);
+  // The sync image route was never used for a queued model.
+  assert.equal(mock.requests().some((q) => q.url === '/projects/p_TestProj/generate/image'), false);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity generate image --n 2 -o numbers the files and sends n', async () => {
+  mock.reset();
+  mock.on(`POST ${GENS}`, { status: 202, body: { data: [gen({ id: 'gen_one11111' }), gen({ id: 'gen_two22222', seed: 43 })] } });
+  mock.on(`GET ${GENS}`, { body: { data: [
+    done('gen_one11111', `${mock.apiBase}/files/a.jpg`),
+    done('gen_two22222', `${mock.apiBase}/files/b.jpg`, { seed: 43 }),
+  ] } });
+  mock.on('GET /files/a.jpg', { contentType: 'image/jpeg', raw: Buffer.from([0xff, 0xd8, 0xff, 0x01]) });
+  mock.on('GET /files/b.jpg', { contentType: 'image/jpeg', raw: Buffer.from([0xff, 0xd8, 0xff, 0x02]) });
+
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'image', 'canoes', '--model', 'gipity-krea2-realistic', '--n', '2', '-o', 'out/canoe.jpg']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal((mock.requests().find((q) => q.method === 'POST')!.body as any).n, 2);
+  assert.match(r.stdout, /Saved gen_one11111 to \/.*\/out\/canoe-1\.jpg/);
+  assert.match(r.stdout, /Saved gen_two22222 to \/.*\/out\/canoe-2\.jpg/);
+  assert.equal(readFileSync(join(dir, 'out', 'canoe-2.jpg'))[3], 0x02);
+  assert.match(r.stdout, /credits: 16/);
+});
+
+test('gipity generate image --no-wait queues, prints ids and how to check, and never polls', async () => {
+  mock.reset();
+  mock.on(`POST ${GENS}`, { status: 202, body: { data: [gen()] } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'image', 'a red canoe', '--model', 'gipity-krea2-realistic', '--no-wait', '--ref', 'gen_prev1111', '--nsfw', '--avoid', 'blur', '--format', 'png']);
+  assert.equal(r.status, 0, r.stderr);
+  const body = mock.requests().find((q) => q.method === 'POST')!.body as any;
+  assert.deepEqual(body.references, ['gen_prev1111']);
+  assert.equal(body.nsfw, true);
+  assert.equal(body.avoid, 'blur');
+  assert.equal(body.format, 'png');
+  assert.match(r.stdout, /gen_aaaa1111\s+queued: 2 ahead/);
+  assert.match(r.stdout, /gipity generate status gen_aaaa1111/);
+  assert.equal(mock.requests().filter((q) => q.method === 'GET').length, 0);
+});
+
+test('gipity generate image --json on a queued model keeps stdout pure JSON', async () => {
+  mock.reset();
+  mock.on(`POST ${GENS}`, { status: 202, body: { data: [gen()] } });
+  mock.on(`GET ${GENS}`, { body: { data: [done('gen_aaaa1111', `${mock.apiBase}/files/c.jpg`)] } });
+  mock.on('GET /files/c.jpg', { contentType: 'image/jpeg', raw: Buffer.from([0xff, 0xd8, 0xff, 0x03]) });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'image', 'a red canoe', '--model', 'gipity-krea2-realistic', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out[0].id, 'gen_aaaa1111');
+  assert.equal(out[0].status, 'succeeded');
+  assert.match(out[0].saved, /generated\.jpg$/);
+});
+
+test('a failed or expired queued generation exits 1 with the reason and saves nothing', async () => {
+  mock.reset();
+  mock.on(`POST ${GENS}`, { status: 202, body: { data: [gen()] } });
+  mock.on(`GET ${GENS}`, { body: { data: [gen({ status: 'failed', error: { code: 'content_blocked', message: 'That prompt was blocked.' } })] } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'image', 'x', '--model', 'gipity-krea2-realistic']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /gen_aaaa1111 failed: That prompt was blocked\./);
+  assert.throws(() => readFileSync(join(dir, 'generated.jpg')));
+});
+
+test('submit errors (NSFW not allowed) surface the server message', async () => {
+  mock.reset();
+  mock.on(`POST ${GENS}`, { status: 403, body: { error: { code: 'NSFW_NOT_ALLOWED', message: 'NSFW models need "Allow NSFW services" turned on for your Gipity account.' } } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'image', 'x', '--model', 'gipity-krea2-nsfw', '--nsfw']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Allow NSFW services/);
+});
+
+test('gipity generate status / cancel / list read the generations API', async () => {
+  mock.reset();
+  mock.on(`GET ${GENS}`, (req) => ({ body: { data: req.url.includes('status=open')
+    ? [gen()]
+    : req.url.includes('ids=')
+      ? [done('gen_aaaa1111', 'https://media.example/x.jpg')]
+      : [done('gen_aaaa1111', 'https://media.example/x.jpg'), gen({ id: 'gen_bbbb2222', status: 'expired' })] } }));
+  mock.on(`POST ${GENS}/gen_aaaa1111/cancel`, { body: { data: gen({ status: 'cancelled' }) } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+
+  const s = await freshFast(dir, ['generate', 'status', 'gen_aaaa1111', 'gen_missing1']);
+  assert.equal(s.status, 0, s.stderr);
+  assert.match(s.stdout, /gen_aaaa1111\s+gipity-krea2-realistic\s+done/);
+  assert.match(s.stdout, /url: https:\/\/media\.example\/x\.jpg/);
+  assert.match(s.stdout, /gen_missing1\s+not found/);
+  assert.ok(mock.requests().some((q) => q.url === `${GENS}?ids=gen_aaaa1111,gen_missing1`));
+
+  const c = await freshFast(dir, ['generate', 'cancel', 'gen_aaaa1111']);
+  assert.equal(c.status, 0, c.stderr);
+  assert.match(c.stdout, /gen_aaaa1111.*cancelled/);
+
+  const open = await freshFast(dir, ['generate', 'list', '--open']);
+  assert.equal(open.status, 0, open.stderr);
+  assert.ok(mock.requests().some((q) => q.url === `${GENS}?status=open`));
+  assert.match(open.stdout, /queued: 2 ahead/);
+
+  const recent = await freshFast(dir, ['generate', 'list', '--limit', '5']);
+  assert.ok(mock.requests().some((q) => q.url === `${GENS}?limit=5`));
+  assert.match(recent.stdout, /gen_bbbb2222.*expired/);
+});
+
+test('gipity generate models lists GPU models with price, NSFW tag, availability and the queue estimate', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/generate/image/models', { body: { data: {
+    models: [
+      { id: 'flux-2-pro', provider: 'bfl' },
+      { id: 'gipity-krea2-realistic', provider: 'gipity', label: 'Krea 2 Realistic', description: 'Photoreal, fast', async_only: true, nsfw: false, price_credits: 8, available: true, max_references: 0 },
+      { id: 'gipity-krea2-nsfw', provider: 'gipity', label: 'Krea 2 NSFW', async_only: true, nsfw: true, price_credits: 8, available: true },
+      { id: 'gipity-lustify', provider: 'gipity', async_only: true, nsfw: true, price_credits: null, available: false, unavailable_reason: 'not priced yet' },
+    ],
+    gipity_gpu: { online: true, queue: { paid_ahead: 1, free_ahead: 6 }, est_wait_s: { paid: 30, free: 240 } },
+  } } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  const r = await freshFast(dir, ['generate', 'models']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /flux-2-pro\s+bfl/);
+  assert.match(r.stdout, /Gipity GPU models \(queued, half the usual price\)/);
+  assert.match(r.stdout, /1 paid \+ 6 free ahead; wait about 30s on a paid plan, about 4 min on Free/);
+  assert.match(r.stdout, /gipity-krea2-realistic\s+8 credits/);
+  assert.match(r.stdout, /gipity-krea2-nsfw\s+8 credits\s+NSFW/);
+  assert.match(r.stdout, /gipity-lustify\s+not priced yet.*unavailable: not priced yet/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+
+  const j = await freshFast(dir, ['generate', 'models', '--json']);
+  assert.equal(JSON.parse(j.stdout).gipity_gpu.online, true);
+});
+
+test('generate help never names the GPU hardware or its software', async () => {
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  for (const args of [['generate', '--help'], ['generate', 'image', '--help'], ['generate', 'models', '--help']]) {
+    const r = await freshFast(dir, args);
+    assert.doesNotMatch(r.stdout + r.stderr, /GB10|DGX|ComfyUI|Ollama|Tailscale/i);
+  }
+});

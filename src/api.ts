@@ -173,7 +173,9 @@ function with401Hint(status: number, message: string): string {
 function apiErrorFrom(res: Response, json: any, label: string, hint = true): ApiError {
   const err = json?.error ?? {};
   const message = err.message || `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''} from ${label}`;
-  return new ApiError(res.status, err.code || 'UNKNOWN', hint ? with401Hint(res.status, message) : message, json?.data);
+  // A retryable refusal (e.g. Gipity GPU MODEL_WARMING) says how long to wait.
+  const data = json?.data ?? (typeof err.retry_after_s === 'number' ? { retry_after_s: err.retry_after_s } : undefined);
+  return new ApiError(res.status, err.code || 'UNKNOWN', hint ? with401Hint(res.status, message) : message, data);
 }
 
 async function getHeaders(): Promise<Record<string, string>> {

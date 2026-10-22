@@ -9,6 +9,9 @@ import { printCommandError } from '../helpers/command.js';
 import { withSpinner } from '../progress.js';
 import { guessMime } from '../upload.js';
 import {
+  addGenerationSubcommands, isQueuedModel, submitGenerations, waitForGenerations, statusText, type Generation,
+} from './generate-async.js';
+import {
   IMAGE_MODELS_TABLE, IMAGE_PROVIDER_IDS, IMAGE_QUALITY_IDS, IMAGE_TIER_ALIASES_DOC, IMAGE_TIER_ALIAS_IDS,
   IMAGE_GEMINI_ASPECT_RATIO_IDS, IMAGE_GEMINI_SIZE_IDS,
   VIDEO_MODEL_IDS, VIDEO_MODELS_TABLE, VIDEO_ASPECT_RATIOS, VIDEO_ASPECT_RATIO_IDS, VIDEO_RESOLUTION_IDS,
@@ -245,6 +248,13 @@ ${IMAGE_MODELS_TABLE}
 Tier aliases (pass to --model instead of an id; each names a provider+model):
   ${IMAGE_TIER_ALIASES_DOC}
 
+Gipity GPU models (--model gipity-...; list them with \`gipity generate models\`):
+half the usual price for the same model, but queued: paid plans go first, and a
+job may wait a while. The CLI waits and shows the queue position, then saves the
+image. --no-wait queues it and prints the id instead (check it with
+\`gipity generate status <id>\`). GPU-only options: --aspect, --n, --ref, --avoid,
+--nsfw, --format. NSFW models need "Allow NSFW services" on your account.
+
 Editing (--input): pass one or more source images and the prompt becomes an edit
 instruction applied to them - "make it night time", "add a hat", "remove the car
 in the background", or compose several inputs together. Editing routes to Gemini
@@ -257,6 +267,9 @@ Examples:
   gipity generate image "landscape sunset" --provider gemini --aspect-ratio 16:9 --image-size 2K
   gipity generate image "product photo" --provider openai --model gpt-image-2 --size 1536x1024 --quality high
   gipity generate image "abstract art" --provider bfl --model flux-2-pro -o art.png
+  gipity generate image "a red canoe at sunrise" --model gipity-krea2-realistic --aspect landscape
+  gipity generate image "same canoe, now at night" --model gipity-qwen21-consistent --ref gen_abc12345
+  gipity generate image "a lighthouse" --model gipity-krea2-realistic --n 4 --no-wait
 `)
   .argument('<prompt>', 'Text description of the image, or (with --input) the edit instruction to apply')
   .option('--input <file>', 'Source image to edit/compose (repeatable). With --input the prompt is an edit instruction; routes to Gemini.', (v: string, acc: string[]) => (acc || []).concat(v))
@@ -266,13 +279,24 @@ Examples:
   .addOption(new Option('--quality <quality>', 'Quality (OpenAI gpt-image models only)').choices(IMAGE_QUALITY_IDS))
   .addOption(new Option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only)').choices(IMAGE_GEMINI_ASPECT_RATIO_IDS))
   .addOption(new Option('--image-size <size>', 'Output resolution tier (Gemini only; each model supports only some, see the app-image skill)').choices(IMAGE_GEMINI_SIZE_IDS))
-  .option('--seed <n>', 'Deterministic seed (BFL only): reuse one seed to keep a set of images visually coherent', (v) => parseInt(v, 10))
-  .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation.')
+  .option('--seed <n>', 'Deterministic seed (BFL and Gipity GPU models): reuse one seed to keep a set of images visually coherent', (v) => parseInt(v, 10))
+  .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation. With --n > 1 the files are numbered (hero-1.png, hero-2.png).')
+  .addOption(new Option('--aspect <aspect>', 'Shape (Gipity GPU models)').choices(['portrait', 'square', 'landscape']))
+  .option('--n <count>', 'Number of images, 1-4, with consecutive seeds (Gipity GPU models)', (v) => parseInt(v, 10))
+  .option('--ref <gen_id>', 'An earlier generation to keep consistent with (repeatable; models that take references)', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--avoid <text>', 'What to keep out of the image (Gipity GPU models that support it)')
+  .option('--nsfw', 'Allow adult content (NSFW models; needs "Allow NSFW services" on your account)')
+  .addOption(new Option('--format <format>', 'Full-size file format (Gipity GPU models; default jpeg)').choices(['jpeg', 'png']))
+  .option('--no-wait', 'Queue it and print the generation id(s) instead of waiting')
   .option('--json', 'Output as JSON')
   .action(async (prompt: string, opts) => {
     try {
       const { config } = await resolveProjectContext();
       if (opts.output) ensureOutputDir(opts.output);
+      if (isQueuedModel(opts.model) || opts.wait === false) {
+        await generateQueued(config.projectGuid, prompt, opts);
+        return;
+      }
       const inputImages = opts.input ? readInputImages(opts.input) : undefined;
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
         prompt,
@@ -318,6 +342,74 @@ Examples:
       process.exit(1);
     }
   });
+
+/** File name for image i of n: the -o path (or ./generated.<ext>), numbered when n > 1. */
+function numberedPath(base: string, i: number, n: number): string {
+  if (n <= 1) return base;
+  const dot = base.lastIndexOf('.');
+  const slash = Math.max(base.lastIndexOf('/'), base.lastIndexOf('\\'));
+  return dot > slash ? `${base.slice(0, dot)}-${i + 1}${base.slice(dot)}` : `${base}-${i + 1}`;
+}
+
+/** Queued (async) path: submit, wait with live status, download each image. */
+async function generateQueued(projectGuid: string, prompt: string, opts: any): Promise<void> {
+  if (opts.input) throw new Error('--input editing is not available on queued generations; drop --input or pick a cloud model.');
+  if (!opts.model || !String(opts.model).startsWith('gipity-')) {
+    throw new Error('--no-wait is for Gipity GPU models (--model gipity-...; see `gipity generate models`). Cloud models render right away: drop --no-wait.');
+  }
+  const started = Date.now();
+  const submitted = await submitGenerations(projectGuid, {
+    model: opts.model,
+    prompt,
+    avoid: opts.avoid,
+    aspect: opts.aspect,
+    size: opts.size,
+    seed: Number.isFinite(opts.seed) ? opts.seed : undefined,
+    n: Number.isFinite(opts.n) ? opts.n : undefined,
+    nsfw: opts.nsfw ? true : undefined,
+    format: opts.format,
+    references: opts.ref,
+  });
+
+  if (opts.wait === false) {
+    if (opts.json) { console.log(JSON.stringify(submitted)); return; }
+    for (const g of submitted) console.log(`${g.id}  ${muted(statusText(g))}`);
+    console.log(muted(`Check with: gipity generate status ${submitted.map((g) => g.id).join(' ')}`));
+    return;
+  }
+
+  if (!opts.json) console.log(muted(`Queued ${submitted.length === 1 ? submitted[0].id : submitted.map((g) => g.id).join(', ')} on ${opts.model}`));
+  const done = await waitForGenerations(projectGuid, submitted, { json: !!opts.json });
+  const elapsed = (Date.now() - started) / 1000;
+
+  const saved: Array<{ gen: Generation; path: string | null }> = [];
+  for (let i = 0; i < done.length; i++) {
+    const g = done[i];
+    const url = g.status === 'succeeded' ? g.outputs?.full?.url : undefined;
+    if (!url) { saved.push({ gen: g, path: null }); continue; }
+    const ext = (g.outputs?.full?.mime ?? '').includes('png') ? 'png' : 'jpg';
+    const target = numberedPath(opts.output || `generated.${ext}`, i, done.length);
+    saved.push({ gen: g, path: await downloadFile(url, target, !!opts.output) });
+  }
+
+  const failed = saved.filter((s) => !s.path);
+  if (opts.json) {
+    console.log(JSON.stringify(saved.map((s) => ({ ...s.gen, saved: s.path })).map((r) => ({ ...r, generation_seconds: Math.round(elapsed * 10) / 10 }))));
+  } else {
+    const credits = done.reduce((sum, g) => sum + (g.credits_charged ?? 0), 0);
+    console.log(muted(`Generated with gipity/${opts.model}`));
+    const first = saved.find((s) => s.path)?.gen;
+    printMetrics([
+      { label: 'time', value: fmtSeconds(elapsed) },
+      first?.width && first?.height ? { label: 'pixels', value: `${first.width}x${first.height}` } : null,
+      first?.seed != null ? { label: 'seed', value: `${first.seed} ${muted(`(pass --seed ${first.seed} to keep the next image coherent)`)}` } : null,
+      credits > 0 ? { label: 'credits', value: credits.toLocaleString('en-US') } : null,
+    ]);
+    for (const s of failed) console.error(clrError(`${s.gen.id} ${statusText(s.gen)}`));
+    for (const s of saved) if (s.path) console.log(success(`Saved ${s.gen.id} to ${s.path}`));
+  }
+  if (failed.length === done.length) process.exit(1);
+}
 
 // ── VIDEO ──────────────────────────────────────────────────────────────
 
@@ -580,10 +672,10 @@ Examples:
 
 // ── PARENT COMMAND ─────────────────────────────────────────────────────
 
-export const generateCommand = new Command('generate')
+export const generateCommand = addGenerationSubcommands(new Command('generate')
   .description('Generate images, video, speech, sound effects, or music')
   .addCommand(imageCommand)
   .addCommand(videoCommand)
   .addCommand(speechCommand)
   .addCommand(soundCommand)
-  .addCommand(musicCommand);
+  .addCommand(musicCommand));

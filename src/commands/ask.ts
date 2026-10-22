@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { readFileSync, fstatSync } from 'fs';
-import { post } from '../api.js';
+import { post, ApiError } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { guessMime } from '../upload.js';
 import { warning } from '../colors.js';
@@ -19,6 +19,22 @@ interface AskResult {
 }
 
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Longest we'll wait for a model that is loading (MODEL_WARMING) before one retry. */
+const MAX_WARM_WAIT_S = 90;
+
+/** Call once; if the model is loading (Gipity GPU after idle), wait as told and retry once. */
+async function askWithWarmRetry<T>(call: () => Promise<T>, onWarming: (waitS: number) => void): Promise<T> {
+  try {
+    return await call();
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.code !== 'MODEL_WARMING') throw e;
+    const waitS = Math.min(Number(e.data?.retry_after_s ?? 45), MAX_WARM_WAIT_S);
+    onWarming(waitS);
+    await new Promise((r) => setTimeout(r, waitS * 1000));
+    return call();
+  }
+}
 
 /** True when stdin is piped or redirected (not a terminal, not /dev/null). */
 function stdinIsPiped(): boolean {
@@ -66,7 +82,7 @@ export const askCommand = new Command('ask')
   .argument('[prompt...]', 'The question or instruction')
   .option('--file <path...>', 'Add a text file to the prompt (repeatable); - reads stdin')
   .option('--image <path...>', 'Attach an image: png, jpg, gif or webp (repeatable)')
-  .option('--model <model>', 'Model id, alias (small, fast, medium, large, haiku, sonnet, opus, ...) or provider (openai, anthropic, gemini). Default: small')
+  .option('--model <model>', 'Model id, alias (small, fast, medium, large, haiku, sonnet, opus, ...) or provider (openai, anthropic, gemini). gipity-qwen3.6-35b runs on Gipity GPU at half price (text only). Default: small')
   .option('--system <text>', 'Replace the default system prompt')
   .option('--schema <json>', 'Answer with a JSON value matching this JSON schema; prints the JSON')
   .option('--max-tokens <n>', 'Cap the answer length', (v) => parseInt(v, 10))
@@ -105,7 +121,8 @@ Examples:
     if (schema !== undefined) body.schema = schema;
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;
 
-    const call = () => post<AskResult>(`/projects/${config.projectGuid}/generate/text`, body);
+    const once = () => post<AskResult>(`/projects/${config.projectGuid}/generate/text`, body);
+    const call = () => askWithWarmRetry(once, (s) => console.error(`The model is loading; retrying in ${s}s...`));
     const result = opts.json || !process.stderr.isTTY ? await call() : await withSpinner('Thinking...', call, { done: null });
 
     if (opts.json) {
