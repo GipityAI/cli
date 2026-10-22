@@ -93,6 +93,25 @@ test('gipity db query <sql> prints rows in tabular form', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity db query shortens huge cells (a vector column) in the table, not in --json', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/databases', { body: { data: [
+    { friendlyName: 'main', internalName: 'ecu_x', projectGuid: 'p_TestProj' },
+  ] } });
+  const vector = `[${Array.from({ length: 1536 }, () => '0.0123456').join(',')}]`;
+  mock.on('POST /projects/p_TestProj/db/query', { body: { data: {
+    rows: [{ id: 1, embedding: vector, meta: { tag: 'a' } }],
+  } } });
+  const r = await inProject(['db', 'query', 'SELECT * FROM docs']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`1\\t\\[0\\.0123456,.*… \\(${vector.length} chars; --json for all\\)\\t\\{"tag":"a"\\}`));
+  assert.ok(r.stdout.length < 500, `table output should be short, got ${r.stdout.length} chars`);
+
+  const j = await inProject(['db', 'query', 'SELECT * FROM docs', '--json']);
+  assert.equal(j.status, 0, j.stderr);
+  assert.equal(JSON.parse(j.stdout).rows[0].embedding, vector);
+});
+
 test('gipity db query reports affected rows for DML', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/databases', { body: { data: [

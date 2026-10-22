@@ -25,6 +25,18 @@ interface AccountDatabasesResponse {
   limit: number;
 }
 
+/** Longest cell the table view prints in full. Longer values (a vector(1536)
+ *  column is ~20 KB of digits) are cut with their length named; --json and
+ *  --field still return the whole value. */
+export const TABLE_CELL_MAX = 200;
+
+export function tableCell(value: unknown): string {
+  const text = value === null || value === undefined ? 'NULL'
+    : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  if (text.length <= TABLE_CELL_MAX) return text;
+  return `${text.slice(0, 60)}… (${text.length} chars; --json for all)`;
+}
+
 export const dbCommand = new Command('db')
   .description('Manage databases');
 
@@ -65,7 +77,7 @@ dbCommand
           const columns = Object.keys(res.data.rows[0]);
           console.log(columns.join('\t'));
           for (const row of res.data.rows) {
-            console.log(columns.map(c => String(row[c] ?? 'NULL')).join('\t'));
+            console.log(columns.map(c => tableCell(row[c])).join('\t'));
           }
         }
         // DML with RETURNING carries both rows and a count - the rows are the
