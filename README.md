@@ -158,7 +158,7 @@ gipity push <file>   # Push one or more files
 | `gipity login` / `gipity logout` | Authenticate with email + verification code / sign out |
 | `gipity status` | Show project and login status |
 | `gipity skill list` / `skill read <name>` | Task docs: read the matching skill before building |
-| `gipity project` | List, create, switch, rename, or delete projects |
+| `gipity project` | List, create, switch, rename, or delete projects; set app sign-in (`project auth`) and manage the app's users (`project users`) |
 | `gipity add <template\|kit>` | Add a template (web-simple, web-fullstack, api, 2d-game, 3d-world, ...) or a kit (realtime, stripe, i18n, ...) |
 | `gipity remove <kit>` | Remove a kit |
 | `gipity brand` | Show or set the app's icon, accent color, and share card |
@@ -277,6 +277,10 @@ gipity project                         # List projects
 gipity project create "My App"         # Create new project
 gipity project my-app                  # Switch active project
 gipity project rename "My Great App"   # Rename (display name only)
+gipity project auth app                # Users sign in to this app alone (Google, Apple, Discord, email codes, Steam, guest)
+gipity project auth provider google    # Setup steps + redirect URI; --client-id/--client-secret to use your own
+gipity project users --search ann      # List the app's own users
+gipity project users export -o users.csv
 ```
 
 ## Project Config

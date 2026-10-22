@@ -11,8 +11,8 @@ import { getProjectsRoot } from '../relay/paths.js';
 import { finalizeLocalProject } from '../project-setup.js';
 import * as relayState from '../relay/state.js';
 
-type AuthMode = 'gipity' | 'app' | 'both';
-const AUTH_MODES: AuthMode[] = ['gipity', 'app', 'both'];
+import { registerAuthCommand, type AuthMode } from './project-auth.js';
+import { registerUsersCommand } from './project-users.js';
 
 interface ProjectData {
   short_guid: string;
@@ -198,65 +198,5 @@ projectCommand
     }
   }));
 
-projectCommand
-  .command('auth [mode]')
-  .description('Show or set who can sign in to the deployed app: gipity, app (Steam / guest players), or both')
-  .addHelpText('after', `
-Modes:
-  gipity  Sign in with Gipity only (default)
-  app     Players sign in to this app alone, without a Gipity account:
-          Steam (POST /api/<guid>/auth/steam) or a guest device (POST /api/<guid>/auth/guest)
-  both    Either
-
---unique-names on|off
-  On: no two players of this app can have the same display name (case and
-  lookalike letters ignored). A taken name is refused with DISPLAY_NAME_TAKEN;
-  GET /api/<guid>/auth/player/name-available?name=... checks one and suggests
-  free alternatives. Players who already share a name keep it, and sign in with
-  nameConflict: true until they rename. Off by default.
-
-Steam also needs the Steamworks publisher key and AppID:
-  gipity secrets set STEAM_WEB_API_KEY <key>
-  gipity secrets set STEAM_APP_ID <appid>
-See: gipity skill read steam-game`)
-  .option('--unique-names <on|off>', 'Require unique player display names in this app')
-  .option('--json', 'Output as JSON')
-  .action((mode: string | undefined, opts) => run('Auth', async () => {
-    const config = requireConfig();
-    const body: { auth_mode?: AuthMode; unique_player_names?: boolean } = {};
-    if (mode !== undefined) {
-      if (!AUTH_MODES.includes(mode as AuthMode)) {
-        console.error(clrError(`Unknown mode "${mode}". Use one of: ${AUTH_MODES.join(', ')}.`));
-        process.exit(1);
-      }
-      body.auth_mode = mode as AuthMode;
-    }
-    if (opts.uniqueNames !== undefined) {
-      if (opts.uniqueNames !== 'on' && opts.uniqueNames !== 'off') {
-        console.error(clrError(`--unique-names takes "on" or "off", not "${opts.uniqueNames}".`));
-        process.exit(1);
-      }
-      body.unique_player_names = opts.uniqueNames === 'on';
-    }
-    if (Object.keys(body).length === 0) {
-      const res = await get<{ data: ProjectData }>(`/projects/${config.projectGuid}`);
-      const p = res.data;
-      printResult(
-        `Sign-in: ${p.auth_mode}\nUnique names: ${p.unique_player_names ? 'on' : 'off'}`,
-        opts,
-        { auth_mode: p.auth_mode, unique_player_names: p.unique_player_names },
-      );
-      return;
-    }
-    const res = await put<{ data: { success: boolean; players_sharing_names?: number } }>(`/projects/${config.projectGuid}`, body);
-    const lines: string[] = [];
-    if (body.auth_mode) lines.push(success(`Sign-in set to "${body.auth_mode}".`));
-    if (body.unique_player_names !== undefined) {
-      lines.push(success(`Unique names ${body.unique_player_names ? 'on' : 'off'}.`));
-      const sharing = res.data.players_sharing_names ?? 0;
-      if (sharing > 0) {
-        lines.push(muted(`${sharing} existing player${sharing === 1 ? '' : 's'} share${sharing === 1 ? 's' : ''} a name with an earlier player. They keep it, and sign in with nameConflict: true until they rename.`));
-      }
-    }
-    printResult(lines.join('\n'), opts, { ...body, ...(res.data.players_sharing_names !== undefined ? { players_sharing_names: res.data.players_sharing_names } : {}) });
-  }));
+registerAuthCommand(projectCommand);
+registerUsersCommand(projectCommand);

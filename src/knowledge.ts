@@ -177,7 +177,7 @@ Run \`gipity skill list\` to see every skill. Run \`gipity skill read <name>\` t
 
 App services skills (load before calling \`/services/*\` endpoints):
 - \`app-audio\` - sound effects, music, transcription
-- \`app-auth\` - sign in with Gipity, popup vs redirect
+- \`app-auth\` - sign in: Gipity accounts or app-owned users (Google, email code), popup vs redirect
 - \`app-files\` - uploads, then displaying files and the storage helper (ownership check, delete)
 - \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
@@ -186,6 +186,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-payments\` - charge end-users real money - Stripe one-time purchases & subscriptions, via the stripe kit (gipity add stripe)
 - \`app-realtime\` - Gipity Realtime rooms, relay vs state
 - \`app-tts\` - voices, models, dialogue, languages, word timestamps
+- \`app-users\` - app-owned users: Google/Apple/Discord/email-code sign-in, own credentials, hooks, gipity project users
 - \`app-vector-search\` - semantic search, RAG, 'find similar' and fuzzy match over the app's own DB - embed() service + pre-installed pgvector and pg_trgm, no vector DB
 - \`app-video\` - Gipity Video: models, aspect, resolution
 
