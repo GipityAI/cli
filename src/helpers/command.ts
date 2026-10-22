@@ -39,6 +39,11 @@ export function printCommandError(label: string, err: any): void {
 export function run(label: string, action: () => Promise<void>): Promise<void> {
   return action().catch((err: any) => {
     printCommandError(label, err);
+    // A --json caller parses stdout: give it a JSON error too, or its parser
+    // crashes on the plain-text failure and the real reason is lost.
+    if (process.argv.includes('--json')) {
+      console.log(JSON.stringify({ error: { code: err?.code ?? 'ERROR', message: `${label} failed: ${err?.message ?? String(err)}` } }));
+    }
     process.exit(1);
   });
 }

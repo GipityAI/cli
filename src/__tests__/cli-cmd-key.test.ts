@@ -85,3 +85,13 @@ test('gipity key revoke confirms removal', async () => {
   assert.match(r.stdout, /Revoked/);
   assert.match(r.stdout, /ak_abc12345/);
 });
+
+test('gipity key create --json prints a failure as a JSON error object', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/api-keys', { status: 409, body: { error: { code: 'VALIDATION_ERROR', message: 'API key "verify-tmp" already exists' } } });
+  const r = await fresh(['key', 'create', 'verify-tmp', '--json']);
+  assert.equal(r.status, 1);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop()!);
+  assert.equal(out.error.code, 'VALIDATION_ERROR');
+  assert.match(out.error.message, /already exists/);
+});
