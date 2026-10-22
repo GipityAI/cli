@@ -46,7 +46,6 @@ const SUBSTITUTABLE_EXTS = new Set([
  *  loudly instead of shipping `{{X}}` literally. */
 export const KNOWN_PLACEHOLDERS = [
   '{{TITLE}}',
-  '{{JS_TITLE}}',
   '{{PROJECT_GUID}}',
   '{{DATABASE}}',
   '{{HEAD_BLOCK}}',
@@ -63,10 +62,6 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function jsEscape(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 /** Accent palette + hash, mirrored from the server's `services/app-brand.ts`
@@ -158,7 +153,6 @@ export function buildTemplateVars(v: TemplateVars): Record<string, string> {
 
   return {
     '{{TITLE}}': safeTitle,
-    '{{JS_TITLE}}': jsEscape(v.projectName),
     '{{PROJECT_GUID}}': v.projectGuid,
     '{{DATABASE}}': slug,
     '{{HEAD_BLOCK}}': buildHeadBlock(v),

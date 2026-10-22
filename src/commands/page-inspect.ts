@@ -191,11 +191,11 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     b.failedResources = (b.failedResources || []).filter((r) => !isPlatformLog(r));
 
     // Pull message-less cross-origin "Script error." lines out first. They carry
-    // no source/stack, so they're never actionable as app-code defects, and on a
-    // Gipity-deployed page the platform's own injected SDK is itself a
-    // cross-origin script — so these are reported separately (not as app console
-    // errors, and not folded into the re-probe count) instead of misleading the
-    // agent into chasing its own code.
+    // no source/stack: the app's own scripts and the Gipity SDK (loaded with
+    // crossorigin) always report full messages, so what remains is a third-party
+    // script loaded without CORS. Reported separately (not folded into the
+    // re-probe count), with a pointer to page eval so the agent still checks
+    // that the page works.
     const crossOriginErrors = (b.console || []).filter(isMessagelessCrossOrigin);
     b.console = (b.console || []).filter((l) => !isMessagelessCrossOrigin(l));
 
@@ -292,7 +292,7 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
     // ── Cross-origin console errors (message-less; source hidden by the browser) ──
     if (crossOriginErrors.length > 0) {
       console.log(`\n${bold('Cross-origin console errors')} ${muted(`(${crossOriginErrors.length}, source hidden by the browser)`)}:`);
-      console.log(muted("Message-less: the throwing <script> lacks CORS, so the browser hides its source and there's no own-code stack to chase. Gipity's injected SDK is itself cross-origin, so if your app loads no third-party CDN scripts these are platform noise; ignore them. If your app DOES load a third-party <script>, add crossorigin=\"anonymous\" to that tag to surface the real error."));
+      console.log(muted("Message-less: a <script> loaded without CORS threw, so the browser hides the message. Your own scripts and the Gipity SDK report full errors, so this is a third-party <script> (e.g. a CDN): add crossorigin=\"anonymous\" to that tag to see the real error. Don't assume it's harmless: confirm the page works with gipity page eval <url> \"<expr>\"."));
     }
 
     // ── Failed Resources ──
