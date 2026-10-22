@@ -141,14 +141,14 @@ deploy:
     - name: functions
       type: functions
       source: functions
-      function_definitions:
+      functions:
         - name: ${FN}
           auth: public
         - name: ${FN_DOOMED}
           auth: public
     - name: jobs
       type: jobs
-      job_definitions:
+      jobs:
         - name: ${JOB}
           handler: jobs/${JOB}/main.sh
           runtime: bash

@@ -66,7 +66,7 @@ export function anonBillingHint(name: string, err: unknown): string | null {
     `An anonymous visitor cannot call '${service}': it is on the user_pays default, so every signed-out ` +
     `visitor to a public page is asked to sign in and pay from their own credits. If this app serves the ` +
     `public (a help bubble, a landing page), switch it to owner-pays in gipity.yaml and redeploy:\n` +
-    `  deploy:\n    phases:\n      - services\n  service_definitions:\n    - service: ${service}\n      billing_mode: owner_pays\n` +
+    `  deploy:\n    phases:\n      - services\n  services:\n    - service: ${service}\n      billing_mode: owner_pays\n` +
     `  gipity deploy --only services`
   );
 }
