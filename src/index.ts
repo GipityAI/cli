@@ -187,6 +187,7 @@ const SKILL_DOCS: Record<string, string> = {
   payments: 'app-payments',
   records: 'app-records',
   key: 'app-auth',
+  secrets: 'app-function-services',
   realtime: 'app-realtime',
   job: 'jobs',
   workflow: 'workflow',

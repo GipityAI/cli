@@ -178,7 +178,9 @@ Run \`gipity skill list\` to see every skill. Run \`gipity skill read <name>\` t
 App services skills (load before calling \`/services/*\` endpoints):
 - \`app-audio\` - sound effects, music, transcription
 - \`app-auth\` - sign in with Gipity, popup vs redirect
-- \`app-files\` - uploads, variants, file listing
+- \`app-files\` - uploads: Gipity.upload, folder drops, upload endpoints, file listing
+- \`app-files-display\` - show uploads: durable URLs, share links, thumbnails, PDF text, audio tags
+- \`app-files-storage\` - storage helper in functions: import from a URL, check the uploader, delete, PDF text
 - \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
@@ -194,6 +196,7 @@ App development skills:
 - \`app-database\` - app Postgres database: migrations, the db helper, transactions, table permissions
 - \`app-debugging\` - debug a deployed app: page inspect/eval, screenshots, function logs
 - \`app-development\` - functions, database, and API
+- \`app-function-services\` - fetch, app services (llm, email, realtime, embed...), secrets from a function
 - \`app-import\` - import apps from GitHub/.gip bundles (incl. Vercel/Replit/Lovable porting) and export any project as a portable .gip - gipity load/save, gipity github connect
 - \`app-records\` - Gipity Records: declared tables → validated CRUD, provenance, workflows, auto UI
 - \`app-testing\` - testing deployed app functions (ctx.fn.call/callAs, the per-file test DB)
