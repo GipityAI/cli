@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { isAbsolute, join, resolve } from 'path';
 import { get, post, put, del } from '../api.js';
 import { getConfig, requireConfig, getProjectRoot } from '../config.js';
 import { pushFile } from '../sync.js';
@@ -374,10 +374,20 @@ steps:
     tools: [memory, db_query]
 `;
 
+/** Read a workflow YAML from disk: an absolute path, a path from the cwd, or
+ *  a project-relative one. The text is sent to the server, so the file need not
+ *  be synced (a probe in tmp/ works). */
+function readWorkflowYaml(from: string): string {
+  const candidates = isAbsolute(from) ? [from] : [resolve(from), ...(getProjectRoot() ? [join(getProjectRoot()!, from)] : [])];
+  const found = candidates.find((p) => existsSync(p));
+  if (!found) throw new Error(`No workflow file at ${from}.`);
+  return readFileSync(found, 'utf-8');
+}
+
 workflowCommand
   .command('create')
   .description('Create a workflow from a YAML file in the project (e.g. workflows/foo.yaml)')
-  .option('--from <path>', 'Project-relative YAML file path')
+  .option('--from <path>', 'Workflow YAML file (any local path, e.g. workflows/foo.yaml)')
   .option('--heartbeat', `Scaffold ${HEARTBEAT_PATH} (a daily check-in that keeps notes in project memory) and create it`)
   .option('--name <name>', 'Override the name in the YAML')
   .option('--json', 'Output as JSON')
@@ -399,7 +409,7 @@ workflowCommand
       await pushFile(local);
     }
     const body: Record<string, unknown> = {
-      config_yaml_path: from,
+      config_yaml: readWorkflowYaml(from),
       project_guid: config.projectGuid,
     };
     if (opts.name) body.name = opts.name;
@@ -412,14 +422,14 @@ workflowCommand
   .command('edit <name>')
   .alias('update')
   .description('Update a workflow from a YAML file')
-  .requiredOption('--from <path>', 'Project-relative YAML file path')
+  .requiredOption('--from <path>', 'Workflow YAML file (any local path, e.g. workflows/foo.yaml)')
   .option('--json', 'Output as JSON')
   .action((name: string, _opts, cmd) => run('Edit', async () => {
     const opts = mergedOpts(cmd) as { from?: string; json?: boolean };
     const config = requireConfig();
     const wf = await resolveWorkflow(name);
     await put(`/workflows/${wf.short_guid}`, {
-      config_yaml_path: opts.from,
+      config_yaml: readWorkflowYaml(opts.from!),
       project_guid: config.projectGuid,
     });
     printResult(`Updated "${wf.name}" from ${opts.from}.`, opts, { updated: wf.name });

@@ -112,6 +112,23 @@ test('gipity skill read --section prints one section with its subsections', asyn
   assert.doesNotMatch(r.stdout, /Each file runs once\./);
 });
 
+test('gipity skill read --section repeats: every section asked for prints', async () => {
+  mockDoc(DOC);
+  const r = await fresh(['skill', 'read', 'app-database', '--section', 'queries', '--section', 'migrations']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Use `gipity db query`/);
+  assert.match(r.stdout, /Each file runs once\./);
+  assert.doesNotMatch(r.stdout, /500 rows/);
+});
+
+test('gipity skill read --section repeated with one miss prints the rest and names the miss', async () => {
+  mockDoc(DOC);
+  const r = await fresh(['skill', 'read', 'app-database', '--section', 'queries', '--section', 'nope']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Use `gipity db query`/);
+  assert.match(r.stdout, /No section "nope"/);
+});
+
 test('gipity skill read --grep prints the matching section, not a bare line', async () => {
   mockDoc(DOC);
   const r = await fresh(['skill', 'read', 'app-database', '--grep', '128 KB']);

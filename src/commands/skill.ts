@@ -103,7 +103,7 @@ function tocText(sections: Section[]): string {
     .join('\n');
 }
 
-interface ReadOpts { json?: boolean; toc?: boolean; section?: string; grep?: string; }
+interface ReadOpts { json?: boolean; toc?: boolean; section?: string[]; grep?: string; }
 
 // Words that carry no meaning in a guessed slug (`functions-in-gipity-yaml`).
 const SLUG_STOPWORDS = new Set(['a', 'an', 'and', 'the', 'in', 'of', 'on', 'to', 'for', 'with', 'via', 'how', 'from', 'your']);
@@ -139,17 +139,24 @@ function filterContent(content: string, sections: Section[], opts: ReadOpts): { 
 
   let hits: Section[] = [];
   let note: string | undefined;
-  if (opts.section) {
-    const want = slugify(opts.section);
-    hits = sections.filter(s => s.slug === want);
-    if (hits.length === 0) hits = sections.filter(s => s.slug.includes(want));
-    if (hits.length === 0) {
-      const closest = closestSection(sections, want);
-      if (closest) {
-        hits = [closest];
-        note = `No section "${opts.section}"; showing the closest match "${closest.slug}" (all slugs: --toc).`;
+  if (opts.section?.length) {
+    // Repeatable: each --section adds its section(s), in the order asked for.
+    const notes: string[] = [];
+    for (const asked of opts.section) {
+      const want = slugify(asked);
+      let found = sections.filter(s => s.slug === want);
+      if (found.length === 0) found = sections.filter(s => s.slug.includes(want));
+      if (found.length === 0) {
+        const closest = closestSection(sections, want);
+        if (closest) {
+          found = [closest];
+          notes.push(`No section "${asked}"; showing the closest match "${closest.slug}" (all slugs: --toc).`);
+        }
       }
+      if (found.length === 0) notes.push(`No section "${asked}" (all slugs: --toc).`);
+      for (const f of found) if (!hits.includes(f)) hits.push(f);
     }
+    if (notes.length) note = notes.join(' ');
   } else if (opts.grep) {
     let re: RegExp;
     try { re = new RegExp(opts.grep, 'i'); }
@@ -195,7 +202,7 @@ skillCommand
   .command('read <names...>')
   .description('Read one or more skills (whole doc, or one part with --toc/--section/--grep)')
   .option('--toc', 'Print the doc outline (section slugs + line numbers) instead of the content')
-  .option('--section <slug>', 'Print only this section (slug or heading text; subsections included). A guess that clearly matches one section by its words prints that section')
+  .option('--section <slug>', 'Print only this section (slug or heading text; subsections included). Repeat for several. A guess that clearly matches one section by its words prints that section', (v: string, prev: string[] = []) => [...prev, v])
   .option('--grep <term>', 'Print only the sections matching this term (case-insensitive regex)')
   .option('--json', 'Output as JSON')
   .action((names: string[], opts: ReadOpts) => run('Read', async () => {
@@ -233,7 +240,7 @@ skillCommand
       const sections = parseSections(lines);
       const filtered = filterContent(content, sections, opts);
       if (filtered === null) {
-        const what = opts.section ? `section "${opts.section}"` : `match for "${opts.grep}"`;
+        const what = opts.section?.length ? `section ${opts.section.map(x => `"${x}"`).join(' / ')}` : `match for "${opts.grep}"`;
         console.error(clrError(`No ${what} in "${name}". Sections: ${sections.map(s => s.slug).join(', ') || '(none)'}`));
         failed = true;
         continue;

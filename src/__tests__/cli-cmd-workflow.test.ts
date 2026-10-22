@@ -293,8 +293,25 @@ test('gipity workflow create --heartbeat scaffolds workflows/heartbeat.yaml, pus
   const init = mock.requests().find(q => q.url === '/projects/p_TestProj/files/upload-init');
   assert.equal((init?.body as { path?: string })?.path, 'workflows/heartbeat.yaml');
   const create = mock.requests().find(q => q.method === 'POST' && q.url === '/workflows');
-  assert.deepEqual(create?.body, { config_yaml_path: 'workflows/heartbeat.yaml', project_guid: 'p_TestProj' });
+  assert.deepEqual(create?.body, { config_yaml: yaml, project_guid: 'p_TestProj' });
   assert.match(r.stdout, /wf_Heart001/);
+});
+
+test('gipity workflow create --from sends the local file, so an unsynced tmp/ probe works', async () => {
+  mock.reset();
+  mock.on('POST /workflows', { status: 201, body: { data: { short_guid: 'wf_Probe001' } } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  mkdirSync(join(dir, 'tmp'), { recursive: true });
+  const yaml = 'name: probe\nsteps:\n  - name: a\n    step_type: record\n    config: { op: read, table: t }\n';
+  writeFileSync(join(dir, 'tmp', 'probe.yaml'), yaml);
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'workflow', 'create', '--from', 'tmp/probe.yaml'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const create = mock.requests().find(q => q.method === 'POST' && q.url === '/workflows');
+  assert.deepEqual(create?.body, { config_yaml: yaml, project_guid: 'p_TestProj' });
+
+  const missing = await runCliAsync(['--api-base', mock.apiBase, 'workflow', 'create', '--from', 'tmp/nope.yaml'], { env: { HOME: home }, cwd: dir });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr + missing.stdout, /No workflow file at tmp\/nope.yaml/);
 });
 
 test('gipity workflow create --heartbeat never overwrites an existing heartbeat.yaml', async () => {
