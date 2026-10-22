@@ -22,6 +22,11 @@ interface GenerateResult {
   provider: string;
   size_bytes: number;
   seed?: number;
+  /** Real pixel size of a generated image (image only). */
+  width?: number;
+  height?: number;
+  /** Set when the image couldn't match the requested size (Gemini tiers). */
+  note?: string;
   /** Media length in seconds - present for video/sound/music, absent for image/speech. */
   duration_seconds?: number;
   /** Present only when the operation actually cost credits; when present,
@@ -257,10 +262,10 @@ Examples:
   .option('--input <file>', 'Source image to edit/compose (repeatable). With --input the prompt is an edit instruction; routes to Gemini.', (v: string, acc: string[]) => (acc || []).concat(v))
   .addOption(new Option('--provider <provider>', 'Image provider (default: bfl)').choices(IMAGE_PROVIDER_IDS))
   .option('--model <model>', `Model id for the chosen provider, or a tier alias (${IMAGE_TIER_ALIAS_IDS.join(', ')}); see Models below`)
-  .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (OpenAI/BFL)')
+  .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (Gemini snaps to its nearest tier and aspect ratio)')
   .addOption(new Option('--quality <quality>', 'Quality (OpenAI gpt-image models only)').choices(IMAGE_QUALITY_IDS))
   .addOption(new Option('--aspect-ratio <ratio>', 'Aspect ratio (Gemini only)').choices(IMAGE_GEMINI_ASPECT_RATIO_IDS))
-  .addOption(new Option('--image-size <size>', 'Output resolution (Gemini only)').choices(IMAGE_GEMINI_SIZE_IDS))
+  .addOption(new Option('--image-size <size>', 'Output resolution tier (Gemini only; each model supports only some, see the app-image skill)').choices(IMAGE_GEMINI_SIZE_IDS))
   .option('--seed <n>', 'Deterministic seed (BFL only): reuse one seed to keep a set of images visually coherent', (v) => parseInt(v, 10))
   .option('-o, --output <file>', 'Output path (default ./generated.png). For an image your app ships, write it into the source tree so it deploys, e.g. -o src/assets/images/hero.png; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
@@ -298,9 +303,11 @@ Examples:
         console.log(muted(`Generated with ${result.provider}/${result.model}`));
         printMetrics([
           ...generationMetrics(result, elapsed),
+          result.width && result.height ? { label: 'pixels', value: `${result.width}x${result.height}` } : null,
           result.seed !== undefined
             ? { label: 'seed', value: `${result.seed} ${muted(`(pass --seed ${result.seed} to keep the next image coherent)`)}` } : null,
         ]);
+        if (result.note) console.log(muted(result.note));
         // Saved-path last: a caller reading a truncated tail of this output (an
         // agent batching several generates in one shell call) must still see
         // WHERE the bytes landed - that is the one line the next command needs.
@@ -387,7 +394,7 @@ voice ids: gipity service call "tts/voices?provider=elevenlabs" --get
 
 Gemini voices: ${GEMINI_TTS_VOICES_DOC}
 
-Multi-speaker (--speakers, Gemini only): JSON array like
+Multi-speaker (--speakers, Gemini only): JSON array of exactly 2 speakers like
 [{"name":"Joe","voice":"Kore"},{"name":"Jane","voice":"Puck"}]; format the
 text as "Name: dialogue" on each line.
 
@@ -401,7 +408,7 @@ Examples:
   .addOption(new Option('--provider <provider>', 'TTS provider (default: elevenlabs)').choices(TTS_PROVIDER_IDS))
   .option('--voice <voice>', 'Voice ID or name (provider-specific; see Voices below)')
   .option('--language <code>', 'BCP-47 language code, e.g. ja-JP, es-ES (Gemini only, 60+ languages)')
-  .option('--speakers <json>', 'Multi-speaker config as JSON array (Gemini only, up to 2 speakers)')
+  .option('--speakers <json>', 'Multi-speaker config as JSON array (Gemini only, exactly 2 speakers)')
   .option('-o, --output <file>', 'Output path (default ./speech.mp3; --provider gemini returns WAV, so name it .wav). For audio your app ships, write it into the source tree so it deploys, e.g. -o src/assets/sounds/intro.mp3; the cwd default is fine for one-off generation.')
   .option('--json', 'Output as JSON')
   .action(async (text: string, opts) => {
