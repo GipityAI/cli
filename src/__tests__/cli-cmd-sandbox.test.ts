@@ -668,6 +668,15 @@ test('gipity sandbox run rejects empty inline code (a "$(cat missing)" expansion
   assert.deepEqual(mock.requests(), [], 'no API call for empty code');
 });
 
+test('gipity sandbox run refuses a --timeout one HTTP call cannot outlive, pointing at Gipity Jobs', async () => {
+  mock.reset();
+  const r = await outsideProject(['sandbox', 'run', 'bash', 'echo hi', '--timeout', '300']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /over the 280s limit/);
+  assert.match(r.stderr, /Gipity Job/);
+  assert.deepEqual(mock.requests(), [], 'no API call for an impossible timeout');
+});
+
 // ── scratch outputs: tmp/ files come back local-only, never into the project ─
 //
 // The server never persists scratch-namespace outputs to project storage;

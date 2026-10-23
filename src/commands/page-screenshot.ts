@@ -170,7 +170,9 @@ function parseViewportString(s: string): Viewport {
   const height = parseInt(m[2], 10);
   const dpr = m[3] ? parseFloat(m[3]) : undefined;
   if (width < 200 || width > 3840 || height < 200 || height > 2160) {
-    throw new Error(`Viewport out of range: ${s} (200-3840 x 200-2160)`);
+    // A tall viewport is nearly always "show me the whole page": name the flag for that.
+    const tall = height > 2160 ? ` To capture a page taller than the window, keep a normal viewport and add --full (e.g. --viewport ${Math.min(Math.max(width, 200), 3840)}x900 --full).` : '';
+    throw new Error(`Viewport out of range: ${s} (200-3840 x 200-2160).${tall}`);
   }
   return dpr ? { width, height, deviceScaleFactor: dpr } : { width, height };
 }

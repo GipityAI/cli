@@ -2172,3 +2172,11 @@ test('page eval timing line: silent when fast, names each leg when slow', () => 
   assert.match(line, /browser 30\.0s/);
   assert.match(line, /queue \+ cleanup 6\.0s/);
 });
+
+test('page screenshot: a too-tall viewport points at --full', async () => {
+  mock.reset();
+  const r = await run(['page', 'screenshot', 'https://app.example/', '--viewport', '1440x2600']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /Viewport out of range: 1440x2600/);
+  assert.match(r.stderr + r.stdout, /add --full \(e\.g\. --viewport 1440x900 --full\)/);
+});

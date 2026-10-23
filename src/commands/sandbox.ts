@@ -57,6 +57,10 @@ const CODE_OPENERS = new Set([
  * not an assignment (`x = 1` is Python-or-bash-ambiguous). Anything that
  * fails these checks still goes through the explicit-pin error below.
  */
+/** Longest --timeout one sandbox run accepts: the request has to finish
+ *  inside the load balancer's 300s idle limit, output upload included. */
+export const SANDBOX_MAX_TIMEOUT_S = 280;
+
 export function looksLikeShellCommand(code: string): boolean {
   if (code.includes('\n')) return false;
   const m = /^([A-Za-z0-9_.~/-]+)(\s|$)/.exec(code.trim());
@@ -280,7 +284,7 @@ sandboxCommand
   // `node` token still pins the language (so `python -c '...'` runs as python).
   .addOption(new Option('-c, --cmd <code>', 'Inline code (bash idiom: `sandbox run bash -c "<code>"`)').hideHelp())
   .addOption(new Option('-e, --eval <code>', 'Inline code (node idiom: `sandbox run node -e "<code>"`)').hideHelp())
-  .option('--timeout <seconds>', 'Execution timeout. Bare number = seconds; or pass an explicit unit that means the same on both this and `page eval --timeout`, e.g. --timeout 90s.', '30')
+  .option('--timeout <seconds>', 'Execution timeout, max 280s (longer work: a Gipity Job). Bare number = seconds; or pass an explicit unit that means the same on both this and `page eval --timeout`, e.g. --timeout 90s.', '30')
   .option(
     '--input <path>',
     'Narrow to specific project files instead of auto-mirroring the whole tree (repeatable). Use this only for >1 GB projects or when you want surgical control.',
@@ -442,13 +446,20 @@ GCC/Rust).
       process.exit(1);
     }
 
-    // Args are good - now it's worth resolving (and announcing) the project.
-    const { config } = await resolveProjectContext();
-
     // A bare number is native SECONDS; an explicit suffix (90s / 1500ms / 2m) is
     // portable with `page eval --timeout` and converted to seconds here.
     const durOpt = parseDuration(opts.timeout, 's');
     const timeout = durOpt ? Math.max(1, Math.round(durOpt.value)) : parseInt(opts.timeout, 10);
+    // The run is one HTTP request, and the connection is cut at the load
+    // balancer's 300s idle limit however long --timeout is: refuse what can't work.
+    if (timeout > SANDBOX_MAX_TIMEOUT_S) {
+      console.error(clrError(`--timeout ${timeout}s is over the ${SANDBOX_MAX_TIMEOUT_S}s limit for one sandbox run (it is a single HTTP call).`));
+      console.error(dim('  Split the work into shorter runs, or run it as a Gipity Job (`gipity skill read jobs`), which has no such limit.'));
+      process.exit(1);
+    }
+    // Args are good - now it's worth resolving (and announcing) the project.
+    const { config } = await resolveProjectContext();
+
     const cwd = resolveRelativeCwd();
 
     // A scratch path is never synced, so it can never reach the VFS the sandbox
@@ -543,7 +554,9 @@ GCC/Rust).
       // make every later sync propose deleting them. (`noSyncOutput` is the
       // wire name for --discard-output.)
       noSyncOutput: discardOutput.length ? discardOutput : undefined,
-    });
+    // Wait as long as the run may take, plus room for the mirror and output
+    // upload. The 60s default cut off any run asking for more than that.
+    }, { timeoutMs: (isNaN(timeout) ? 30 : timeout) * 1000 + 30_000 });
     const res = opts.json
       ? await doRun()
       : await withSpinner('Running in sandbox...', doRun, { done: null });
