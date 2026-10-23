@@ -659,6 +659,15 @@ test('gipity sandbox run rejects an empty --discard-output glob without touching
   assert.deepEqual(mock.requests(), [], 'no API call should precede glob validation');
 });
 
+test('gipity sandbox run rejects empty inline code (a "$(cat missing)" expansion) without touching the API', async () => {
+  mock.reset();
+  const r = await outsideProject(['sandbox', 'run', 'python', '']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /inline code is empty/);
+  assert.match(r.stderr, /--file <path>/);
+  assert.deepEqual(mock.requests(), [], 'no API call for empty code');
+});
+
 // ── scratch outputs: tmp/ files come back local-only, never into the project ─
 //
 // The server never persists scratch-namespace outputs to project storage;

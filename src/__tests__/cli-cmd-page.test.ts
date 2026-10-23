@@ -14,7 +14,7 @@ import {
   EVAL_SCRIPT_BUDGET_MIN_MS,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
-import { parseAtSpecs, buildHarness, PAUSED_SAMPLE, observeErrorHint } from '../commands/page-test.js';
+import { parseAtSpecs, buildHarness, JOIN_ALLOWANCE_MS, PAUSED_SAMPLE, observeErrorHint } from '../commands/page-test.js';
 
 let mock: MockServer;
 let home: string;
@@ -2126,6 +2126,31 @@ test('page test harness: a slot the page reached late (frozen) reads (paused); l
   const run = new Function(`return (async () => {\n${body}\n})();`) as () => Promise<{ samples: unknown[] }>;
   const out = await run();
   assert.deepEqual(out.samples, ['first', PAUSED_SAMPLE, 'live', 'live', 'live']);
+});
+
+test('page test harness: with a shared start, the observe window opens at that time, not at page load', async () => {
+  const startAt = Date.now() + 700;
+  const body = buildHarness(undefined, `1`, 'late', 200, 2, startAt);
+  const run = new Function(`return (async () => {\n${body}\n})();`) as () => Promise<{ startedAt: number; samples: unknown[] }>;
+  const out = await run();
+  assert.ok(out.startedAt >= startAt - 5, `window opened ${startAt - out.startedAt}ms before the shared start`);
+  assert.deepEqual(out.samples, [1, 1]);
+});
+
+test('page test: multi-client runs give the script room for the shared start; --at runs do not wait', async () => {
+  mock.reset();
+  mockInteractive({
+    Quokka: { label: 'Quokka', startedAt: 1000, endedAt: 9000, samples: [1, 2] },
+    Wombat: { label: 'Wombat', startedAt: 1500, endedAt: 9500, samples: [2, 2] },
+  });
+  const r = await run(['page', 'test', 'https://app.example/', '--clients', '2', '--labels', 'Quokka,Wombat', '--observe', '1']);
+  assert.equal(r.status, 0, r.stderr);
+  const sent = mock.requests().filter((q) => q.url === '/tools/browser/eval').map((q) => q.body as { expr: string; timeoutMs?: number });
+  assert.equal(sent.length, 2);
+  for (const b of sent) {
+    assert.match(b.expr, /__bw=Math\.min\(/, 'each client waits for the shared start');
+    assert.ok((b.timeoutMs ?? 0) >= JOIN_ALLOWANCE_MS + 8000, 'the script budget covers the wait plus the hold');
+  }
 });
 
 // A thrown --observe used to surface only as a bare `ObserveError: ...` sample,

@@ -417,6 +417,15 @@ GCC/Rust).
         process.exit(1);
       }
     }
+    // Empty code is never what the caller meant: usually `"$(cat missing.py)"`
+    // expanded to nothing, or an empty file. Say so here, before the server
+    // rejects it with a bare schema message.
+    if (!source?.trim()) {
+      console.error(clrError(filePath
+        ? `${filePath} is empty: nothing to run.`
+        : 'The inline code is empty: nothing to run. If it came from "$(cat <file>)", that file is missing or empty; pass --file <path> instead.'));
+      process.exit(1);
+    }
 
     // Language precedence: interpreter token > --language > file extension >
     // unambiguous-command-line heuristic (bash). resolveLanguage() exits when

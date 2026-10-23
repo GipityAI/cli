@@ -54,6 +54,12 @@ interface TimelineEvent { action: string; atMs: number; appliedMs: number | null
 
 const MAX_HOLD_MS = 15_000; // keep each in-page await under the ~20s browser action timeout
 const MIN_HOLD_MS = 1_000;
+// Clients start on separate browser containers, and a cold one can take longer
+// to load than a whole --hold, so "each client holds from its own load" left a
+// late client sampling after the early one had closed its page (a false
+// "did NOT overlap" even with --stagger 0). Every client instead waits, page
+// open, until a shared start time this far after its launch, then holds.
+export const JOIN_ALLOWANCE_MS = 12_000;
 
 // ── lifecycle actions (--at) ───────────────────────────────────────────────
 // Freeze, hide, or take one client offline partway through the hold window, so
@@ -179,13 +185,15 @@ function warnUnknownTokens(unknown: string[]): void {
 /** Build the statement-body script one client runs: do the one-time action,
  *  then sample `observe` `samples` times across `holdMs`, stamping in-page
  *  start/end so the caller can confirm the clients overlapped. */
-export function buildHarness(action: string | undefined, observe: string, label: string, holdMs: number, samples: number): string {
+export function buildHarness(action: string | undefined, observe: string, label: string, holdMs: number, samples: number, startAt?: number): string {
   const n = Math.max(2, samples);
   const interval = Math.max(0, Math.floor(holdMs / (n - 1)));
-  const lines: string[] = [
-    `const __label=${JSON.stringify(label)};`,
-    `const __t0=Date.now();`,
-  ];
+  const lines: string[] = [`const __label=${JSON.stringify(label)};`];
+  // Shared start (see JOIN_ALLOWANCE_MS). Capped so a skewed clock can't eat the budget.
+  if (startAt !== undefined) {
+    lines.push(`{ const __bw=Math.min(${startAt}-Date.now(),${JOIN_ALLOWANCE_MS}); if(__bw>0) await new Promise(function(r){setTimeout(r,__bw);}); }`);
+  }
+  lines.push(`const __t0=Date.now();`);
   if (action && action.trim()) {
     lines.push(
       `try{ ${action} }catch(__e){ return {label:__label,startedAt:__t0,endedAt:Date.now(),samples:[],actionError:String((__e&&__e.message)||__e)}; }`,
@@ -221,6 +229,7 @@ async function observeClient(
   holdMs: number,
   waitForSelector?: string,
   lifecycle?: AtStep[],
+  barrier = false,
 ): Promise<ObserveResult> {
   const base: ObserveResult = { i, label, samples: [], startedAt: 0, endedAt: 0 };
   try {
@@ -230,12 +239,14 @@ async function observeClient(
       waitMs: settleMs,
       waitForSelector: waitForSelector || undefined,
       waitForTimeoutMs: waitForSelector ? 5000 : undefined,
+      // The shared-start wait runs inside the script, so the script needs room for it.
+      timeoutMs: barrier ? JOIN_ALLOWANCE_MS + holdMs + 10_000 : undefined,
       // Timed from the start of the observe window; the server restores
       // anything still applied at the end of the hold so the harness finishes.
       lifecycle: lifecycle?.length ? { steps: lifecycle, untilMs: holdMs } : undefined,
     });
     // Server work ≈ nav + settle + the in-page hold; pollEvalResult adds 60s headroom.
-    const d = await pollEvalResult(kickoff.data.evalJobId, settleMs + holdMs);
+    const d = await pollEvalResult(kickoff.data.evalJobId, settleMs + holdMs + (barrier ? JOIN_ALLOWANCE_MS : 0));
     const raw = d.result?.trim() ?? '';
     if (raw.startsWith('EvalError:') || raw.startsWith('ObserveError:')) {
       return { ...base, error: raw };
@@ -343,6 +354,10 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
     if (atSpecs.length) console.log(muted(`lifecycle (ms into each client's hold): ${atSpecs.map((s) => s.trim()).join(', ')}`));
   }
 
+  // Shared start for multi-client runs. Not with --at: its steps are timed from
+  // the script's start on the server, and a variable wait would shift them.
+  const barrier = clients > 1 && atSpecs.length === 0;
+  const t0 = Date.now();
   const runs: Promise<ObserveResult>[] = [];
   for (let i = 0; i < clients; i++) {
     runs.push((async () => {
@@ -358,8 +373,9 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
         labelFor(i),
         hold,
         samples,
+        barrier ? t0 + i * stagger * 1000 + JOIN_ALLOWANCE_MS : undefined,
       );
-      return observeClient(clientUrl, expr, i, labelFor(i), settle, hold, opts.waitFor, lifecycle[i]);
+      return observeClient(clientUrl, expr, i, labelFor(i), settle, hold, opts.waitFor, lifecycle[i], barrier);
     })());
   }
   const results = (await Promise.all(runs)).sort((a, b) => a.i - b.i);
@@ -400,7 +416,7 @@ async function runInteractive(url: string, observe: string, opts: TestOpts): Pro
       '⚠ clients did NOT overlap in time: each ran in isolation, so any shared-state reading here is a FALSE NEGATIVE, not proof the app is broken.',
     ));
     console.log(muted(
-      '  Likely causes: --stagger ≥ --hold, or more --clients than free browser slots (they queued). Lower --stagger / raise --hold / fewer --clients and retry.',
+      `  Each client waits up to ${JOIN_ALLOWANCE_MS / 1000}s after launch for the others to load, then holds. Likely causes: --stagger ≥ --hold, or a client queued for a browser (more --clients than free slots). Lower --stagger / raise --hold / fewer --clients and retry.`,
     ));
   }
 
