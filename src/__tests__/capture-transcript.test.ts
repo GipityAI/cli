@@ -191,3 +191,15 @@ describe('parseTranscript usage totals', () => {
     assert.deepEqual(r.usage, { tokensIn: 8, tokensOut: 2 });
   });
 });
+
+it('capture: an entry over the ingest size cap is replaced with a note, small ones pass through', async () => {
+  const { fitEntryToCaps } = await import('../hooks/capture-runner.js');
+  const big = 'x'.repeat(320_000);
+  const r = fitEntryToCaps({ kind: 'tool_result', tool_use_id: 't1', tool_name: 'Read', content: [{ type: 'image', source: { data: big } }] });
+  assert.equal(r.kind, 'tool_result');
+  assert.match(String((r as { content: unknown }).content), /omitted from the capture: \d+ KB/);
+  const small = { kind: 'tool_result' as const, tool_use_id: 't2', content: 'ok' };
+  assert.equal(fitEntryToCaps(small), small);
+  const u = fitEntryToCaps({ kind: 'tool_use', tool_use_id: 't3', tool_name: 'Write', tool_input: { content: big } });
+  assert.match(JSON.stringify((u as { tool_input: unknown }).tool_input), /omitted from the capture/);
+});

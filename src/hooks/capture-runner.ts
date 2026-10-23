@@ -339,8 +339,40 @@ async function readStdin(): Promise<string> {
   });
 }
 
-async function postEntries(convGuid: string, entries: IngestEntry[]): Promise<boolean> {
-  if (!entries.length) return true;
+// Per-entry byte caps the ingest route enforces (platform routes/remote-sessions.ts),
+// kept a little under. An entry over them 400s its whole batch, and since the
+// watermark only advances on success, every later flush of the session failed
+// on the same entry: one big screenshot stopped capture for the rest of the run.
+const MAX_TOOL_JSON_BYTES = 190_000;
+const MAX_ASSISTANT_CHARS = 480_000;
+
+const bytesOf = (v: unknown): number => {
+  try { return Buffer.byteLength(JSON.stringify(v ?? null), 'utf-8'); } catch { return Infinity; }
+};
+
+/** Swap a payload the server would reject for a short note saying what was
+ *  dropped, so the rest of the transcript still lands. Exported for tests. */
+export function fitEntryToCaps(e: IngestEntry): IngestEntry {
+  const note = (n: number) => `[omitted from the capture: ${Math.round(n / 1024)} KB, over the size cap]`;
+  if (e.kind === 'tool_result') {
+    const n = bytesOf(e.content);
+    return n > MAX_TOOL_JSON_BYTES ? { ...e, content: note(n) } : e;
+  }
+  if (e.kind === 'tool_use') {
+    const n = bytesOf(e.tool_input);
+    return n > MAX_TOOL_JSON_BYTES ? { ...e, tool_input: { omitted: note(n) } } : e;
+  }
+  if (e.kind === 'assistant') {
+    const n = bytesOf(e.blocks);
+    if (e.text.length <= MAX_ASSISTANT_CHARS && n <= MAX_ASSISTANT_CHARS) return e;
+    return { ...e, text: e.text.slice(0, MAX_ASSISTANT_CHARS), blocks: [{ type: 'text', text: note(n) }] };
+  }
+  return e;
+}
+
+async function postEntries(convGuid: string, rawEntries: IngestEntry[]): Promise<boolean> {
+  if (!rawEntries.length) return true;
+  const entries = rawEntries.map(fitEntryToCaps);
   // Batch into server-cap-safe chunks.
   for (let i = 0; i < entries.length; i += INGEST_BATCH_MAX) {
     const slice = entries.slice(i, i + INGEST_BATCH_MAX);
