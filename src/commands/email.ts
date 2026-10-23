@@ -54,7 +54,7 @@ emailCommand
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Email', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
-    const res = await get<{ data: { totals: { n: number; credits: number }; items: Array<{ created_at: string; credits_deducted: string; detail: { to?: string; subject?: string; status?: string } | null }> } }>(
+    const res = await get<{ data: { totals: { n: number; credits: number }; items: Array<{ created_at: string; credits_deducted: string; detail: { to?: string; subject?: string; status?: string; reason?: string } | null }> } }>(
       `/account/logs/credits?operations=email_send,email_skip&app_guid=${config.projectGuid}&range=${encodeURIComponent(opts.range)}&limit=${encodeURIComponent(opts.limit)}`,
     );
 
@@ -68,5 +68,6 @@ emailCommand
       const subj = r.detail?.subject ? ` · ${r.detail.subject}` : '';
       const status = r.detail?.status ? ` [skipped: ${r.detail.status}]` : '';
       console.log(`  ${muted(when)}  ${to}${status ? warning(status) : ''}${muted(subj)}`);
+      if (r.detail?.reason) console.log(`      ${muted(r.detail.reason)}`);
     }
   }));

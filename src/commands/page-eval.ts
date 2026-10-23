@@ -14,6 +14,8 @@ export interface EvalResult {
   truncated: boolean;
   // Results of --step expressions, in order, each run against the SAME page load.
   stepResults?: string[];
+  // Server-side wall time of the browser command chain (see evalTimingLine).
+  browserMs?: number;
   // Result of the second expression run after an in-place reload (--reload).
   reloadResult?: string;
   reloadTruncated?: boolean;
@@ -388,6 +390,22 @@ export function slowRenderMessage(fps: number, o: { camera: boolean; waitMs: num
     + `2D/Phaser template: ${bold("(await import('./js/config.js')).advance(seconds)")}).`;
 }
 
+/** A slow eval should say which leg was slow, instead of leaving the caller to
+ *  guess a longer --wait. Silent under SLOW_EVAL_MS. Exported for tests. */
+const SLOW_EVAL_MS = 20_000;
+export function evalTimingLine(t: { hostMs: number; submitMs: number; pollMs: number; browserMs?: number }): string | null {
+  const total = t.hostMs + t.submitMs + t.pollMs;
+  if (total < SLOW_EVAL_MS) return null;
+  const s = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+  const parts = [
+    t.hostMs >= 500 ? `hosting files ${s(t.hostMs)}` : null,
+    t.submitMs >= 500 ? `camera/feed setup ${s(t.submitMs)}` : null,
+    t.browserMs !== undefined ? `browser ${s(t.browserMs)} (launch, page load, waits, script)` : `browser ${s(t.pollMs)}`,
+    t.browserMs !== undefined && t.pollMs - t.browserMs >= 2000 ? `queue + cleanup ${s(t.pollMs - t.browserMs)}` : null,
+  ].filter(Boolean);
+  return `timing: ${s(total)} = ${parts.join(' + ')}`;
+}
+
 /** Poll the async eval job until it finishes. Eval runs server-side as a
  *  short-lived job (so a long --wait can't trip the gateway idle timeout);
  *  we submit, then poll the result out of the job store. `expectedWorkMs` is
@@ -699,6 +717,7 @@ export const pageEvalCommand = new Command('eval')
         const { config } = await resolveProjectContext({});
         projectGuid = config.projectGuid;
       }
+      const hostStart = Date.now();
       if (opts.camera) {
         console.log(muted(`Hosting camera feed ${opts.camera}...`));
         camera = await uploadCameraFeed(projectGuid!, opts.camera);
@@ -720,6 +739,7 @@ export const pageEvalCommand = new Command('eval')
         sentExpr = withPrelude(sentExpr, `await new Promise((r) => setTimeout(r, ${settleAfterGateMs}));`);
       }
 
+      const submitStart = Date.now();
       const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
         url, expr: sentExpr, waitMs: sentWaitMs,
         steps: sentSteps.length ? sentSteps : undefined,
@@ -733,6 +753,7 @@ export const pageEvalCommand = new Command('eval')
         fakeMedia: opts.fakeMedia || !!camera || undefined,
         cameraUrl: camera?.url,
       });
+      const pollStart = Date.now();
       let d: EvalResult;
       try {
         d = await pollEvalResult(kickoff.data.evalJobId, evalWorkBudgetMs({
@@ -755,6 +776,11 @@ export const pageEvalCommand = new Command('eval')
         if (!hint) throw err;
         throw new Error(`${msg}\n${hint}`);
       }
+      const timing = evalTimingLine({
+        hostMs: submitStart - hostStart, submitMs: pollStart - submitStart,
+        pollMs: Date.now() - pollStart, browserMs: d.browserMs,
+      });
+      if (timing) console.error(muted(timing));
       const { result, noValue } = normalizeEvalResult(d.result);
       const reload = d.reloadResult !== undefined ? normalizeEvalResult(d.reloadResult) : undefined;
 

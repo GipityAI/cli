@@ -8,7 +8,7 @@ import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 import { timestampSlug, defaultFilename, augmentSandboxTimeout } from '../commands/page-screenshot.js';
 import {
-  summarizeExpr, evalWorkBudgetMs, pollEvalResult, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
+  summarizeExpr, evalWorkBudgetMs, pollEvalResult, evalTimingLine, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
   capScriptBudgetMs, budgetOverrunHint, navigationAbortHint, isEmptyStateResult,
   EVAL_SCRIPT_BUDGET_MS, EVAL_SCRIPT_BUDGET_CAMERA_MS, EVAL_SCRIPT_BUDGET_MAX_MS,
   EVAL_SCRIPT_BUDGET_MIN_MS,
@@ -2161,4 +2161,14 @@ test('page test explains an ObserveError sample, and stays quiet on clean sample
   assert.match(hint!, /your --observe expression threw/);
   assert.match(hint!, /matched nothing/);
   assert.equal(observeErrorHint([{ samples: ['ok', { n: 1 }] }]), null);
+});
+
+test('page eval timing line: silent when fast, names each leg when slow', () => {
+  assert.equal(evalTimingLine({ hostMs: 100, submitMs: 300, pollMs: 6000, browserMs: 5500 }), null);
+  const line = evalTimingLine({ hostMs: 2000, submitMs: 15000, pollMs: 36000, browserMs: 30000 })!;
+  assert.match(line, /^timing: 53\.0s = /);
+  assert.match(line, /hosting files 2\.0s/);
+  assert.match(line, /camera\/feed setup 15\.0s/);
+  assert.match(line, /browser 30\.0s/);
+  assert.match(line, /queue \+ cleanup 6\.0s/);
 });
