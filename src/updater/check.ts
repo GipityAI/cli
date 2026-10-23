@@ -2,7 +2,7 @@
 // Background updater. Invoked detached by the shim; can also be invoked
 // directly by `gipity update --force`.
 import { appendFileSync } from 'fs';
-import { UPDATE_LOG, readState, writeState, updatesDisabled } from './state.js';
+import { UPDATE_LOG, readState, writeState, updatesDisabled, isDevLink } from './state.js';
 import { npmInstallGipity, isWedged, resetLocalTree, acquireUpdateLock, releaseUpdateLock, type NpmInstallResult } from './install.js';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -61,6 +61,7 @@ export interface CheckOptions {
 }
 
 export async function runCheck(opts: CheckOptions = {}): Promise<{ updated: boolean; from?: string; to?: string; reason?: string }> {
+  if (isDevLink()) return { updated: false, reason: 'dev-link' };
   const state = readState();
 
   if (!opts.force) {

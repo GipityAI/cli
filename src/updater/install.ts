@@ -26,6 +26,10 @@ export interface NpmInstallResult {
  * precompiled (dist/) and its deps need no build step, so nothing is lost.
  */
 export function npmInstallGipity(version: string): NpmInstallResult {
+  // A missing cwd makes spawnSync fail with "spawnSync npm ENOENT", which reads
+  // as "npm is not installed". The tree can be gone because the user deleted it
+  // (our own recovery hint says to), so create it rather than mislead.
+  ensureLocalTree();
   const res = spawnSyncCommand(resolveCommand('npm'), ['install', '--no-audit', '--no-fund', '--ignore-scripts', `gipity@${version}`], {
     cwd: LOCAL_DIR,
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -49,6 +53,16 @@ const WEDGE_CODES = /\b(ENOTEMPTY|EEXIST|ENOTDIR|EISDIR|EJSONPARSE)\b/;
 
 export function isWedged(stderr: string): boolean {
   return WEDGE_CODES.test(stderr);
+}
+
+/** Make sure the local install dir and its package.json exist.
+ *  `dir` is overridable for tests only. */
+export function ensureLocalTree(dir: string = LOCAL_DIR): void {
+  mkdirSync(dir, { recursive: true });
+  const pkgJson = join(dir, 'package.json');
+  if (!existsSync(pkgJson)) {
+    writeFileSync(pkgJson, JSON.stringify({ name: 'gipity-local', private: true, version: '0.0.0' }, null, 2));
+  }
 }
 
 /** Wipe the local install tree back to a pristine, installable state.

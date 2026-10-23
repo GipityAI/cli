@@ -2,10 +2,10 @@
 // Thin launcher. Resolves the user-local install at ~/.gipity/local/, runs
 // it, and kicks off a detached background updater. Modeled on Claude Code.
 import { spawnCommand } from '../platform.js';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, resolve, join } from 'path';
-import { LOCAL_ENTRY } from './state.js';
+import { LOCAL_ENTRY, isDevLink } from './state.js';
 import { isBootstrapped, bootstrap } from './bootstrap.js';
 import { installOutputTrace } from '../trace.js';
 
@@ -17,15 +17,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(__dirname, '..', '..');
 const shimPkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf-8'));
 
-// Dev-link detection. Published tarballs ship `dist/**` only (see package.json
-// `files`), so a sibling `src/` means `gipity` was `npm link`ed from a source
-// checkout. In that case run THIS checkout's own dist and skip the bootstrap +
-// background updater entirely - otherwise the shim would defer to the last
-// PUBLISHED build in ~/.gipity/local/ and silently shadow your local changes.
-// Nothing persistent is written, so `just cli-unlink` (npm unlink) is the only
-// cleanup needed: once `gipity` no longer resolves to this checkout, dev mode
-// stops applying on its own.
-const isDevLink = existsSync(join(pkgRoot, 'src'));
+// Dev link (see isDevLink): run THIS checkout's own dist and skip the
+// bootstrap + background updater entirely - otherwise the shim would defer to
+// the last PUBLISHED build in ~/.gipity/local/ and silently shadow your local
+// changes. Nothing persistent is written, so `just cli-unlink` (npm unlink) is
+// the only cleanup needed.
+const devLink = isDevLink();
 
 function startBackgroundUpdater(): void {
   const checkScript = join(__dirname, 'check.js');
@@ -84,7 +81,7 @@ const isLoud =
   firstArg === 'version';
 
 // Dev link: run this checkout's own build, no bootstrap, no auto-update.
-if (isDevLink) {
+if (devLink) {
   await execSelf();
 } else if (!isBootstrapped() && !bootstrap(shimPkg.version, !isLoud)) {
   await execSelf();

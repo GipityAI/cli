@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readFileSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { compareSemver } from '../updater/check.js';
-import { isWedged, acquireUpdateLock, releaseUpdateLock, resetLocalTree } from '../updater/install.js';
+import { isWedged, acquireUpdateLock, releaseUpdateLock, resetLocalTree, ensureLocalTree } from '../updater/install.js';
+import { isDevLink } from '../updater/state.js';
 import { resolveCommand } from '../platform.js';
 
 describe('resolveCommand', () => {
@@ -80,6 +81,26 @@ describe('update lock + tree reset', () => {
     utimesSync(lock, old, old);
     assert.equal(acquireUpdateLock(lock), true);
     releaseUpdateLock(lock);
+  });
+
+  it('ensureLocalTree recreates a deleted install dir so npm gets a real cwd', () => {
+    // A missing cwd made the updater fail with "spawnSync npm ENOENT".
+    const local = join(tmp, 'gone', 'local');
+    ensureLocalTree(local);
+    const pkg = JSON.parse(readFileSync(join(local, 'package.json'), 'utf-8'));
+    assert.equal(pkg.name, 'gipity-local');
+  });
+
+  it('ensureLocalTree leaves an existing package.json alone', () => {
+    const local = join(tmp, 'local');
+    mkdirSync(local, { recursive: true });
+    writeFileSync(join(local, 'package.json'), '{"name":"gipity-local","dependencies":{"gipity":"1.0.0"}}');
+    ensureLocalTree(local);
+    assert.equal(JSON.parse(readFileSync(join(local, 'package.json'), 'utf-8')).dependencies.gipity, '1.0.0');
+  });
+
+  it('isDevLink is true when running from a source checkout (tests run from one)', () => {
+    assert.equal(isDevLink(), true);
   });
 
   it('resetLocalTree wipes node_modules and lockfile and rewrites package.json', () => {

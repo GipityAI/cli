@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { LOCAL_DIR, LOCAL_ENTRY, LOCAL_PKG_DIR, writeState, readState } from './state.js';
-import { npmInstallGipity, isWedged, resetLocalTree, acquireUpdateLock, releaseUpdateLock, type NpmInstallResult } from './install.js';
+import { existsSync } from 'fs';
+import { LOCAL_ENTRY, LOCAL_PKG_DIR, writeState, readState } from './state.js';
+import { ensureLocalTree, npmInstallGipity, isWedged, resetLocalTree, acquireUpdateLock, releaseUpdateLock, type NpmInstallResult } from './install.js';
 
 export function isBootstrapped(): boolean {
   return existsSync(LOCAL_ENTRY);
@@ -17,12 +16,7 @@ export function isBootstrapped(): boolean {
  * `gipity`, `gipity claude`, and `gipity --version`.
  */
 export function bootstrap(version: string, quiet = false): boolean {
-  mkdirSync(LOCAL_DIR, { recursive: true });
-
-  const pkgJsonPath = join(LOCAL_DIR, 'package.json');
-  if (!existsSync(pkgJsonPath)) {
-    writeFileSync(pkgJsonPath, JSON.stringify({ name: 'gipity-local', private: true, version: '0.0.0' }, null, 2));
-  }
+  ensureLocalTree();
 
   if (!acquireUpdateLock()) {
     // A background updater is mid-install; run from the current build now and
