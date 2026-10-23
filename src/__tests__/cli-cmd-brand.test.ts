@@ -34,6 +34,7 @@ test('gipity brand shows the resolved spec and asset list', async () => {
 
 test('gipity brand set --emoji posts icon_glyph and reports regenerated files', async () => {
   mock.reset();
+  mock.on('GET /projects/p_TestProj/files/tree', { body: { data: [] } });
   mock.on('POST /projects/p_TestProj/brand', { body: { data: {
     branding: { icon_glyph: '🦍' },
     resolved: { ...RESOLVED, glyph: '🦍', isEmoji: true },
@@ -46,6 +47,10 @@ test('gipity brand set --emoji posts icon_glyph and reports regenerated files', 
   assert.equal((req!.body as { icon_glyph?: string }).icon_glyph, '🦍');
   assert.match(r.stdout, /Regenerated 4 assets/);
   assert.match(r.stdout, /Deploy to publish the new assets: gipity deploy$/m);
+  // The server wrote those files; the CLI syncs right after so the local copy isn't stale.
+  const reqs = mock.requests();
+  const postAt = reqs.findIndex(q => q.method === 'POST' && q.url.endsWith('/brand'));
+  assert.ok(reqs.slice(postAt + 1).some(q => q.url.startsWith('/projects/p_TestProj/files/tree')), 'synced after the brand write');
 });
 
 test('gipity brand set with no fields errors out', async () => {
@@ -57,6 +62,7 @@ test('gipity brand set with no fields errors out', async () => {
 
 test('gipity brand apply --fix-head posts fix_head and reports the head update', async () => {
   mock.reset();
+  mock.on('GET /projects/p_TestProj/files/tree', { body: { data: [] } });
   mock.on('POST /projects/p_TestProj/brand', { body: { data: {
     branding: {},
     resolved: RESOLVED,
@@ -72,6 +78,7 @@ test('gipity brand apply --fix-head posts fix_head and reports the head update',
 
 test('gipity brand apply re-renders from the stored brand', async () => {
   mock.reset();
+  mock.on('GET /projects/p_TestProj/files/tree', { body: { data: [] } });
   mock.on('POST /projects/p_TestProj/brand', { body: { data: {
     branding: {},
     resolved: RESOLVED,

@@ -12,7 +12,9 @@
  */
 import { Command } from 'commander';
 import { get, post } from '../api.js';
-import { resolveProjectContext } from '../config.js';
+import { resolveProjectContext, getConfigPath } from '../config.js';
+import { sync } from '../sync.js';
+import { createProgressReporter } from '../progress.js';
 import { bold, muted, success } from '../colors.js';
 import { run } from '../helpers/index.js';
 
@@ -94,6 +96,7 @@ brandCommand
       return;
     }
     const res = await post<{ data: BrandData }>(`/projects/${config.projectGuid}/brand`, body);
+    await pullWrittenFiles(res.data.files ?? [], opts);
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     printBrand(res.data);
     reportFiles(res.data.files ?? []);
@@ -109,9 +112,18 @@ brandCommand
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
     const body: Record<string, unknown> = opts.fixHead ? { fix_head: true } : {};
     const res = await post<{ data: BrandData }>(`/projects/${config.projectGuid}/brand`, body);
+    await pullWrittenFiles(res.data.files ?? [], opts);
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     reportFiles(res.data.files ?? []);
   }));
+
+/** The server writes the regenerated assets (icons, manifest, index.html head)
+ *  into the project. Pull them now: a local copy left stale gets edited, and
+ *  the next deploy stops on a sync conflict. Only for the linked project in cwd. */
+async function pullWrittenFiles(files: string[], opts: { project?: string; json?: boolean }): Promise<void> {
+  if (!files.length || opts.project || !getConfigPath()) return;
+  await sync({ interactive: false, progress: opts.json ? undefined : createProgressReporter() });
+}
 
 function reportFiles(files: string[]): void {
   if (!files.length) {
