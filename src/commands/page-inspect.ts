@@ -72,7 +72,7 @@ export const pageInspectCommand = new Command('inspect')
   .option('--all', 'Include render-blocking, large resources, oversized images, overflow culprits, and LCP detail')
   .option('--no-fake-media', "Inspect with NO camera or microphone present, so a getUserMedia app takes its no-device error path (use this only when that fallback IS what you're inspecting)")
   .option('--device <name>', `Inspect as a real touch device: ${INSPECT_DEVICES.join(', ')}. Emulates touch events, mobile user-agent and DPR, so a touch-gated mobile layout is what gets inspected.`)
-  .option('--auth', 'Load the page signed in as you (your Gipity account), so pages behind a Sign-in-with-Gipity login are reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
+  .option('--auth', 'Load the page signed in as you (your Gipity account, or on your own app-user-mode app your app user), so pages behind a Sign-in-with-Gipity login are reachable. Works for your apps hosted on *.gipity.ai that use Sign in with Gipity or app users. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
   // Hidden redirect: agents reach for `page inspect --screenshot`. We don't take
   // an image here (`page screenshot` is the single path for that) — just point there.
   .addOption(new Option('--screenshot [path]', 'Capture a screenshot').hideHelp())

@@ -528,7 +528,7 @@ export const pageEvalCommand = new Command('eval')
     '--timeout <ms>',
     `How long the script itself may run IN the page. Bare number = MILLISECONDS (so 90s = 90000, NOT 90); or pass an explicit unit that means the same on both this and \`sandbox run --timeout\`: --timeout 90s. Its own await/setTimeout pauses count (default ${EVAL_SCRIPT_BUDGET_MS}, ${EVAL_SCRIPT_BUDGET_CAMERA_MS} with --camera/--fake-media; floor 1000 - a bare number under it is rejected as a unit mix-up, a suffixed one just floors; max ${EVAL_SCRIPT_BUDGET_MAX_MS}). Raise it to trace a sequence that unfolds over time (a game round, an animation). Distinct from --wait, which only sleeps BEFORE the script.`,
   )
-  .option('--auth', 'Evaluate signed in as you (your Gipity account), so a page behind a Sign-in-with-Gipity login is reachable. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
+  .option('--auth', 'Evaluate signed in as you (your Gipity account, or on your own app-user-mode app your app user), so a page behind a Sign-in-with-Gipity login is reachable. Works for your apps hosted on *.gipity.ai that use Sign in with Gipity or app users. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
   .option('--restore-db', "Snapshot the app database before the script runs and roll it back after, so a write-path check (click Approve, submit the form, edit a row) leaves the real data untouched. Use this whenever the eval WRITES - it is the undo for driving the deployed app against real project data. Same snapshot/undo standalone: gipity db checkpoint / gipity db restore.")
   .option('--json', 'Output as JSON')
   .action((url: string, exprArg: string | undefined, opts) => run('Page eval', async () => {
@@ -850,7 +850,7 @@ export const pageEvalCommand = new Command('eval')
         // not the undo, then hand-scrubbed leaked rows that skewed the next run.
         if (d.auth.established && !opts.restoreDb) console.log(muted(RESTORE_DB_TIP));
       } else {
-        console.log(muted('Auth: anonymous visitor (signed out; pass --auth to run as your Gipity account)'));
+        console.log(muted('Auth: anonymous visitor (signed out; pass --auth to run signed in as you)'));
       }
       if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);

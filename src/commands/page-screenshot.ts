@@ -70,7 +70,7 @@ function fmtMs(ms: number): string {
  *  signed-in session. */
 function printAuthLine(auth?: ScreenshotMeta['auth']): void {
   if (!auth?.requested) {
-    console.log(`${label('Auth')} ${muted('anonymous visitor (signed out; pass --auth to capture as your Gipity account)')}`);
+    console.log(`${label('Auth')} ${muted('anonymous visitor (signed out; pass --auth to capture signed in as you)')}`);
     return;
   }
   const who = getAuth()?.email;
@@ -321,7 +321,7 @@ export const pageScreenshotCommand = new Command('screenshot')
   .option('--no-reload-between', 'Skip reload between viewports (faster, lower fidelity - only safe for static pages)')
   .option('--fake-media', 'Grant a synthetic microphone + camera and auto-accept the getUserMedia prompt, so voice/camera apps render headlessly. The video feed is a built-in test pattern. To capture what the app does with a REAL frame (a hand, a face, an object), use --camera <path> instead.')
   .option('--camera <path>', 'Play a local image or video (.png/.jpg/.webp/.mp4/.webm/.y4m/.mjpeg) as the browser\'s WEBCAM feed, then capture, so the shot shows the app reacting to a frame you chose (detected gesture, boxes, labels). Implies --fake-media.')
-  .option('--auth', 'Capture the page signed in as you (your Gipity account), so UI behind a Sign-in-with-Gipity login is shown. Only works for apps using Sign in with Gipity, hosted on *.gipity.ai. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
+  .option('--auth', 'Capture the page signed in as you (your Gipity account, or on your own app-user-mode app your app user), so UI behind a Sign-in-with-Gipity login is shown. Works for your apps hosted on *.gipity.ai that use Sign in with Gipity or app users. Without this flag the page loads as a genuinely anonymous, signed-out visitor: nothing carries over from earlier --auth runs.')
   .option('--json', 'Output JSON metadata instead of a friendly summary')
   .addOption(new Option('--post-load-delay <ms>', 'Alias for --wait').hideHelp())
   // (--eval and the other JS-intent guesses are registered in one place from
