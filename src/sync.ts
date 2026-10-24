@@ -48,6 +48,16 @@ import * as tar from 'tar-stream';
  *  deletion in a small project isn't noise, and many deletions in a huge
  *  project probably are intentional. */
 const BULK_DELETE_COUNT = 10;
+
+/** New files above this size are held back from a full sync (see
+ *  holdLargeNewUploads). A stray render or dataset dropped into a project
+ *  folder otherwise uploads on every background sync: the UserPromptSubmit
+ *  hook timed out mid-upload, never finished, and stalled every prompt. */
+export const SYNC_LARGE_FILE_BYTES = 100 * 1024 * 1024;
+
+/** Folders deploy ships. Large files here are part of the app, so they always
+ *  sync (holding one back would silently drop it from the next deploy). */
+const DEPLOY_ROOTS = ['src/', 'functions/', 'migrations/'];
 const BULK_DELETE_FRACTION = 0.25;
 
 /** A tar download that stops producing bytes for this long - without ever
@@ -181,6 +191,10 @@ export interface SyncResult {
    *  in the baseline this run. Their baseline entries are dropped and the files
    *  are LEFT IN PLACE (never deleted on either side); the summary says so once. */
   appUploadsLeftLocal: string[];
+  /** New files over SYNC_LARGE_FILE_BYTES that this sync did NOT upload (see
+   *  holdLargeNewUploads). They stay local and are re-held on every run until
+   *  the user ignores them or uploads them on purpose with `gipity push`. */
+  heldLarge: Array<{ path: string; size: number }>;
   /** True when the user declined the uncertain-merge confirmation: nothing was
    *  applied, the directory is left exactly as it was. Callers should not treat
    *  this as a normal "synced" result. */
@@ -858,6 +872,41 @@ function withAppUploadNote(summary: string, leftLocal: string[]): string {
   return note ? `${summary}\n${note}` : summary;
 }
 
+/** Pull new, never-synced files over SYNC_LARGE_FILE_BYTES out of the upload
+ *  plan. A file already in the baseline was synced on purpose and keeps
+ *  syncing; files under the deploy roots always sync. Pure: returns a new plan
+ *  plus the held files. Exported for tests. */
+export function holdLargeNewUploads(
+  planned: PlanSummary, baselineFiles: Record<string, BaselineEntry>,
+): { planned: PlanSummary; held: Array<{ path: string; size: number }> } {
+  const held: Array<{ path: string; size: number }> = [];
+  const actions = planned.actions.filter(a => {
+    const hold = a.kind === 'upload' &&
+      !baselineFiles[a.path] &&
+      (a.localSize ?? 0) > SYNC_LARGE_FILE_BYTES &&
+      !DEPLOY_ROOTS.some(r => a.path.startsWith(r));
+    if (hold) held.push({ path: a.path, size: a.localSize ?? 0 });
+    return !hold;
+  });
+  if (!held.length) return { planned, held };
+  return { planned: { ...planned, actions, uploads: planned.uploads - held.length }, held };
+}
+
+/** One-paragraph note for held large files: what happened and the two ways out. */
+export function heldLargeNote(held: Array<{ path: string; size: number }>): string {
+  if (!held.length) return '';
+  const list = held.map(h => `  ${h.path} (${formatSize(h.size)})`).join('\n');
+  const one = held.length === 1;
+  return `Not uploaded: ${held.length} new file${one ? '' : 's'} over ${formatSize(SYNC_LARGE_FILE_BYTES)}:\n${list}\n` +
+    `Add ${one ? 'it' : 'them'} to .gipityignore to keep ${one ? 'it' : 'them'} local, or upload on purpose with \`gipity push <path>\`.`;
+}
+
+function withNotes(summary: string, leftLocal: string[], held: Array<{ path: string; size: number }>): string {
+  const note = heldLargeNote(held);
+  const base = withAppUploadNote(summary, leftLocal);
+  return note ? `${base}\n${note}` : base;
+}
+
 async function bulkDeleteGuard(
   p: PlanSummary, knownFiles: number, opts: SyncOptions,
 ): Promise<boolean> {
@@ -1026,14 +1075,14 @@ async function syncInner(
   if (needHash.length) p?.phase(`Hashing ${needHash.length} file${needHash.length === 1 ? '' : 's'}...`);
   await ensureLocalHashes(root, local, needHash);
 
-  const planned = plan(local, remote, baseline.files);
+  const { planned, held: heldLarge } = holdLargeNewUploads(plan(local, remote, baseline.files), baseline.files);
 
   if (opts.plan) {
     return {
       plan: planned, applied: 0, skipped: 0, errors: [],
-      summary: withAppUploadNote(formatPlan(planned), appUploadsLeftLocal),
+      summary: withNotes(formatPlan(planned), appUploadsLeftLocal, heldLarge),
       deferredDeletes: 0,
-      appUploadsLeftLocal,
+      appUploadsLeftLocal, heldLarge,
     };
   }
 
@@ -1066,7 +1115,7 @@ async function syncInner(
         ...shape,
         `Re-run with --yes to merge, or sync into an empty folder.`,
       ].join('\n'),
-      deferredDeletes: 0, aborted: true, appUploadsLeftLocal: [],
+      deferredDeletes: 0, aborted: true, appUploadsLeftLocal: [], heldLarge: [],
     });
 
     if (getAutoConfirm()) {
@@ -1633,9 +1682,9 @@ async function syncInner(
     applied,
     skipped: skippedByGuard,
     errors,
-    summary: withAppUploadNote(formatPlan(planned), appUploadsLeftLocal),
+    summary: withNotes(formatPlan(planned), appUploadsLeftLocal, heldLarge),
     deferredDeletes: skippedByGuard,
-    appUploadsLeftLocal,
+    appUploadsLeftLocal, heldLarge,
   };
 }
 

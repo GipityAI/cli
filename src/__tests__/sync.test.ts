@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { plan, formatPlan, walkLocal, readGipityIgnore, effectiveIgnore, resolveInRoot, extractTarToMap, type BaselineEntry } from '../sync.js';
+import { plan, formatPlan, holdLargeNewUploads, heldLargeNote, SYNC_LARGE_FILE_BYTES, walkLocal, readGipityIgnore, effectiveIgnore, resolveInRoot, extractTarToMap, type BaselineEntry } from '../sync.js';
 import { SCRATCH_IGNORE } from '../setup.js';
 import { shouldIgnore } from '../config.js';
 import { PassThrough } from 'stream';
@@ -520,5 +520,39 @@ describe('primer ignores are root-only', () => {
       assert.ok(names.includes('src/agents.md'), names.join(','));
       assert.ok(!names.includes('AGENTS.md'), names.join(','));
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('holdLargeNewUploads', () => {
+  const big = SYNC_LARGE_FILE_BYTES + 1;
+  const entry: BaselineEntry = { size: big, mtime: 't', sha256: 'h', serverVersion: 1 };
+  const local = new Map([
+    ['videos/render.mp4', { size: big, mtime: 't', sha256: 'a' }],
+    ['videos/clip.mp3', { size: 10, mtime: 't', sha256: 'b' }],
+    ['src/assets/intro.mp4', { size: big, mtime: 't', sha256: 'c' }],
+    ['data/known.bin', { size: big + 5, mtime: 't2', sha256: 'd' }],
+  ]);
+
+  it('holds only new, large files outside the deploy roots', () => {
+    const p = plan(local, new Map(), { 'data/known.bin': entry });
+    const { planned, held } = holdLargeNewUploads(p, { 'data/known.bin': entry });
+    assert.deepEqual(held, [{ path: 'videos/render.mp4', size: big }]);
+    const uploads = planned.actions.filter(a => a.kind === 'upload').map(a => a.path).sort();
+    assert.deepEqual(uploads, ['data/known.bin', 'src/assets/intro.mp4', 'videos/clip.mp3']);
+    assert.equal(planned.uploads, 3);
+  });
+
+  it('returns the plan untouched and an empty note when nothing is large', () => {
+    const p = plan(new Map([['a.txt', { size: 1, mtime: 't', sha256: 'x' }]]), new Map(), {});
+    const r = holdLargeNewUploads(p, {});
+    assert.equal(r.planned, p);
+    assert.equal(heldLargeNote(r.held), '');
+  });
+
+  it('the note names the file and both ways out', () => {
+    const note = heldLargeNote([{ path: 'videos/render.mp4', size: big }]);
+    assert.match(note, /videos\/render\.mp4/);
+    assert.match(note, /\.gipityignore/);
+    assert.match(note, /gipity push <path>/);
   });
 });
