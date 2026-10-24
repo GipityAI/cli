@@ -1,7 +1,8 @@
 import { Command } from 'commander';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { get, put, del } from '../api.js';
-import { requireConfig } from '../config.js';
+import { requireConfig, getProjectRoot } from '../config.js';
 import { error as clrError, muted, success, warning, bold } from '../colors.js';
 import { run, printResult } from '../helpers/index.js';
 
@@ -157,7 +158,14 @@ See: gipity skill read steam-game`)
       }
       const res = await put<{ data: { success: boolean; players_sharing_names?: number } }>(`/projects/${config.projectGuid}`, body);
       const lines: string[] = [];
-      if (body.auth_mode) lines.push(success(`Sign-in set to "${body.auth_mode}".`));
+      if (body.auth_mode) {
+        lines.push(success(`Sign-in set to "${body.auth_mode}".`));
+        // gipity.yaml is the source of truth (deploys apply it), so keep it in step.
+        const root = getProjectRoot();
+        if (root && writeYamlAuthMode(join(root, 'gipity.yaml'), body.auth_mode)) {
+          lines.push(muted('gipity.yaml: auth.mode updated (deploys apply it).'));
+        }
+      }
       if (body.unique_player_names !== undefined) {
         lines.push(success(`Unique names ${body.unique_player_names ? 'on' : 'off'}.`));
         const sharing = res.data.players_sharing_names ?? 0;
@@ -231,4 +239,20 @@ See: gipity skill read steam-game`)
       if (provider === 'google') lines.push(muted('Existing Google users keep their accounts.'));
       printResult(lines.join('\n'), opts, res.data);
     }));
+}
+
+/** Write `auth: { mode }` into gipity.yaml, the app's source of truth for its
+ *  sign-in mode (every deploy applies it). A text edit, so comments survive:
+ *  replace an existing top-level `auth:` block, or append one. Returns false
+ *  when the project has no gipity.yaml. Exported for tests. */
+export function writeYamlAuthMode(yamlPath: string, mode: string): boolean {
+  if (!existsSync(yamlPath)) return false;
+  const text = readFileSync(yamlPath, 'utf-8');
+  const block = `auth:\n  mode: ${mode}\n`;
+  const existing = /^auth:[^\n]*\n(?:[ \t]+[^\n]*\n|[ \t]*\n)*/m;
+  const next = existing.test(text)
+    ? text.replace(existing, block)
+    : `${text.replace(/\n*$/, '\n')}\n# Who signs in to the app: gipity | app (its own users, incl. guests) | both\n${block}`;
+  writeFileSync(yamlPath, next);
+  return true;
 }

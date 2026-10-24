@@ -365,3 +365,22 @@ test('gipity load --json prints only JSON on stdout', { skip: process.platform =
   assert.equal(parsed.created, 'loaded');
   assert.match(r.stderr, /Resolved template vars/);
 });
+
+test('writeYamlAuthMode appends an auth block, then replaces it, keeping the rest of the file', async () => {
+  const { writeYamlAuthMode } = await import('../commands/project-auth.js');
+  const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const p = join(mkdtempSync(join(tmpdir(), 'yaml-auth-')), 'gipity.yaml');
+  assert.equal(writeYamlAuthMode(join(p, '..', 'missing.yaml'), 'app'), false);
+  writeFileSync(p, 'version: 1\n# keep me\ndeploy:\n  phases:\n    - name: files\n      type: static\n');
+  assert.equal(writeYamlAuthMode(p, 'both'), true);
+  const once = readFileSync(p, 'utf-8');
+  assert.match(once, /^auth:\n  mode: both\n/m);
+  assert.match(once, /# keep me/);
+  writeYamlAuthMode(p, 'gipity');
+  const twice = readFileSync(p, 'utf-8');
+  assert.equal(twice.match(/^auth:/gm)?.length, 1);
+  assert.match(twice, /^auth:\n  mode: gipity\n/m);
+  assert.match(twice, /- name: files\n      type: static/);
+});
