@@ -96,3 +96,25 @@ test('gipity file rollback <datetime> POSTs and prints summary', async () => {
   assert.match(r.stdout, /Rolled back/);
   assert.match(r.stdout, /3 files restored/);
 });
+
+test('gipity file rm <folder> reports the folder and its file count', async () => {
+  mock.reset();
+  mock.on('DELETE /projects/p_TestProj/files', { body: { success: true, data: { folder: true, deleted_files: 1 } } });
+  const r = await fresh(['file', 'rm', 'music']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Deleted folder: music \(1 file\)/);
+});
+
+test('gipity file rm on a large folder needs --yes; with it the confirmed delete goes through', async () => {
+  mock.reset();
+  mock.on('DELETE /projects/p_TestProj/files', (req) => (req.url.includes('confirm=1')
+    ? { body: { success: true, data: { folder: true, deleted_files: 12 } } }
+    : { status: 409, body: { error: { code: 'CONFIRM_REQUIRED', message: 'Deleting music removes 12 files.' }, data: { file_count: 12 } } }));
+  const blocked = await fresh(['file', 'rm', 'music']);
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /--yes/);
+  const ok = await fresh(['file', 'rm', 'music', '--yes']);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /Deleted folder: music \(12 files\)/);
+  assert.ok(mock.requests().some((q) => q.url.includes('confirm=1')), 'sent confirm=1');
+});

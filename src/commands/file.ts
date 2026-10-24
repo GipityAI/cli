@@ -1,7 +1,7 @@
 import { Command } from 'commander';
-import { get, del, post } from '../api.js';
+import { get, del, post, ApiError } from '../api.js';
 import { resolveProjectContext } from '../config.js';
-import { formatSize } from '../utils.js';
+import { formatSize, confirm } from '../utils.js';
 import { info, muted } from '../colors.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
@@ -93,15 +93,29 @@ fileCommand
 
 fileCommand
   .command('rm <path>')
-  .description('Delete a file or folder')
+  .description('Delete a file or folder (a folder over 5 files asks first; --yes skips that)')
+  .option('--yes', 'Delete a large folder without asking')
   .option('--json', 'Output as JSON')
   .action((path: string, opts) => run('Delete', async () => {
     const { config } = await resolveProjectContext();
-    const res = await del<{ success: boolean }>(
-      `/projects/${config.projectGuid}/files?path=${encodeURIComponent(path)}`
-    );
-
-    printResult(`Deleted: ${path}`, opts, res);
+    const url = (confirmed: boolean) =>
+      `/projects/${config.projectGuid}/files?path=${encodeURIComponent(path)}${confirmed ? '&confirm=1' : ''}`;
+    type DeleteRes = { success: boolean; data?: { folder: true; deleted_files: number } };
+    let res: DeleteRes;
+    try {
+      res = await del<DeleteRes>(url(!!opts.yes));
+    } catch (err) {
+      // The server holds a folder delete over 5 files until it is confirmed.
+      if (!(err instanceof ApiError && err.code === 'CONFIRM_REQUIRED')) throw err;
+      const n = Number(err.data?.file_count ?? 0);
+      if (!await confirm(`Delete ${path} and the ${n} files under it?`, { skip: opts.yes })) {
+        console.log('Cancelled.');
+        return;
+      }
+      res = await del<DeleteRes>(url(true));
+    }
+    const n = res.data?.deleted_files;
+    printResult(res.data?.folder ? `Deleted folder: ${path} (${n} file${n === 1 ? '' : 's'})` : `Deleted: ${path}`, opts, res);
   }));
 
 interface VersionEntry {
