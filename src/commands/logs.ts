@@ -179,6 +179,11 @@ Examples:
         const dur = d.duration_ms as number | null;
         console.log(`             ${muted(`${d.trigger_type} • ${dur ?? '?'}ms`)}${d.error_message ? muted(' • ') + clrError(String(d.error_message).slice(0, 200)) : ''}`);
       }
+      if (e.kind === 'traffic') {
+        const where = [d.city, d.region, d.country].filter(Boolean).join(', ');
+        const bits = [where, d.referrer ? `from ${d.referrer}` : ''].filter(Boolean).join(' • ');
+        if (bits) console.log(`             ${muted(bits)}`);
+      }
       if (e.kind === 'service') {
         const dur = d.latency_ms as number | null;
         console.log(`             ${muted(`${d.service} (${d.provider ?? '?'}/${d.model ?? '?'}) • ${dur ?? '?'}ms`)}${d.error_message ? muted(' • ') + clrError(String(d.error_message).slice(0, 200)) : ''}`);
@@ -187,5 +192,92 @@ Examples:
 
     if (truncated) {
       console.log(`\n${muted(`(truncated at ${limit} entries: bump --limit or narrow --filter)`)}`);
+    }
+  }));
+
+interface TopItem { key: string; count: number; sessions?: number; region?: string | null; country?: string | null }
+interface TopResponse { data: { items: TopItem[] } }
+
+const TRAFFIC_RANGES = ['1h', '24h', '7d', '30d'];
+
+logsCommand
+  .command('traffic')
+  .description('Visitor summary for this app: page views, sessions, and the top countries, cities, pages and referring sites')
+  .addOption(new Option('--range <window>', 'Time window').choices(TRAFFIC_RANGES).default('7d'))
+  .option('--country <code>', 'Only visitors from one country (ISO code, e.g. US)')
+  .option('--limit <n>', 'Rows per list', '10')
+  .option('--json', 'Output as JSON (parseable by agents / pipes)')
+  .addHelpText('after', `
+Counts page views recorded by the Gipity tracker (gipity.js), on a Gipity app or
+on any other site that loads it with this project's data-app. Country and city
+come from each visitor's IP address when the view arrives; the address itself is
+not stored.
+
+Examples:
+  $ gipity logs traffic                    Last 7 days
+  $ gipity logs traffic --range 24h        Last 24 hours
+  $ gipity logs traffic --country US       US visitors only: their pages and cities
+  $ gipity logs traffic --json             { pageviews, sessions, countries, cities, pages, referrers }
+
+Page-by-page rows: gipity logs app --type traffic --since 1h
+`)
+  .action((opts) => run('Traffic', async () => {
+    const config = requireConfig();
+    const limit = Math.min(Math.max(parseInt(opts.limit, 10) || 10, 1), 50);
+    const country = opts.country ? String(opts.country).trim().toUpperCase() : undefined;
+    if (country !== undefined && !/^[A-Z]{2}$/.test(country)) {
+      throw new Error(`--country takes a two-letter country code (e.g. US), not "${opts.country}"`);
+    }
+    const base = new URLSearchParams({ range: String(opts.range), app_guid: config.projectGuid });
+    const top = (signal: string) => {
+      const qs = new URLSearchParams(base);
+      qs.set('signal', signal);
+      qs.set('limit', String(limit));
+      if (country) qs.set('country', country);
+      return get<TopResponse>(`/account/logs/top?${qs.toString()}`).then((r) => r.data.items);
+    };
+    const [stats, sessions, countries, cities, pages, referrers] = await Promise.all([
+      get<{ data: { cards: { traffic: number } } }>(`/account/logs/stats?${base.toString()}`),
+      get<{ data: { sessions: number; live: number } }>(`/account/logs/stats/sessions?${base.toString()}`),
+      top('country'), top('city'), top('path'), top('referrer_host'),
+    ]);
+
+    const summary = {
+      range: String(opts.range),
+      country: country ?? null,
+      pageviews: stats.data.cards.traffic,
+      sessions: sessions.data.sessions,
+      live: sessions.data.live,
+      countries, cities, pages, referrers,
+    };
+    if (opts.json) {
+      console.log(JSON.stringify(summary));
+      return;
+    }
+
+    const scope = country ? `, visitors from ${country}` : '';
+    if (country) {
+      console.log(`${bold('Traffic')} ${muted(`(last ${summary.range}${scope})`)}\n`);
+    } else {
+      console.log(`${bold('Traffic')} ${muted(`(last ${summary.range})`)}: ${summary.pageviews} page views, ${summary.sessions} sessions, ${summary.live} live now\n`);
+    }
+    const section = (title: string, items: TopItem[], label: (i: TopItem) => string) => {
+      console.log(bold(title));
+      if (items.length === 0) { console.log(`  ${muted('none in this window')}\n`); return; }
+      const width = Math.min(Math.max(...items.map((i) => label(i).length)), 48);
+      for (const i of items) {
+        const name = label(i);
+        const shown = name.length > 48 ? name.slice(0, 45) + '...' : name.padEnd(width);
+        const sess = typeof i.sessions === 'number' ? muted(`  ${i.sessions} sessions`) : '';
+        console.log(`  ${shown}  ${String(i.count).padStart(6)} views${sess}`);
+      }
+      console.log('');
+    };
+    section('Countries', countries, (i) => i.key);
+    section('Cities', cities, (i) => [i.key, i.region, i.country].filter(Boolean).join(', '));
+    section('Pages', pages, (i) => i.key);
+    section('Referring sites', referrers, (i) => i.key);
+    if (countries.length === 0 && pages.length === 0) {
+      console.log(muted('No page views yet. Load gipity.js on the site with data-app="' + config.projectGuid + '" (gipity skill read app-debugging).'));
     }
   }));

@@ -101,3 +101,66 @@ test('gipity logs fn <name> still paints error red and limit_exceeded as a warni
   assert.match(errLine, /\x1b\[(31|91)m/);
   assert.match(limLine, /\x1b\[(33|93)m/);
 });
+
+function mockTraffic() {
+  mock.on('GET /account/logs/stats', { body: { data: { cards: { traffic: 42 } } } });
+  mock.on('GET /account/logs/stats/sessions', { body: { data: { sessions: 17, live: 2 } } });
+  mock.on('GET /account/logs/top', (req) => {
+    const signal = new URL(req.url, 'http://x').searchParams.get('signal');
+    const items: Record<string, unknown[]> = {
+      country: [{ key: 'US', count: 30, sessions: 12 }, { key: 'CA', count: 12, sessions: 5 }],
+      city: [{ key: 'Portland', region: 'Oregon', country: 'US', count: 20, sessions: 8 }],
+      path: [{ key: '/clips/', count: 25, sessions: 10 }],
+      referrer_host: [{ key: 'www.instagram.com', count: 9, sessions: 7 }],
+    };
+    return { body: { data: { signal, items: items[signal ?? ''] ?? [] } } };
+  });
+}
+
+test('gipity logs traffic summarizes views, sessions and the top countries, cities, pages and sites', async () => {
+  mock.reset();
+  mockTraffic();
+  const r = await fresh(['logs', 'traffic']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /42 page views, 17 sessions, 2 live now/);
+  assert.match(r.stdout, /Countries[\s\S]*US\s+30 views/);
+  assert.match(r.stdout, /Portland, Oregon, US/);
+  assert.match(r.stdout, /\/clips\//);
+  assert.match(r.stdout, /www\.instagram\.com/);
+  const top = mock.requests().filter((q) => q.url.startsWith('/account/logs/top'));
+  assert.ok(top.every((q) => q.url.includes('app_guid=p_TestProj') && q.url.includes('range=7d')));
+});
+
+test('gipity logs traffic --country passes the code through and --json returns the summary', async () => {
+  mock.reset();
+  mockTraffic();
+  const r = await fresh(['logs', 'traffic', '--country', 'us', '--range', '24h', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout);
+  assert.equal(parsed.country, 'US');
+  assert.equal(parsed.pageviews, 42);
+  assert.equal(parsed.countries[0].key, 'US');
+  const top = mock.requests().filter((q) => q.url.startsWith('/account/logs/top'));
+  assert.ok(top.length === 4 && top.every((q) => q.url.includes('country=US') && q.url.includes('range=24h')));
+});
+
+test('gipity logs traffic rejects a country that is not a two-letter code', async () => {
+  mock.reset();
+  mockTraffic();
+  const r = await fresh(['logs', 'traffic', '--country', 'USA']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /two-letter country code/);
+});
+
+test('gipity logs app --type traffic shows where each view came from', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/logs/app', { body: { data: {
+    entries: [{ kind: 'traffic', at: '2026-10-31T10:00:00Z', severity: 'info', summary: 'GET /clips/',
+      detail: { path: '/clips/', referrer: 'https://www.instagram.com/', city: 'Toronto', region: 'Ontario', country: 'CA' } }],
+    since: '1 hour', severity: 'all', types: ['traffic'], count: 1, truncated: false,
+  } } });
+  const r = await fresh(['logs', 'app', '--type', 'traffic', '--since', '1h']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Toronto, Ontario, CA/);
+  assert.match(r.stdout, /from https:\/\/www\.instagram\.com\//);
+});
