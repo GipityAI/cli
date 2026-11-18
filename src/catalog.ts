@@ -31,6 +31,7 @@ export const TEMPLATES: CatalogEntry[] = [
 export const HIDDEN: CatalogEntry[] = [
   { key: 'app-itsm', hint: 'IT service management / helpdesk / ticketing' },
   { key: 'monitor', hint: 'the Gipity account web app (projects, deploys, logs, billing)' },
+  { key: 'status', hint: 'Gipity\'s own status page (uptime, history, incidents)' },
   { key: 'outreach-agent', hint: 'incomplete: AI-run outreach funnel (needs porting to workflow tools)' },
 ];
 

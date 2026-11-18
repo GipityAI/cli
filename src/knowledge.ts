@@ -29,6 +29,7 @@ Only skip this on a build request if the user explicitly says not to.
 Hidden types (do NOT suggest unsolicited - use only when the user explicitly asks for that domain):
     - \`app-itsm\` - IT Service Management app (helpdesk, ticketing, incident management).
     - \`monitor\` - The Gipity account web app, served by Gipity itself - not something to install into a project.
+    - \`status\` - Gipity's own status page (status.gipity.ai) - not something to install into a project.
     - \`outreach-agent\` - AI outreach / drip-email / lifecycle funnel - move a list of people through stages (sign up, activate, pay) with personalized, human-approved emails on an auto-cadence and a self-improving agent that learns from your edits
 
 Kits are reusable building blocks added to an existing app, not whole templates - their files land in \`src/packages/<name>/\`:
