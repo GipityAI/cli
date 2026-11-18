@@ -228,6 +228,36 @@ test('gipity records history <table> with no id reads the table-wide feed', asyn
   assert.match(r.stdout, /created incident "Disk full"/);
 });
 
+// --jsonl streams the whole history download straight to stdout, untouched.
+test('gipity records history <table> --jsonl writes the JSON Lines export to stdout', async () => {
+  mock.reset();
+  const lines = '{"action":"create","entity_id":"1"}\n{"action":"create","entity_id":"2"}\n';
+  let url = '';
+  mock.on('GET /api/p_TestProj/records/commands/history', (req) => {
+    url = req.url;
+    return { raw: lines, contentType: 'application/x-ndjson' };
+  });
+  const r = await fresh(['records', 'history', 'commands', '--jsonl']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(url, /format=jsonl/);
+  assert.equal(r.stdout, lines);
+
+  const withId = await fresh(['records', 'history', 'commands', '7', '--jsonl']);
+  assert.notEqual(withId.status, 0);
+  assert.match(withId.stderr + withId.stdout, /--jsonl exports a whole table/);
+});
+
+test('gipity records config <table> --append-only sends append_only: true', async () => {
+  mock.reset();
+  mock.on('PATCH /api/p_TestProj/records/commands/config', { body: { data: {
+    table_name: 'commands', auth_level: 'member', searchable: false, primary_key_column: 'id', append_only: true,
+  } } });
+  const r = await fresh(['records', 'config', 'commands', '--append-only']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(mock.requests().at(-1)?.body, { append_only: true });
+  assert.match(r.stdout, /append-only/);
+});
+
 // --anon exercises the signed-out visitor path: an app token is minted and no
 // owner Authorization header is sent.
 test('gipity records list --anon mints an app token and sends no owner auth', async () => {

@@ -1,5 +1,6 @@
 import { Command, Option } from 'commander';
-import { get, post, put, patch, del, publicRequest, mintAppToken } from '../api.js';
+import { pipeline } from 'stream/promises';
+import { get, post, put, patch, del, publicRequest, mintAppToken, downloadStream } from '../api.js';
 import { getAuth } from '../auth.js';
 import { requireConfig } from '../config.js';
 import { bold, muted } from '../colors.js';
@@ -52,7 +53,7 @@ recordsCommand
     const res = await get<{ data: any[] }>(`/api/${config.projectGuid}/records-config`);
 
     printList(res.data, opts, 'No tables configured for Records API. Configure one with `gipity records config <table> --auth <level>`.', t =>
-      `${bold(t.table_name)}  ${muted(t.auth_level)}  ${muted(`pk=${t.primary_key_column}`)}  ${muted(`db=${t.database_name}`)}`
+      `${bold(t.table_name)}  ${muted(t.auth_level)}  ${muted(`pk=${t.primary_key_column}`)}  ${muted(`db=${t.database_name}`)}${t.append_only ? `  ${muted('append-only')}` : ''}`
     );
   }));
 
@@ -66,6 +67,7 @@ recordsCommand
   .option('--auto-number <prefix>', 'Number new records automatically, e.g. INC -> INC0001001 (pass "none" to turn off). Same as auto_number in gipity.yaml')
   .option('--auto-number-pad <n>', 'Zero-pad width of the auto-number (default 7)')
   .option('--auto-number-column <col>', 'Column the auto-number is written to (default: number)')
+  .option('--append-only', "Make the table inserts-only for good: updates, deletes and purges are refused for everyone, including raw SQL. Can't be undone. Same as append_only: true in gipity.yaml")
   .option('--json', 'Output as JSON')
   .action((table: string, opts) => run('Config', async () => {
     const config = requireConfig();
@@ -73,7 +75,7 @@ recordsCommand
 
     // No setter flags → just show the current config.
     const setting = opts.auth || opts.searchable !== undefined || opts.primaryKey || opts.softDelete
-      || opts.autoNumber || opts.autoNumberPad || opts.autoNumberColumn;
+      || opts.autoNumber || opts.autoNumberPad || opts.autoNumberColumn || opts.appendOnly;
     if (!setting) {
       const res = await get<{ data: any }>(base);
       printResult(JSON.stringify(res.data, null, 2), opts, res.data);
@@ -92,6 +94,7 @@ recordsCommand
       body.auto_number_pad = pad;
     }
     if (opts.autoNumberColumn) body.auto_number_column = opts.autoNumberColumn;
+    if (opts.appendOnly) body.append_only = true;
 
     const res = await patch<{ data: any }>(base, body);
     const d = res.data;
@@ -99,7 +102,7 @@ recordsCommand
       ? `${d.auto_number_prefix} (pad ${d.auto_number_pad}, column ${d.auto_number_column})`
       : 'off';
     printResult(
-      `Configured "${table}": auth=${d.auth_level}, searchable=${d.searchable}, pk=${d.primary_key_column}, auto-number=${autoNumber}`,
+      `Configured "${table}": auth=${d.auth_level}, searchable=${d.searchable}, pk=${d.primary_key_column}, auto-number=${autoNumber}${d.append_only ? ', append-only' : ''}`,
       opts, d,
     );
   }));
@@ -162,9 +165,18 @@ recordsCommand
   .command('history <table> [id]')
   .description('Audit history (who/what changed it, with English summaries). Omit <id> for the whole table\'s feed.')
   .option('--limit <n>', 'Max events', '20')
+  .option('--jsonl', 'Export the WHOLE table history to stdout as JSON Lines, oldest first (owner/editor; ignores --limit)')
   .option(ANON_FLAG, ANON_HELP)
   .option('--json', 'Output as JSON')
   .action((table: string, id: string | undefined, opts) => run('History', async () => {
+    if (opts.jsonl) {
+      if (id) throw new Error('--jsonl exports a whole table: drop the <id>');
+      if (opts.anon) throw new Error('--jsonl needs the owner or an editor: drop --anon');
+      const config = requireConfig();
+      const body = await downloadStream(`/api/${config.projectGuid}/records/${encodeURIComponent(table)}/history?format=jsonl`);
+      await pipeline(body, process.stdout, { end: false });
+      return;
+    }
     const api = await recordsHttp(opts);
     // Table-wide feed when no id is given - the same endpoint an activity/history
     // view reads, so verifying it needs no hand-built HTTP call.
