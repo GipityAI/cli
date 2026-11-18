@@ -58,7 +58,7 @@ You are the developer. Write files in this directory - Gipity's editor hooks (in
 
 ## Use first-party services before reaching outside
 
-Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, web push notifications (Gipity Notify - no VAPID keys, no Firebase/OneSignal; works on iOS home-screen web apps), semantic search (\`embed()\` + pgvector in the app's own DB - no Pinecone/Weaviate/vector DB), and email (from a deployed app's function with the injected \`email()\` service - \`services: ['email']\`, no SMTP/SendGrid/Nodemailer; check it with \`gipity email test <to>\`). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
+Gipity ships first-party services for what apps usually pull from third parties - auth, location/geocoding, LLM, image/audio/video generation, transcription, file uploads, realtime, web push notifications (Gipity Notify - no VAPID keys, no Firebase/OneSignal; works on iOS home-screen web apps), semantic search (\`embed()\` + pgvector in the app's own DB - no Pinecone/Weaviate/vector DB), and email (from a deployed app's function with the injected \`email()\` service - \`services: ['email']\`, no SMTP/SendGrid/Nodemailer; "email me when..." is \`email({ to: 'owner', ... })\`, which reaches the app owner with no address or secret; check it with \`gipity email test <to>\`). Before calling an external API or adding an npm package for one of these, check \`gipity skill list\` for a match. First-party services need no API keys, cost less, and keep data in-house. Reach outside only when the catalog has no equivalent - and say so when you do.
 
 ## Don't guess Gipity facts - look them up
 
@@ -112,7 +112,7 @@ mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <s
 
 ## CLI quick reference
 
-Key commands: \`gipity add <template|kit>\`, \`gipity brand set --emoji <e>|--color <hex>\` (regenerate the app's icons + social share card), \`gipity deploy [prod|<env>]\`, \`gipity env\` (list/create/delete environments), \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\` - never hardcode keys), \`gipity skill read <name>\`.
+Key commands: \`gipity add <template|kit>\`, \`gipity brand set --emoji <e>|--color <hex>\` (regenerate the app's icons + social share card), \`gipity deploy [prod|<env>]\`, \`gipity env\` (list/create/delete environments), \`gipity sandbox run\`, \`gipity page inspect <url>\`, \`gipity page screenshot <url>\`, \`gipity db query "SQL"\`, \`gipity fn call <name>\`, \`gipity logs fn <name>\`, \`gipity secrets set <NAME> <value> [--account]\` (store an API key/token encrypted; read in functions via \`secrets.get('NAME')\`; write-only, so keep a copy of any value another service also needs - never hardcode keys), \`gipity skill read <name>\`.
 Rename for findability: \`gipity project rename <name>\` renames the current project's display name (the slug and deployed URLs never change); it's the label users scan in Monitor and \`gipity project\`, so keep it SHORT: 2-4 words, at most 40 characters, no trailing punctuation (e.g. "Stripe checkout", "Tetris game").
 Pull an existing remote project local (given its URL/slug): \`mkdir -p ~/GipityProjects/<slug> && cd ~/GipityProjects/<slug> && gipity init <slug>\` (adopts the matching project and syncs files down - this is the "clone").
 Move whole apps in/out: \`gipity save\` (export this project as a portable \`.gip\` bundle), \`gipity load <file.gip | github:owner/repo>\` (import as a NEW project; \`--inspect\` to preview), \`gipity github connect\` (1-2 click GitHub access for imports). Porting a Vercel/Replit/Lovable app? Load the \`app-import\` skill first.
@@ -211,7 +211,7 @@ Kit skills (reusable building blocks - \`gipity add <kit>\`):
 - \`leaderboard\` - game leaderboards: high scores or times, daily/weekly/monthly/season boards, tiebreaks, replays, cheat checks, bans
 
 Other key skills:
-- \`email\` - sending email from a deployed app with the email() service or a workflow notify step (no setup/keys), gipity email test/log, HTML formatting, images
+- \`email\` - sending email from a deployed app with the email() service or a workflow notify step (no setup/keys; to: 'owner' emails you, the app owner), gipity email test/log, HTML formatting, images
 - \`sandbox-tools\` - cloud sandbox capabilities and pre-installed tools`;
 
 export const DEFINITION_OF_DONE = `## Definition of done (build tasks)

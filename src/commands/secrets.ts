@@ -21,7 +21,7 @@ async function scopeQuery(opts: { account?: boolean; project?: string }): Promis
 
 export const secretsCommand = new Command('secrets')
   .description('Manage app secrets')
-  .addHelpText('after', '\nEncrypted API keys and tokens for your app, read in functions via secrets.get("NAME").');
+  .addHelpText('after', '\nEncrypted API keys and tokens for your app, read in functions via secrets.get("NAME").\nValues are write-only: no command prints a stored value back.');
 
 secretsCommand
   .command('list')
@@ -43,6 +43,29 @@ secretsCommand
       const masked = s.preview ? muted(`...${s.preview}`) : muted('(hidden)');
       console.log(`  ${s.name}  ${masked}  ${muted(`updated ${new Date(s.updated_at).toLocaleDateString()}`)}`);
     }
+  }));
+
+// Secret values are write-only by design: they are decrypted only inside a
+// running function (secrets.get), never returned to the CLI. `get` exists so an
+// agent that reaches for it gets a clear refusal (stderr, exit 1) instead of an
+// unknown-command line it might mistake for the value (platform#500).
+secretsCommand
+  .command('get <name>')
+  .description('Secret values are write-only: confirms the secret exists, never prints its value')
+  .option('--account', 'Look in account-wide secrets')
+  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option('--json', 'Output raw JSON')
+  .action((name, opts) => run('Secrets', async () => {
+    const res = await get<{ data: SecretMeta[] }>(`/secrets?${await scopeQuery(opts)}`);
+    const scope = opts.account ? 'account-wide' : 'project';
+    const found = res.data.find(s => s.name === name);
+    if (!found) throw new Error(`No ${scope} secret named '${name}'. Values are write-only, so set it with: gipity secrets set ${name} VALUE${opts.account ? ' --account' : ''}`);
+    const ends = found.preview ? ` (ends in ...${found.preview})` : '';
+    throw new Error(
+      `secret values are write-only and are never shown. '${name}' exists${ends}; only a deployed function can read it, with secrets.get('${name}'). `
+      + `To hand a value to another service too, generate it yourself, keep it, then store it: `
+      + `TOK=$(openssl rand -hex 24); gipity secrets set ${name} "$TOK"; echo "$TOK". Setting it again replaces the live value.`,
+    );
   }));
 
 secretsCommand

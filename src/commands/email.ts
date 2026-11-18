@@ -15,7 +15,7 @@ export const emailCommand = new Command('email')
 emailCommand
   .command('test')
   .description("Send a test email through your app's email() path (owner-billed)")
-  .argument('<to>', 'Recipient address')
+  .argument('<to>', "Recipient address, or 'owner' for the app owner's own account email")
   .option('--subject <text>', 'Subject', 'Test email from Gipity')
   .option('--text <text>', 'Body text', 'This is a test email sent through your app\'s email() service. ✉️')
   .option('--reply-to <email>', 'Reply-To address')
