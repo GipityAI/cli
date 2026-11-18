@@ -70,7 +70,7 @@ email code, Steam or a guest device. They belong to the app, not to Gipity.
   gipity project users --search ann         find users by name or email
   gipity project users export -o users.csv  every user, as CSV (or --format json)
   gipity project users delete <guid>        erase a user (runs the app's user_deleted hooks)
-  gipity project users signout <guid>       end all of a user's web sessions`);
+  gipity project users signout <guid>       sign a user out everywhere (web and native apps)`);
 
   users
     .command('list', { isDefault: true })
@@ -133,7 +133,7 @@ email code, Steam or a guest device. They belong to the app, not to Gipity.
 
   users
     .command('signout <userGuid>')
-    .description("Sign a user out everywhere (revoke all of the user's web sessions)")
+    .description("Sign a user out everywhere: end their web sessions, revoke their native apps' refresh tokens, and void their access tokens")
     .option('--json', 'Output as JSON')
     .action((userGuid: string, opts) => run('Sign out', async () => {
       const res = await post<{ data: { signed_out_sessions: number } }>(`/projects/${requireConfig().projectGuid}/app-users/${encodeURIComponent(userGuid)}/signout`);

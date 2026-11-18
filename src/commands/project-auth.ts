@@ -19,6 +19,10 @@ interface ProviderStatus {
   available: boolean;
   redirect_uri: string;
   note: string | null;
+  /** Apple only: iOS bundle ids for native Sign in with Apple. */
+  bundle_ids?: string[];
+  native_available?: boolean;
+  require_nonce?: boolean;
 }
 
 interface AuthStatus {
@@ -68,12 +72,13 @@ const SETUP_STEPS: Record<Provider, (redirect: string) => string[]> = {
     'gipity project auth provider google --client-id <id> --client-secret <secret>',
   ],
   apple: r => [
-    'Apple Developer > Certificates, Identifiers & Profiles > Identifiers > add a Services ID.',
-    '  Its identifier is your client ID.',
-    `Enable Sign in with Apple on it, register your domain and the return URL: ${r}`,
-    'Keys > add a key with Sign in with Apple enabled. Note its Key ID and download the .p8 file (only once).',
-    'Your Team ID is on the Membership details page.',
-    'gipity project auth provider apple --client-id <services-id> --team-id <team> --key-id <key> --private-key-file AuthKey_XXXX.p8',
+    'Apple Developer > Certificates, Identifiers & Profiles > Keys > add a key with Sign in with Apple enabled.',
+    '  Note its Key ID and download the .p8 file (only once). Your Team ID is on the Membership details page.',
+    'Web sign-in (the hosted sign-in page): Identifiers > add a Services ID. Its identifier is your client ID.',
+    `  Enable Sign in with Apple on it, register your domain and the return URL: ${r}`,
+    'iOS app (native, POST /api/<guid>/auth/apple): enable Sign in with Apple on your App ID; its bundle ID is what you pass as --bundle-id.',
+    'gipity project auth provider apple --team-id <team> --key-id <key> --private-key-file AuthKey_XXXX.p8 [--client-id <services-id>] [--bundle-id <bundle-id> ...] [--require-nonce]',
+    '  Pass every flag each time: this replaces the app\'s whole Apple setup.',
   ],
   discord: r => [
     'Discord Developer Portal > Applications > your application > OAuth2.',
@@ -89,6 +94,9 @@ function formatProvider(p: ProviderStatus): string {
     `${bold(name)}: ${credentialsLabel(p)}${p.available ? '' : muted(' (off)')}`,
   ];
   if (p.note) lines.push(muted(p.note));
+  if (p.provider === 'apple' && p.bundle_ids) {
+    lines.push(`iOS bundle ids: ${p.bundle_ids.length ? p.bundle_ids.join(', ') : 'none'}${p.require_nonce ? ' (nonce required)' : ''}`);
+  }
   lines.push('', `Redirect URI: ${p.redirect_uri}`, '', 'Use your own credentials:');
   let n = 0;
   for (const step of SETUP_STEPS[p.provider](p.redirect_uri)) {
@@ -114,13 +122,15 @@ Modes:
   gipity  Sign in with Gipity only (default)
   app     Users sign in to this app alone, without a Gipity account:
           Google, Apple, Discord and email codes for web apps (the hosted sign-in
-          page / Gipity.auth.signIn), Steam (POST /api/<guid>/auth/steam) and guest
-          devices (POST /api/<guid>/auth/guest) for games
+          page / Gipity.auth.signIn); native apps sign in over HTTPS with Steam
+          (POST /api/<guid>/auth/steam), guest devices (/auth/guest), Sign in with
+          Apple from iOS (/auth/apple) or email codes, and renew with /auth/refresh
   both    Either
 
 Sign-in providers:
   gipity project auth provider <google|apple|discord>   show setup steps and the redirect URI
-  Google and Discord work at once on Gipity's shared credentials; Apple needs your own.
+  Google and Discord work at once on Gipity's shared credentials; Apple needs your own
+  (a web Services ID, iOS bundle ids with --bundle-id, or both).
   Manage the app's users: gipity project users
 
 --unique-names on|off
@@ -179,7 +189,9 @@ See: gipity skill read steam-game`)
   auth
     .command('provider <name>')
     .description('Show setup for a sign-in provider (google, apple, discord), set your own credentials, or go back to shared')
-    .option('--client-id <id>', 'OAuth client ID (Apple: the Services ID)')
+    .option('--client-id <id>', 'OAuth client ID (Apple: the web Services ID)')
+    .option('--bundle-id <id>', 'Apple: an iOS bundle ID allowed to sign in natively (repeat for several)', (v: string, prev: string[] = []) => [...prev, v])
+    .option('--require-nonce', 'Apple: native sign-in must send a nonce')
     .option('--client-secret <secret>', 'OAuth client secret (Google, Discord)')
     .option('--team-id <id>', 'Apple Team ID')
     .option('--key-id <id>', 'Apple Sign in with Apple key ID')
@@ -192,7 +204,7 @@ See: gipity skill read steam-game`)
       const config = requireConfig();
       const base = `/projects/${config.projectGuid}/auth/providers/${provider}`;
       const label = PROVIDER_LABEL[provider];
-      const credFlags = ['clientId', 'clientSecret', 'teamId', 'keyId', 'privateKeyFile'].filter(k => opts[k] !== undefined);
+      const credFlags = ['clientId', 'clientSecret', 'teamId', 'keyId', 'privateKeyFile', 'bundleId', 'requireNonce'].filter(k => opts[k] !== undefined);
 
       if (opts.shared) {
         if (credFlags.length) fail('--shared cannot be combined with credential flags.');
@@ -212,11 +224,12 @@ See: gipity skill read steam-game`)
         return;
       }
 
-      let body: Record<string, string>;
+      let body: Record<string, unknown>;
       if (provider === 'apple') {
-        const missing = [['clientId', '--client-id'], ['teamId', '--team-id'], ['keyId', '--key-id'], ['privateKeyFile', '--private-key-file']]
+        const missing = [['teamId', '--team-id'], ['keyId', '--key-id'], ['privateKeyFile', '--private-key-file']]
           .filter(([k]) => !opts[k]).map(([, f]) => f);
         if (missing.length) fail(`Apple needs ${missing.join(', ')}. See: gipity project auth provider apple`);
+        if (!opts.clientId && !opts.bundleId) fail('Apple needs --client-id (web Services ID), --bundle-id (iOS app), or both. See: gipity project auth provider apple');
         if (opts.clientSecret) fail('Apple takes --team-id, --key-id and --private-key-file, not --client-secret.');
         let privateKey: string;
         try {
@@ -225,18 +238,26 @@ See: gipity skill read steam-game`)
           fail(`Cannot read ${opts.privateKeyFile}: ${err.code === 'ENOENT' ? 'no such file' : err.message}`);
         }
         if (!privateKey.includes('PRIVATE KEY')) fail(`${opts.privateKeyFile} does not look like a .p8 private key.`);
-        body = { client_id: opts.clientId, team_id: opts.teamId, key_id: opts.keyId, private_key: privateKey };
+        body = {
+          ...(opts.clientId ? { client_id: opts.clientId } : {}),
+          ...(opts.bundleId ? { bundle_ids: opts.bundleId } : {}),
+          ...(opts.requireNonce ? { require_nonce: true } : {}),
+          team_id: opts.teamId, key_id: opts.keyId, private_key: privateKey,
+        };
       } else {
         const missing = [['clientId', '--client-id'], ['clientSecret', '--client-secret']]
           .filter(([k]) => !opts[k]).map(([, f]) => f);
         if (missing.length) fail(`${label} needs ${missing.join(' and ')}. See: gipity project auth provider ${provider}`);
-        const extra = ['teamId', 'keyId', 'privateKeyFile'].filter(k => opts[k] !== undefined);
-        if (extra.length) fail(`--team-id, --key-id and --private-key-file are for Apple only.`);
+        const extra = ['teamId', 'keyId', 'privateKeyFile', 'bundleId', 'requireNonce'].filter(k => opts[k] !== undefined);
+        if (extra.length) fail(`--team-id, --key-id, --private-key-file, --bundle-id and --require-nonce are for Apple only.`);
         body = { client_id: opts.clientId, client_secret: opts.clientSecret };
       }
       const res = await put<{ data: { provider: Provider; credentials: 'own' } }>(base, body);
       const lines = [success(`${label} sign-in now uses your own credentials.`)];
       if (provider === 'google') lines.push(muted('Existing Google users keep their accounts.'));
+      if (provider === 'apple' && opts.bundleId) {
+        lines.push(muted(`iOS apps (${opts.bundleId.join(', ')}) can sign in with POST /api/<guid>/auth/apple. See: gipity skill read app-users`));
+      }
       printResult(lines.join('\n'), opts, res.data);
     }));
 }

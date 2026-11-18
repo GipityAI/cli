@@ -203,6 +203,41 @@ test('gipity project auth provider apple reads the .p8 private key file', async 
   assert.deepEqual(put?.body, { client_id: 'com.x.web', team_id: 'TEAM1', key_id: 'ABC123', private_key: key });
 });
 
+test('gipity project auth provider apple takes iOS bundle ids and the nonce policy, with or without a Services ID', async () => {
+  mock.reset();
+  mock.on('PUT /projects/p_ProjA00n0/auth/providers/apple', { body: { data: { provider: 'apple', credentials: 'own' } } });
+  const key = '-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMG\n-----END PRIVATE KEY-----\n';
+  const keyFile = join(home, 'AuthKey_NATIVE.p8');
+  writeFileSync(keyFile, key);
+  const r = await inProject(['project', 'auth', 'provider', 'apple', '--team-id', 'TEAM1', '--key-id', 'K1', '--private-key-file', keyFile,
+    '--bundle-id', 'com.x.racer', '--bundle-id', 'com.x.racer.lite', '--require-nonce']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Apple sign-in now uses your own credentials/);
+  assert.match(r.stdout, /com\.x\.racer, com\.x\.racer\.lite/);
+  const put = mock.requests().find(c => c.method === 'PUT');
+  assert.deepEqual(put?.body, { bundle_ids: ['com.x.racer', 'com.x.racer.lite'], require_nonce: true, team_id: 'TEAM1', key_id: 'K1', private_key: key });
+
+  mock.reset();
+  const neither = await inProject(['project', 'auth', 'provider', 'apple', '--team-id', 'TEAM1', '--key-id', 'K1', '--private-key-file', keyFile]);
+  assert.notEqual(neither.status, 0);
+  assert.match(neither.stderr, /Apple needs --client-id \(web Services ID\), --bundle-id \(iOS app\), or both/);
+  const googleBundle = await inProject(['project', 'auth', 'provider', 'google', '--client-id', 'a', '--client-secret', 'b', '--bundle-id', 'com.x']);
+  assert.notEqual(googleBundle.status, 0);
+  assert.match(googleBundle.stderr, /for Apple only/);
+  assert.equal(mock.requests().filter(c => c.method === 'PUT').length, 0);
+});
+
+test('gipity project auth provider apple shows its iOS bundle ids', async () => {
+  mock.reset();
+  const status = { ...AUTH_STATUS, providers: AUTH_STATUS.providers.map((p: { provider: string }) => p.provider === 'apple'
+    ? { ...p, credentials: 'own', bundle_ids: ['com.x.racer'], native_available: true, require_nonce: true } : p) };
+  mock.on('GET /projects/p_ProjA00n0/auth', { body: { data: status } });
+  const r = await inProject(['project', 'auth', 'provider', 'apple']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /iOS bundle ids: com\.x\.racer \(nonce required\)/);
+  assert.match(r.stdout, /--bundle-id/);
+});
+
 test('gipity project auth provider --shared goes back to shared credentials', async () => {
   mock.reset();
   mock.on('DELETE /projects/p_ProjA00n0/auth/providers/google', { body: { data: { provider: 'google', credentials: 'shared' } } });
