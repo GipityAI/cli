@@ -21,7 +21,7 @@ test('gipity deploy dev prints phase results from server', async () => {
     fileCount: 5,
     totalBytes: 12345,
     url: 'https://dev.gipity.ai/test/test-project/',
-    target: 'dev',
+    env: 'dev', appGuid: 'p_TestProj', created: false,
     elapsedMs: 800,
     batch: 1,
     phases: [
@@ -45,7 +45,7 @@ test('gipity deploy dev prints phase results from server', async () => {
 test('gipity deploy without a functions phase prints no Functions line', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
-    fileCount: 3, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200,
+    fileCount: 3, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', env: 'dev', appGuid: 'p_TestProj', created: false, elapsedMs: 200,
     phases: [{ name: 'files', status: 'ok', summary: '3 files uploaded' }],
   } } });
   const r = await fresh(['deploy', 'dev', '--no-sync']);
@@ -56,19 +56,19 @@ test('gipity deploy without a functions phase prints no Functions line', async (
 test('gipity deploy --json emits raw data', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
-    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, phases: [],
+    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', env: 'dev', appGuid: 'p_TestProj', created: false, elapsedMs: 200, phases: [],
   } } });
   const r = await fresh(['deploy', 'dev', '--no-sync', '--json']);
   assert.equal(r.status, 0, r.stderr);
   const parsed = JSON.parse(r.stdout.trim());
-  assert.equal(parsed.target, 'dev');
+  assert.equal(parsed.env, 'dev');
   assert.equal(parsed.fileCount, 1);
 });
 
 test('gipity deploy database-cap failure points at db list --all / db drop', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
-    fileCount: 19, totalBytes: 1000, target: 'dev', elapsedMs: 500, batch: 1,
+    fileCount: 19, totalBytes: 1000, env: 'dev', appGuid: 'p_TestProj', created: false, elapsedMs: 500, batch: 1,
     phases: [
       { name: 'files', status: 'ok', summary: '19 files deployed' },
       { name: 'database', status: 'failed', summary: 'Failed to create database: Maximum of 100 databases reached. Drop one first.' },
@@ -91,7 +91,7 @@ test('gipity deploy database-cap failure points at db list --all / db drop', asy
 test('gipity deploy --inspect forwards --wait-for to the inspect probe', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
-    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, phases: [],
+    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', env: 'dev', appGuid: 'p_TestProj', created: false, elapsedMs: 200, phases: [],
   } } });
   mock.on('POST /tools/browser/inspect', { body: { data: {
     url: 'https://dev.gipity.ai/x/y/', title: 'Y', console: [], failedResources: [],
@@ -110,7 +110,7 @@ test('gipity deploy --inspect forwards --wait-for to the inspect probe', async (
 test('gipity deploy treats a settle flag as a request to inspect', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
-    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, phases: [],
+    fileCount: 1, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', env: 'dev', appGuid: 'p_TestProj', created: false, elapsedMs: 200, phases: [],
   } } });
   mock.on('POST /tools/browser/inspect', { body: { data: {
     url: 'https://dev.gipity.ai/x/y/', title: 'Y', console: [], failedResources: [],
@@ -138,7 +138,7 @@ test('gipity deploy shows the server\'s reason for a bad env name and fails', as
 test('gipity deploy --json exits 1 when a phase failed (the JSON still prints)', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
-    fileCount: 0, totalBytes: 0, url: '', target: 'prod', env: 'prod', elapsedMs: 10,
+    fileCount: 0, totalBytes: 0, url: '', env: 'prod', appGuid: 'p_TestProj', created: false, elapsedMs: 10,
     phases: [{ name: 'database', status: 'failed', summary: 'Nothing was run: prod has pending migrations that destroy data.' }],
   } } });
   const r = await fresh(['deploy', 'prod', '--no-sync', '--json']);

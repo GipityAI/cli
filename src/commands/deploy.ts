@@ -95,13 +95,12 @@ export const deployCommand = new Command('deploy')
         fileCount: number;
         totalBytes: number;
         url: string;
-        target: string;
         /** Where it went: prod or the env's name. */
-        env?: string;
+        env: string;
         /** The deployed project's guid (an env has its own). */
-        appGuid?: string;
+        appGuid: string;
         /** True when this deploy created the env. */
-        created?: boolean;
+        created: boolean;
         hints?: string[];
         elapsedMs: number;
         batch?: number;
@@ -124,7 +123,6 @@ export const deployCommand = new Command('deploy')
         : await withSpinner(env ? `Deploying to ${env}...` : 'Deploying...', doDeploy, { done: null });
 
       const d = res.data;
-      const where = d.env ?? d.target;
 
       // Deploy + verify in one command: after a successful deploy, run the
       // same inspect pipeline `page inspect` uses against the live URL. An
@@ -164,7 +162,7 @@ export const deployCommand = new Command('deploy')
 
       // Format output
       const batchLabel = d.batch ? muted(` (batch ${d.batch})`) : '';
-      console.log(brand(bold(`Deploy to ${where}`)) + batchLabel + (d.created ? muted(' (new environment)') : ''));
+      console.log(brand(bold(`Deploy to ${d.env}`)) + batchLabel + (d.created ? muted(' (new environment)') : ''));
       console.log(muted('─'.repeat(40)));
 
       if (d.phases && d.phases.length > 0) {
@@ -216,7 +214,7 @@ export const deployCommand = new Command('deploy')
         console.log(clrError(`Deploy failed`) + muted(` (${d.elapsedMs}ms)`));
         process.exit(1);
       } else {
-        console.log(success(`✓ Deployed to ${where}`) + muted(` (${d.elapsedMs}ms)`));
+        console.log(success(`✓ Deployed to ${d.env}`) + muted(` (${d.elapsedMs}ms)`));
         // The live URL is the one thing the caller (often an agent) needs next
         // - to open it, inspect it, or report it. Always surface it so nobody
         // has to reconstruct the URL convention or guess a subdomain.
@@ -229,9 +227,9 @@ export const deployCommand = new Command('deploy')
           // --api-base flag and GIPITY_API_BASE env), not the raw stored
           // config.apiBase - otherwise on any override we'd advertise a host we
           // didn't deploy to and send the caller probing the wrong instance.
-          console.log(`${muted('Functions:')} POST ${brand(`${resolveApiBase()}/api/${d.appGuid ?? config.projectGuid}/fn/<name>`)}`);
+          console.log(`${muted('Functions:')} POST ${brand(`${resolveApiBase()}/api/${d.appGuid}/fn/<name>`)}`);
           // Each environment has its own functions at its own address.
-          const envFlag = d.env && d.env !== 'prod' ? ` --env ${d.env}` : '';
+          const envFlag = d.env !== 'prod' ? ` --env ${d.env}` : '';
           console.log(muted(`  (names: gipity fn list${envFlag}; verify the public path: gipity fn call <name>${envFlag} --anon)`));
         }
         for (const hint of d.hints ?? []) console.log(muted(hint));

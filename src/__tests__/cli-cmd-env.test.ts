@@ -18,7 +18,7 @@ function cli(args: string[]) {
 }
 
 const deployed = (extra: Record<string, unknown> = {}) => ({ body: { data: {
-  fileCount: 1, totalBytes: 10, url: 'https://app.gipity.ai/test-account/test-project/', target: 'prod', elapsedMs: 100,
+  fileCount: 1, totalBytes: 10, url: 'https://app.gipity.ai/test-account/test-project/', env: 'prod', appGuid: 'p_TestProj', created: false, elapsedMs: 100,
   phases: [{ name: 'files', status: 'ok', summary: '1 files deployed' }, { name: 'functions', status: 'ok', summary: '1 registered' }],
   ...extra,
 } } });
@@ -35,7 +35,6 @@ test('bare gipity deploy sends no env (the server decides: prod while there are 
   const r = await cli(['deploy', '--no-sync']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(deployBody().env, undefined);
-  assert.equal(deployBody().target, undefined);
   assert.match(r.stdout, /Deploy to prod/);
   assert.match(r.stdout, /Deployed to prod/);
   assert.match(r.stdout, /Live: https:\/\/app\.gipity\.ai\//);
@@ -44,7 +43,7 @@ test('bare gipity deploy sends no env (the server decides: prod while there are 
 test('gipity deploy <env> sends it, names a new env, and gives its own function address', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', deployed({
-    env: 'staging', target: 'dev', appGuid: 'p_StagEnv', created: true,
+    env: 'staging', appGuid: 'p_StagEnv', created: true,
     url: 'https://dev.gipity.ai/test-account/test-project--staging/',
   }));
   const r = await cli(['deploy', 'staging', '--no-sync']);
@@ -58,7 +57,7 @@ test('gipity deploy <env> sends it, names a new env, and gives its own function 
 
 test('gipity deploy --env staging is the same as gipity deploy staging', async () => {
   mock.reset();
-  mock.on('POST /projects/p_TestProj/deploy', deployed({ env: 'staging', target: 'dev', appGuid: 'p_StagEnv' }));
+  mock.on('POST /projects/p_TestProj/deploy', deployed({ env: 'staging', appGuid: 'p_StagEnv' }));
   const r = await cli(['deploy', '--no-sync', '--env', 'staging']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(deployBody().env, 'staging');
