@@ -97,3 +97,18 @@ test('gipity status --json includes apiBaseInUse alongside the recorded apiBase'
   assert.equal(json.project.apiBase, 'https://a.gipity.ai');
   assert.equal(json.project.apiBaseInUse, mock.apiBase);
 });
+
+test('gipity status shows when the site is private, in text and --json', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'acme' } } });
+  mock.on('GET /projects/p_TestProj', { body: { data: { short_guid: 'p_TestProj', page_access: 'app-users' } } });
+  const home = makeAuthedHome();
+  const dir = makeProjectDir({ accountSlug: 'acme', apiBase: mock.apiBase });
+
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'status'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Pages: private: only the app's signed-in users/);
+
+  const j = await runCliAsync(['--api-base', mock.apiBase, 'status', '--json'], { env: { HOME: home }, cwd: dir });
+  assert.equal(JSON.parse(j.stdout).project.pageAccess, 'app-users');
+});

@@ -8,6 +8,20 @@ import { getConfig, liveUrl, resolveApiBase } from '../config.js';
 import { brand, success, warning, muted, error as clrError } from '../colors.js';
 import { GIPITY_PLUGIN_ID, GIPITY_MARKETPLACE_NAME, setupClaudeHooks, ensureGipityPlugin, ensureGipityPluginInstalled, userScopeInstallState } from '../setup.js';
 import { flushBugQueue } from '../bug-queue.js';
+import { pageAccessLabel } from './deploy.js';
+
+type PageAccess = 'public' | 'members' | 'app-users';
+
+/** Who may load this project's deployed pages, or null when it can't be read
+ *  right now (not logged in, API slow or unreachable). Capped like probeAuth. */
+async function probePageAccess(projectGuid: string): Promise<PageAccess | null> {
+  const timeout = new Promise<null>(res => setTimeout(() => res(null), 5000).unref?.());
+  const call = get<{ data: { page_access?: PageAccess } }>(`/projects/${projectGuid}`).then(
+    (res) => res.data?.page_access ?? null,
+    () => null,
+  );
+  return Promise.race([call, timeout]);
+}
 
 /** Hooks ship in the Gipity Claude Code plugin now. "Installed" means three
  *  things must all hold: the user-scope settings register the marketplace and
@@ -87,7 +101,10 @@ export const statusCommand = new Command('status')
     // now go out. Skipped entirely (existsSync short-circuit) when the queue
     // is empty, which is the common case, so this stays a no-op most runs.
     const queueDelivered = (auth && !sessionExpired()) ? await flushBugQueue().catch(() => 0) : 0;
-    const probe = await probeAuth(!!auth);
+    const [probe, pageAccess] = await Promise.all([
+      probeAuth(!!auth),
+      config && (auth || usingEnvToken()) ? probePageAccess(config.projectGuid) : Promise.resolve(null),
+    ]);
     // RBAC lets a project be shared to a collaborator whose own account
     // legitimately differs from the project owner's - so this is advisory,
     // never a hard error. Only meaningful once a live 'ok' call has actually
@@ -105,6 +122,7 @@ export const statusCommand = new Command('status')
           apiBaseInUse,
           url: liveUrl(config),
           ...(config.env ? { env: config.env.name } : {}),
+          ...(pageAccess ? { pageAccess } : {}),
         } : null,
         // `valid` reflects the refresh token (the real session) - access
         // tokens auto-renew, so their expiry must not read as "invalid".
@@ -131,6 +149,7 @@ export const statusCommand = new Command('status')
       console.log(`${muted('Account:')} ${config.accountSlug}`);
       if (config.env) console.log(`${muted('Env:')} ${config.env.name}`);
       console.log(`${muted('Live:')} ${liveUrl(config)}`);
+      if (pageAccess && pageAccess !== 'public') console.log(`${muted('Pages:')} ${pageAccessLabel(pageAccess)}`);
       console.log(`${muted('API:')} ${config.apiBase}`);
       // apiBase is only what THIS project recorded - resolveApiBase() is what
       // every real request actually uses (it can diverge via GIPITY_API_BASE,

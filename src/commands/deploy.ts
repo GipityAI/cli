@@ -56,7 +56,7 @@ export const deployCommand = new Command('deploy')
   .option('--yes-destructive', 'Allow pending prod migrations that destroy data (DROP TABLE/COLUMN, TRUNCATE, DELETE without WHERE, column type changes)')
   .option('--plan', 'Show the pending migrations this deploy would run (and where each already ran), without deploying')
   .option('--source-dir <dir>', 'Source directory to deploy from')
-  .option('--only <phases>', 'Run only specific phases, comma-separated, matched by gipity.yaml phase name or type: files/static, database/sql, functions, workflows, services, jobs, records, realtime, env, auth_branding, auth')
+  .option('--only <phases>', 'Run only specific phases, comma-separated, matched by gipity.yaml phase name or type: files/static, database/sql, functions, workflows, services, jobs, records, realtime, env, auth_branding, auth, access')
   .option('--force', 'Re-run all phases (ignore checksums) and bypass the sync bulk-deletion guard')
   .option('--no-sync', 'Skip sync-up before deploy')
   .option('--optimize', 'Bundle and minify the JS/CSS with Vite (off by default: files upload as-is, so prod serves what you verified). Only bundles <script type="module"> references, and page eval import() of an app module then loads a separate copy')
@@ -109,6 +109,8 @@ export const deployCommand = new Command('deploy')
         customDomains?: string[];
         skippedFiles?: string[];
         examples?: string[];
+        /** Who may load the deployed pages (gipity.yaml `access:`). */
+        pageAccess?: 'public' | 'members' | 'app-users';
       };
       const doDeploy = () => post<{ data: DeployData }>(`/projects/${config.projectGuid}/deploy`, {
         ...(env ? { env } : {}),
@@ -219,6 +221,7 @@ export const deployCommand = new Command('deploy')
         // - to open it, inspect it, or report it. Always surface it so nobody
         // has to reconstruct the URL convention or guess a subdomain.
         if (d.url) console.log(`${muted('Live:')} ${brand(d.url)}`);
+        if (d.pageAccess && d.pageAccess !== 'public') console.log(`${muted('Pages:')} ${pageAccessLabel(d.pageAccess)}`);
         // Functions are served from the API host, NOT the static Live URL -
         // for an API-only app the endpoint address IS the deliverable, so name
         // it instead of leaving it to be inferred from a template comment.
@@ -236,3 +239,10 @@ export const deployCommand = new Command('deploy')
         await inspectAfter();
       }
   }));
+
+/** How a private site's pages are gated, for deploy and status output. */
+export function pageAccessLabel(mode: 'members' | 'app-users'): string {
+  return mode === 'members'
+    ? 'private: only you and project members (Gipity sign-in)'
+    : "private: only the app's signed-in users";
+}

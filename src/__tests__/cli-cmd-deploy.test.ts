@@ -145,3 +145,29 @@ test('gipity deploy --json exits 1 when a phase failed (the JSON still prints)',
   assert.equal(r.status, 1);
   assert.equal(JSON.parse(r.stdout.trim()).phases[0].status, 'failed');
 });
+
+test('gipity deploy names a private site under the Live URL', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 3, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, pageAccess: 'members',
+    phases: [
+      { name: 'access', status: 'ok', summary: 'pages: members only (was public)' },
+      { name: 'files', status: 'ok', summary: '3 files uploaded' },
+    ],
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /access: pages: members only \(was public\)/);
+  assert.match(r.stdout, /Pages: private: only you and project members/);
+});
+
+test('gipity deploy prints no Pages line for a public site', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 1, totalBytes: 10, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 100, pageAccess: 'public',
+    phases: [{ name: 'files', status: 'ok', summary: '1 files uploaded' }],
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /Pages:/);
+});

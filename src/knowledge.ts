@@ -184,7 +184,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
-- \`app-notify\` - web push notifications for deployed apps (incl. iOS home-screen web apps) - notify kit + injected notify() service, platform owns the keys
+- \`app-notify\` - push notifications for deployed apps (web, iOS home-screen web apps, and native iOS apps via APNs) - notify kit + injected notify() service, platform owns delivery
 - \`app-payments\` - charge end-users real money - Stripe one-time purchases & subscriptions, via the stripe kit (gipity add stripe)
 - \`app-realtime\` - Gipity Realtime rooms, relay vs state
 - \`app-tts\` - voices, models, dialogue, languages, word timestamps
