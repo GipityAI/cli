@@ -176,6 +176,7 @@ Watch for **bulky output dirs dropped loose at the root** (e.g. \`out/\`, \`vsd_
 Run \`gipity skill list\` to see every skill. Run \`gipity skill read <name>\` to read one. Load the relevant skill before starting a task - they have the correct API patterns, code examples, and common mistakes.
 
 App services skills (load before calling \`/services/*\` endpoints):
+- \`app-api-keys\` - project API keys for scripts/devices: gipity key create, scopes (functions, tables, files, ip)
 - \`app-audio\` - sound effects, music, transcription
 - \`app-auth\` - sign in: Gipity accounts or app-owned users (Google, email code), popup vs redirect
 - \`app-files\` - uploads, then displaying files and the storage helper (ownership check, delete)

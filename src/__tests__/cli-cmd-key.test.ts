@@ -60,7 +60,7 @@ test('gipity key create --expires-days sends expires_in_days', async () => {
 test('gipity key list shows keys; empty state points at create', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/api-keys', { body: { data: [
-    { short_guid: 'ak_abc12345', name: 'laptop importer', prefix: 'gip_PLAI', role: 'editor',
+    { short_guid: 'ak_abc12345', name: 'laptop importer', prefix: 'gip_PLAI', role: 'editor', scopes: null,
       last_used_at: null, expires_at: null, created_at: '2026-01-01T00:00:00Z' },
   ] } });
   const r = await fresh(['key', 'list']);
@@ -94,4 +94,53 @@ test('gipity key create --json prints a failure as a JSON error object', async (
   const out = JSON.parse(r.stdout.trim().split('\n').pop()!);
   assert.equal(out.error.code, 'VALIDATION_ERROR');
   assert.match(out.error.message, /already exists/);
+});
+
+test('gipity key create sends scopes from --functions/--tables/--files/--ip and shows them', async () => {
+  mock.reset();
+  let seenBody: any;
+  mock.on('POST /projects/p_TestProj/api-keys', (req) => {
+    seenBody = req.body;
+    return { status: 201, body: { data: {
+      short_guid: 'ak_dev12345', name: 'front door', key: 'gip_DEVICE', prefix: 'gip_DEVI', role: 'editor',
+      scopes: (req.body as any).scopes, expires_at: null, created_at: '2026-01-01T00:00:00Z',
+    } } };
+  });
+
+  const r = await fresh(['key', 'create', 'front door', '--role', 'editor',
+    '--functions', 'send-command, heartbeat', '--tables', 'commands:write,logs:read',
+    '--files', 'read', '--ip', '203.0.113.7/32,2001:db8::/48']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(seenBody.scopes, {
+    functions: ['send-command', 'heartbeat'],
+    tables: { commands: 'write', logs: 'read' },
+    files: 'read',
+    ip: ['203.0.113.7/32', '2001:db8::/48'],
+  });
+  assert.match(r.stdout, /Scopes: fn: send-command,heartbeat {2}tables: commands:write,logs:read {2}files: read {2}ip: 203\.0\.113\.7\/32,2001:db8::\/48/);
+});
+
+test('gipity key create rejects a malformed --tables entry before calling the server', async () => {
+  mock.reset();
+  let called = false;
+  mock.on('POST /projects/p_TestProj/api-keys', () => { called = true; return { status: 201, body: { data: {} } }; });
+  const r = await fresh(['key', 'create', 'bad', '--tables', 'commands:admin']);
+  assert.equal(r.status, 1);
+  assert.equal(called, false);
+  assert.match(r.stdout + r.stderr, /table:read or table:write/);
+});
+
+test('gipity key list shows each key\'s scopes', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/api-keys', { body: { data: [
+    { short_guid: 'ak_dev12345', name: 'front door', prefix: 'gip_DEVI', role: 'editor',
+      scopes: { functions: ['send-command'], tables: { logs: 'read' } },
+      last_used_at: null, expires_at: null, created_at: '2026-01-01T00:00:00Z' },
+    { short_guid: 'ak_full1234', name: 'laptop', prefix: 'gip_LAPT', role: 'owner', scopes: null,
+      last_used_at: null, expires_at: null, created_at: '2026-01-01T00:00:00Z' },
+  ] } });
+  const r = await fresh(['key', 'list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /fn: send-command {2}tables: logs:read/);
+  assert.match(r.stdout, /all access/);
 });
