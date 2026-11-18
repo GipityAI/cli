@@ -65,6 +65,8 @@ import { uninstallCommand } from './commands/uninstall.js';
 import { approvalCommand } from './commands/approval.js';
 import { gmailCommand } from './commands/gmail.js';
 import { textCommand } from './commands/text.js';
+import { changelogCommand } from './commands/changelog.js';
+import { maybePrintUpdateNotice } from './changelog.js';
 import { HELP_SKILL_MAP, fetchAndPrintSkill } from './help-skills.js';
 import { bold, dim, brand, muted, success } from './colors.js';
 import { normalizeAliases, resolveTarget } from './flag-aliases.js';
@@ -150,7 +152,7 @@ program.enablePositionalOptions();
 // inspect"), so an agent's first `--help` reads in the same terms as the rest
 // of its context. Humans get the same win: sections follow the order you
 // actually use them - orient, build, wire the backend, then everything else.
-const startGroup     = [statusCommand, initCommand, skillCommand, projectCommand];
+const startGroup     = [statusCommand, initCommand, skillCommand, changelogCommand, projectCommand];
 const buildGroup     = [addCommand, removeCommand, brandCommand, saveCommand, loadCommand, deployCommand, envCommand, pageCommand, testCommand];
 const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCommand, jobCommand, workflowCommand, approvalCommand, memoryCommand];
 const servicesGroup  = [serviceCommand, generateCommand, askCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
@@ -282,6 +284,20 @@ function rejectBlankIdArgs(cmd: Command): void {
 // Bracket non-JSON command output with leading/trailing blank lines centrally,
 // so commands never hand-roll their own boundary spacing.
 installOutputFrame(program);
+
+// After an auto-update, the first interactive command says (once) how many
+// changelog entries the user hasn't seen. Runs after the frame's leading blank
+// line; never off a TTY or with --json, so agent and piped output stay clean.
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  let top: Command = actionCommand;
+  while (top.parent && top.parent !== program) top = top.parent;
+  if (top.name() === 'changelog') return;
+  const opts = actionCommand.optsWithGlobals ? actionCommand.optsWithGlobals() : actionCommand.opts();
+  await maybePrintUpdateNotice(pkg.version, {
+    interactive: Boolean(process.stdout.isTTY) && !opts.json,
+    print: (line) => console.log(line + '\n'),
+  });
+});
 
 // ── Custom top-level help: version banner + grouped commands ────────────
 program.configureHelp({
