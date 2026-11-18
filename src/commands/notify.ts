@@ -1,9 +1,8 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { get, post, put, del } from '../api.js';
-import { resolveProjectContext } from '../config.js';
 import { bold, muted, success, warning } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { run, PROJECT_OPTION, projectGuidFor } from '../helpers/index.js';
 
 export const notifyCommand = new Command('notify')
   .description('Push notifications (web and native iOS)')
@@ -16,16 +15,16 @@ notifyCommand
   .option('--title <text>', 'Notification title', 'Test notification')
   .option('--body <text>', 'Notification body', 'Hello from Gipity Notify 👋')
   .option('--url <url>', 'URL to open when the notification is clicked')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const { config } = await resolveProjectContext({ projectOverride: opts.project });
+    const projectGuid = await projectGuidFor(opts);
     const to = opts.to === 'all' ? 'all' : (opts.to.includes(',') ? opts.to.split(',').map((s: string) => s.trim()) : opts.to);
     const notification: Record<string, string> = { title: opts.title, body: opts.body };
     if (opts.url) notification.url = opts.url;
 
     const res = await post<{ data: { sent: number; failed: number; pruned: number; results: DeliveryResult[] } }>(
-      `/api/${config.projectGuid}/services/notify/send`,
+      `/api/${projectGuid}/services/notify/send`,
       { to, notification },
     );
 
@@ -51,12 +50,12 @@ notifyCommand
 notifyCommand
   .command('subs')
   .description('Show how many push subscriptions this app has, per user')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const { config } = await resolveProjectContext({ projectOverride: opts.project });
+    const projectGuid = await projectGuidFor(opts);
     const res = await get<{ data: { total: number; byUser: { user_guid: string; count: number; web: number; ios: number }[] } }>(
-      `/api/${config.projectGuid}/services/notify/subs`,
+      `/api/${projectGuid}/services/notify/subs`,
     );
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     const { total, byUser } = res.data;
@@ -71,12 +70,12 @@ notifyCommand
   .command('rm')
   .description("Remove a user's push subscriptions and iOS devices (e.g. on account deletion)")
   .requiredOption('--user <guid>', 'User guid whose subscriptions to remove')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const { config } = await resolveProjectContext({ projectOverride: opts.project });
+    const projectGuid = await projectGuidFor(opts);
     const res = await post<{ data: { removed: number } }>(
-      `/api/${config.projectGuid}/services/notify/remove`,
+      `/api/${projectGuid}/services/notify/remove`,
       { user_guid: opts.user },
     );
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
@@ -129,17 +128,17 @@ apnsCommand
   .requiredOption('--p8 <file>', 'Path to the AuthKey_<KEYID>.p8 file')
   .requiredOption('--bundle-id <id>', 'Your app bundle id, e.g. com.example.myapp')
   .option('--sandbox', 'Devices that register without an environment use the sandbox (development builds)')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const { config } = await resolveProjectContext({ projectOverride: opts.project });
+    const projectGuid = await projectGuidFor(opts);
     let p8: string;
     try {
       p8 = readFileSync(opts.p8, 'utf-8');
     } catch {
       throw new Error(`Can't read ${opts.p8}. Pass the path to the AuthKey_<KEYID>.p8 file from Apple.`);
     }
-    const res = await put<{ data: ApnsConfig }>(`/api/${config.projectGuid}/services/notify/apns`, {
+    const res = await put<{ data: ApnsConfig }>(`/api/${projectGuid}/services/notify/apns`, {
       team_id: opts.teamId, key_id: opts.keyId, bundle_id: opts.bundleId, p8, sandbox: !!opts.sandbox,
     });
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
@@ -150,11 +149,11 @@ apnsCommand
 apnsCommand
   .command('show')
   .description('Show the APNs setup for this app (never the key itself)')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const { config } = await resolveProjectContext({ projectOverride: opts.project });
-    const res = await get<{ data: ApnsConfig }>(`/api/${config.projectGuid}/services/notify/apns`);
+    const projectGuid = await projectGuidFor(opts);
+    const res = await get<{ data: ApnsConfig }>(`/api/${projectGuid}/services/notify/apns`);
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     printApns(res.data);
   }));
@@ -162,11 +161,11 @@ apnsCommand
 apnsCommand
   .command('rm')
   .description('Remove the APNs key (iOS devices stop receiving notifications)')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Notify', async () => {
-    const { config } = await resolveProjectContext({ projectOverride: opts.project });
-    const res = await del<{ data: { removed: boolean } }>(`/api/${config.projectGuid}/services/notify/apns`);
+    const projectGuid = await projectGuidFor(opts);
+    const res = await del<{ data: { removed: boolean } }>(`/api/${projectGuid}/services/notify/apns`);
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     console.log(res.data.removed ? success('✓ APNs key removed.') : warning('No APNs key was set.'));
   }));

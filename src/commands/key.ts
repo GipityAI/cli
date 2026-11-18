@@ -1,8 +1,7 @@
 import { Command, Option } from 'commander';
 import { get, post, del } from '../api.js';
-import { resolveProjectContext } from '../config.js';
 import { bold, muted, success, warning } from '../colors.js';
-import { run, printList } from '../helpers/index.js';
+import { run, printList, PROJECT_OPTION, projectGuidFor } from '../helpers/index.js';
 
 /**
  * Project API keys - the revocable secret a script, cron, or agent sends as
@@ -109,12 +108,6 @@ export function describeScopes(scopes: KeyScopes | null): string {
   return parts.join('  ');
 }
 
-const projectOpt = ['--project <guid-or-slug>', 'Target a specific project instead of cwd / Home'] as const;
-
-async function projectGuid(opts: { project?: string }): Promise<string> {
-  const { config } = await resolveProjectContext({ projectOverride: opts.project });
-  return config.projectGuid;
-}
 
 keyCommand
   .command('create <name>')
@@ -126,7 +119,7 @@ keyCommand
   .addOption(new Option('--files <access>', 'Scope: app files access').choices(['read', 'write']))
   .addOption(new Option('--approvals <access>', 'Scope: read and consume passkey approvals').choices(['read']))
   .option('--ip <list>', 'Scope: only from these IPs / CIDR ranges (comma-separated)')
-  .option(...projectOpt)
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output as JSON')
   .action((name: string, opts) => run('Create', async () => {
     const body: { name: string; role: string; expires_in_days?: number; scopes?: KeyScopes } = { name, role: opts.role };
@@ -139,7 +132,7 @@ keyCommand
     }
 
     const res = await post<{ data: KeyInfo & { key: string } }>(
-      `/projects/${await projectGuid(opts)}/api-keys`,
+      `/projects/${await projectGuidFor(opts)}/api-keys`,
       body,
     );
     const k = res.data;
@@ -163,10 +156,10 @@ keyCommand
   .command('list')
   .alias('ls')
   .description('List this project\'s API keys (values are never shown again)')
-  .option(...projectOpt)
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
-    const res = await get<{ data: KeyInfo[] }>(`/projects/${await projectGuid(opts)}/api-keys`);
+    const res = await get<{ data: KeyInfo[] }>(`/projects/${await projectGuidFor(opts)}/api-keys`);
     printList(
       res.data,
       opts,
@@ -179,10 +172,10 @@ keyCommand
   .command('revoke <short_guid>')
   .alias('rm')
   .description('Revoke a project API key (instant, irreversible)')
-  .option(...projectOpt)
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output as JSON')
   .action((shortGuid: string, opts) => run('Revoke', async () => {
-    await del(`/projects/${await projectGuid(opts)}/api-keys/${encodeURIComponent(shortGuid)}`);
+    await del(`/projects/${await projectGuidFor(opts)}/api-keys/${encodeURIComponent(shortGuid)}`);
     if (opts.json) { console.log(JSON.stringify({ short_guid: shortGuid, revoked: true })); return; }
     console.log(success(`Revoked API key ${bold(shortGuid)}.`));
   }));

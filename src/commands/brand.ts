@@ -16,7 +16,7 @@ import { resolveProjectContext, getConfigPath } from '../config.js';
 import { sync } from '../sync.js';
 import { createProgressReporter } from '../progress.js';
 import { bold, muted, success } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { run, PROJECT_OPTION } from '../helpers/index.js';
 
 interface BrandData {
   branding: Record<string, string>;
@@ -57,7 +57,7 @@ and are versioned like any other file - rollback restores previous ones.`);
 brandCommand
   .command('show', { isDefault: true })
   .description('Show the stored brand and the resolved render spec')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Brand', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
@@ -78,7 +78,7 @@ brandCommand
   .option('--tagline <text>', 'One-line subtitle on the share card (max 120 chars)')
   .option('--fix-head', 'Also splice the share/SEO head block into src/index.html (for apps installed before templates shipped it)')
   .option('--no-regenerate', 'Store the fields without re-rendering assets')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Brand', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
@@ -106,7 +106,7 @@ brandCommand
   .command('apply')
   .description('Re-render all brand assets from the stored brand (no field changes)')
   .option('--fix-head', 'Also splice the share/SEO head block into src/index.html (for apps installed before templates shipped it)')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Brand', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });

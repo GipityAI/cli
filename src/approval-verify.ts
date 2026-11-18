@@ -13,7 +13,11 @@
  *   signature over authenticatorData || sha256(clientDataJSON), verified with the pinned key
  *   expiresAt in the future
  */
-import { createHash, createPublicKey, verify, type JsonWebKey } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
+
+/** The public-key JWK fields a passkey approval uses (ES256, EdDSA, RS256).
+ *  Declared here so the verifier compiles against any @types/node. */
+export interface JsonWebKey { kty?: string; crv?: string; x?: string; y?: string; n?: string; e?: string; alg?: string }
 
 export interface ApprovalProof {
   credentialId: string;
@@ -100,7 +104,7 @@ function sameKey(a: JsonWebKey, b: JsonWebKey): boolean {
 }
 
 function verifySignature(jwk: JsonWebKey, data: Buffer, signature: Buffer): boolean {
-  const key = createPublicKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, n: jwk.n, e: jwk.e } as JsonWebKey, format: 'jwk' });
+  const key = createPublicKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, n: jwk.n, e: jwk.e }, format: 'jwk' } as Parameters<typeof createPublicKey>[0]);
   // ES256 and RS256 hash with SHA-256 (ECDSA signatures are DER, as WebAuthn
   // sends them); Ed25519 signs the message itself.
   return verify(jwk.kty === 'OKP' ? null : 'sha256', data, key, signature);

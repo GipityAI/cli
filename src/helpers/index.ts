@@ -7,3 +7,4 @@ export { printOutput, printList, printResult, pluckField, emitField } from './ou
 export { syncBeforeAction, syncAfterAction } from './sync.js';
 export { resolveJsonBody, resolveBody, resolveFormBody } from './body.js';
 export { parseDuration } from './duration.js';
+export { PROJECT_OPTION, projectGuidFor } from './project.js';

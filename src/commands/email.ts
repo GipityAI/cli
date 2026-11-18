@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { get, post } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { success, bold, muted, warning } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { run, PROJECT_OPTION } from '../helpers/index.js';
 
 // `email` is a command GROUP for the deployed app's email() service:
 // `email test` sends through it, `email log` lists recent sends.
@@ -20,7 +20,7 @@ emailCommand
   .option('--text <text>', 'Body text', 'This is a test email sent through your app\'s email() service. ✉️')
   .option('--reply-to <email>', 'Reply-To address')
   .option('--from-name <name>', 'Sender display name (address stays gipity@gipity.ai)')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((to, opts) => run('Email', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });
@@ -50,7 +50,7 @@ emailCommand
   .description('Recent email() sends and skipped attempts from your app')
   .addOption(new Option('--range <range>', 'Time range').choices(['1h', '24h', '7d', '30d', '1y']).default('7d'))
   .option('--limit <n>', 'Max rows', '50')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Email', async () => {
     const { config } = await resolveProjectContext({ projectOverride: opts.project });

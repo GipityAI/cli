@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { get, put, del } from '../api.js';
 import { resolveProjectContext } from '../config.js';
 import { bold, muted, success } from '../colors.js';
-import { run } from '../helpers/index.js';
+import { run, PROJECT_OPTION } from '../helpers/index.js';
 
 interface SecretMeta {
   name: string;
@@ -28,7 +28,7 @@ secretsCommand
   .alias('ls')
   .description('List secret names (never values). Project secrets by default; --account for account-wide')
   .option('--account', 'Account-wide secrets shared across all your projects')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((opts) => run('Secrets', async () => {
     const res = await get<{ data: SecretMeta[] }>(`/secrets?${await scopeQuery(opts)}`);
@@ -53,7 +53,7 @@ secretsCommand
   .command('get <name>')
   .description('Secret values are write-only: confirms the secret exists, never prints its value')
   .option('--account', 'Look in account-wide secrets')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((name, opts) => run('Secrets', async () => {
     const res = await get<{ data: SecretMeta[] }>(`/secrets?${await scopeQuery(opts)}`);
@@ -72,7 +72,7 @@ secretsCommand
   .command('set <name> <value>')
   .description('Create or update a secret (UPPER_SNAKE_CASE name). Encrypted at rest; never echoed back')
   .option('--account', 'Store account-wide (shared across all your projects)')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((name, value, opts) => run('Secrets', async () => {
     const res = await put<{ data: SecretMeta }>(`/secrets?${await scopeQuery(opts)}`, { name, value });
@@ -86,7 +86,7 @@ secretsCommand
   .alias('delete')
   .description('Delete a secret')
   .option('--account', 'Delete from account-wide secrets')
-  .option('--project <guid-or-slug>', 'Target a specific project instead of cwd / Home')
+  .option(...PROJECT_OPTION)
   .option('--json', 'Output raw JSON')
   .action((name, opts) => run('Secrets', async () => {
     const res = await del<{ data: { deleted: boolean } }>(`/secrets/${encodeURIComponent(name)}?${await scopeQuery(opts)}`);
