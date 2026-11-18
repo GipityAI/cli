@@ -181,7 +181,8 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-api-keys\` - project API keys for scripts/devices: gipity key create, scopes (functions, tables, files, ip)
 - \`app-approvals\` - passkey approvals - one person signs off on one exact action with Face ID / a passkey; signed proof a device verifies offline, single-use consume
 - \`app-audio\` - sound effects, music, transcription
-- \`app-auth\` - sign in: Gipity accounts or app-owned users (Google, email code), popup vs redirect
+- \`app-auth\` - sign in: Gipity accounts or app-owned users (Google, email code), auth gate, private pages, auth-wall UX
+- \`app-auth-client\` - sign-in client code: Gipity.auth SDK, popup vs redirect, --auth verification, raw REST flow
 - \`app-files\` - uploads, then displaying files and the storage helper (ownership check, delete)
 - \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
 - \`app-llm\` - chat completions, streaming, image input

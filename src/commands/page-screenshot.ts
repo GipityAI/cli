@@ -8,7 +8,7 @@ import { brand, bold, muted, success, warning } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
-import { readScriptFile } from './page-eval.js';
+import { readScriptFile, printPageAccessLine, type PageAccessInfo } from './page-eval.js';
 import { uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number; device?: string };
@@ -44,6 +44,7 @@ type ScreenshotMeta = {
   actionError?: string;
   // Auth handoff state when --auth ran (same shape page inspect reports).
   auth?: { requested: boolean; established: boolean; detail?: string };
+  pageAccess?: PageAccessInfo;
   screenshots: Array<{
     index: number;
     viewport: Viewport & { deviceScaleFactor: number; touch: boolean };
@@ -600,6 +601,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
       if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
       printAuthLine(meta.auth);
+      printPageAccessLine(meta.pageAccess);
       printActionErrorLine(meta.actionError);
       if (s.viewport.device) console.log(`${label('Emulated device')} ${s.viewport.device} ${muted('(touch events, mobile user-agent)')}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
@@ -615,6 +617,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (meta.status != null) console.log(`${label('Web page status')} ${meta.status}`);
     if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
     printAuthLine(meta.auth);
+    printPageAccessLine(meta.pageAccess);
     printActionErrorLine(meta.actionError);
 
     for (let i = 0; i < meta.screenshots.length; i++) {

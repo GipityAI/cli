@@ -4,7 +4,7 @@ import { formatSize } from '../utils.js';
 import { brand, bold, error as clrError, warning, muted, info, success } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { getAuth } from '../auth.js';
-import { capWaitMs } from './page-eval.js';
+import { capWaitMs, printPageAccessLine, type PageAccessInfo } from './page-eval.js';
 import { TOUCH_DEVICES as INSPECT_DEVICES, resolveTouchDevice } from './page-screenshot.js';
 
 interface DebugBundle {
@@ -31,6 +31,7 @@ interface DebugBundle {
   transientConsole?: string[];
   crossOriginConsole?: string[];
   auth?: { requested: boolean; established: boolean; detail?: string };
+  pageAccess?: PageAccessInfo;
 }
 
 /** A console line is an error-level entry (page error or console.error). */
@@ -248,6 +249,7 @@ export async function inspectPage(url: string, opts: InspectPageOptions = {}): P
       // `deploy --inspect`, and deploy has no --auth flag.
       console.log(muted(`Auth: anonymous visitor (signed out). Signed-in view: gipity page inspect ${url} --auth`));
     }
+    printPageAccessLine(b.pageAccess);
     console.log(`${muted('Title:')} ${b.title || '(none)'}`);
     console.log(`${muted('Elements:')} ${b.elementCount || 0}`);
     console.log(`${muted('Page weight:')} ${info(formatSize(b.totalBytes || 0))}`);

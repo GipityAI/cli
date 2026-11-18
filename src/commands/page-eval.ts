@@ -23,6 +23,7 @@ export interface EvalResult {
   reloadTruncated?: boolean;
   // Auth handoff state when --auth ran (same shape page inspect reports).
   auth?: { requested: boolean; established: boolean; detail?: string };
+  pageAccess?: PageAccessInfo;
   navigationIncomplete?: boolean;
   note?: string;
   // Present only when the page painted below the server's slow-render
@@ -221,6 +222,19 @@ export function capWaitForTimeoutMs(raw: string): number {
  *  heredoc straight in — `gipity page eval <url> --file - <<'EOF' … EOF` — with
  *  no throwaway tmp file to write and then clean up. readFileSync(0) drains fd 0
  *  (stdin) to EOF. Any other value is a path on disk. */
+/** Private app pages (gipity.yaml `access:`): what the server reports when the
+ *  page belongs to a private site. Absent for a public site. */
+export type PageAccessInfo = { private: boolean; granted: boolean; note?: string };
+
+/** One line for a private site: whether the browser was let in as you. Shared
+ *  by page inspect / eval / screenshot. Prints nothing for a public site. */
+export function printPageAccessLine(pa: PageAccessInfo | undefined): void {
+  if (!pa?.private) return;
+  console.log(pa.granted
+    ? `${muted('Private pages:')} ${success('opened with your access')} ${muted('(members-only site)')}`
+    : `${warning('Private pages: no access')}${pa.note ? `: ${pa.note}` : ''}`);
+}
+
 export function readScriptFile(pathArg: string): string {
   return readFileSync(pathArg === '-' ? 0 : pathArg, 'utf8');
 }
@@ -896,6 +910,7 @@ export const pageEvalCommand = new Command('eval')
       } else {
         console.log(muted('Auth: anonymous visitor (signed out; pass --auth to run signed in as you)'));
       }
+      printPageAccessLine(d.pageAccess);
       if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
       console.error(opts.file ? `${muted('Script:')} ${opts.file === '-' ? '(stdin)' : opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);
