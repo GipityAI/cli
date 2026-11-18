@@ -14,6 +14,7 @@ import { getConfig } from './config.js';
 import { prompt, decodeJwtExp } from './utils.js';
 import { success, error as clrError, warning, muted } from './colors.js';
 import { flushBugQueue } from './bug-queue.js';
+import { verifyEmailCode } from './passkey-login.js';
 
 /** True when a fresh-account result would be a SURPRISE worth warning about:
  *  either this directory is linked to an existing project, or this machine
@@ -70,11 +71,7 @@ export async function interactiveLogin(): Promise<AuthData> {
   if (!code) { console.error(`\n  ${clrError('Code required.')}`); process.exit(1); }
 
   const priorAuth = getAuth();
-  const res = await publicPost<{
-    accessToken: string;
-    refreshToken: string;
-    isNewUser?: boolean;
-  }>('/auth/verify', { email, code });
+  const res = await verifyEmailCode(email, code, (line) => console.log(line), '  ');
 
   const exp = decodeJwtExp(res.accessToken);
   if (!exp) { console.error(`\n  ${clrError('Invalid token received.')}`); process.exit(1); }

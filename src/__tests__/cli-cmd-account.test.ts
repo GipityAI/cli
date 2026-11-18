@@ -81,3 +81,19 @@ test('gipity account nsfw off --json PATCHes allow=false', async () => {
   assert.equal(JSON.parse(r.stdout).allow_nsfw_services, false);
   assert.deepEqual(mock.requests().find((q) => q.method === 'PATCH')?.body, { allow: false });
 });
+
+test('gipity account passkeys lists sign-in passkeys, the require setting and where to change it', async () => {
+  mock.reset();
+  mock.on('GET /auth/passkeys/state', { body: { data: {
+    requirePasskey: true,
+    passkeys: [{ id: 'pk_testpass', label: 'Laptop', fingerprint: '3f2a 9c1d 77b0 e412', createdAt: '2026-11-18T10:00:00.000Z', lastUsedAt: null }],
+    manageUrl: 'https://a.gipity.ai/auth/passkeys',
+  } } });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'account', 'passkeys'], { env: { HOME: home } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Require passkey to sign in: on/);
+  assert.match(r.stdout, /Laptop/);
+  assert.match(r.stdout, /3f2a 9c1d 77b0 e412/);
+  assert.match(r.stdout, /https:\/\/a\.gipity\.ai\/auth\/passkeys/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});

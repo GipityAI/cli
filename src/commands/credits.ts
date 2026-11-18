@@ -1,33 +1,11 @@
 import { Command } from 'commander';
-import { spawnCommand } from '../platform.js';
+import { openInBrowser } from '../platform.js';
 import { get, post, ApiError } from '../api.js';
 import { brand, dim, bold, muted, success } from '../colors.js';
 import type { RetentionData } from './storage.js';
 import { run, printList } from '../helpers/index.js';
 
 const PRICING_URL = 'https://prompt.gipity.ai/pricing';
-
-function openInBrowser(url: string): void {
-  // Windows `start` is a cmd.exe builtin, not an executable - spawn can't
-  // launch it directly, so go through `cmd /c start`. The empty "" is the
-  // window-title arg; without it a quoted URL would be swallowed as the title.
-  const [cmd, args] =
-    process.platform === 'darwin' ? ['open', [url]] as const :
-    process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] as const :
-    ['xdg-open', [url]] as const;
-  try {
-    const child = spawnCommand(cmd, args, { stdio: 'ignore', detached: true });
-    // A missing/non-executable launcher (ENOENT, or EACCES on WSL/minimal Linux
-    // where xdg-open isn't runnable) is reported ASYNCHRONOUSLY via an 'error'
-    // event - not a throw - so the try/catch alone can't stop it. With no
-    // listener Node escalates it to an unhandled 'error' and crashes the whole
-    // process. Swallow it; the caller already printed the URL as the fallback.
-    child.on('error', () => {});
-    child.unref();
-  } catch {
-    // Synchronous spawn failure - caller prints the URL.
-  }
-}
 
 // ---- Plan limits formatting (folded in from the old `plan` command) ----
 // Every key the plan definition enforces is rendered, so `credits` /

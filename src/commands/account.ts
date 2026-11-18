@@ -35,7 +35,7 @@ function renderState(s: NsfwState): void {
 
 export const accountCommand = new Command('account')
   .description('Account settings')
-  .addHelpText('after', '\nAccount-level settings for your Gipity account, e.g. `gipity account nsfw status`.');
+  .addHelpText('after', '\nAccount-level settings for your Gipity account, e.g. `gipity account nsfw status`, `gipity account passkeys`.');
 
 const nsfwCommand = accountCommand
   .command('nsfw')
@@ -73,4 +73,30 @@ nsfwCommand
     const res = await patch<{ data: NsfwState }>('/users/me/nsfw', { allow: false });
     if (opts.json) { console.log(JSON.stringify(res.data)); return; }
     renderState(res.data);
+  }));
+
+export interface SigninPasskeysState {
+  requirePasskey: boolean;
+  passkeys: Array<{ id: string; label: string | null; fingerprint: string; createdAt: string; lastUsedAt: string | null }>;
+  manageUrl: string;
+}
+
+// Read-only on purpose: adding a passkey needs a browser (WebAuthn), and
+// turning "require passkey" on or off is something only the signed-in owner
+// does on the hosted page, never a token handed to an agent.
+accountCommand
+  .command('passkeys')
+  .description('Show your sign-in passkeys and whether a passkey is required to sign in')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Account', async () => {
+    const res = await get<{ data: SigninPasskeysState }>('/auth/passkeys/state');
+    const s = res.data;
+    if (opts.json) { console.log(JSON.stringify(s)); return; }
+    console.log(`Require passkey to sign in: ${s.requirePasskey ? bold('on') : dim('off')}`);
+    if (!s.passkeys.length) console.log(muted('  No sign-in passkeys. You sign in with an email code.'));
+    for (const p of s.passkeys) {
+      const used = p.lastUsedAt ? `last used ${p.lastUsedAt.slice(0, 10)}` : 'never used';
+      console.log(`  ${p.label ?? 'Passkey'}  ${muted(`fingerprint ${p.fingerprint}, added ${p.createdAt.slice(0, 10)}, ${used}`)}`);
+    }
+    console.log(muted(`Add or remove passkeys and change the setting in a browser: ${s.manageUrl}`));
   }));

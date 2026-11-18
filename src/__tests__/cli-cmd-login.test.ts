@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
@@ -157,4 +157,54 @@ test('gipity login --email --json reports the sent code and the next command', a
     newAccount: false,
     next: 'gipity login --email ec-test@914-6.com --code <code>',
   });
+});
+
+// An account that requires a passkey: a correct code returns a sign-in link and
+// a poll token instead of tokens. The CLI must print the link, poll until the
+// browser step is done, and only then save the session (device flow).
+test('gipity login --email --code on a passkey-required account prints the link, polls, then saves the session', async () => {
+  mock.reset();
+  const verificationUrl = 'https://a.gipity.ai/auth/passkey?step=step-token-for-test';
+  const pollToken = 'p'.repeat(43);
+  mock.on('POST /auth/verify', { body: { passkeyRequired: true, verificationUrl, pollToken, interval: 0, expiresIn: 30 } });
+  let polls = 0;
+  mock.on('POST /auth/passkey/poll', (req) => {
+    assert.deepEqual(req.body, { pollToken });
+    polls++;
+    return polls < 3
+      ? { body: { status: 'pending', interval: 0 } }
+      : { body: { status: 'complete', accessToken: makeJwt(), refreshToken: 'passkey-refresh', email: 'ec-test@914-6.com' } };
+  });
+  const home = mkdtempSync(join(tmpdir(), 'gipity-login-'));
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'login', '--email', 'ec-test@914-6.com', '--code', '123456', '--json'],
+    { env: { HOME: home } },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /requires a passkey/);
+  assert.ok(r.stderr.includes(verificationUrl), 'the sign-in link is printed');
+  assert.equal(polls, 3);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.loggedIn, true);
+  assert.equal(out.passkey, true);
+  const verifyReq = mock.requests().find((q) => q.url === '/auth/verify');
+  assert.deepEqual(verifyReq?.body, { email: 'ec-test@914-6.com', code: '123456', client: 'cli' });
+  const auth = JSON.parse(readFileSync(join(home, '.gipity', 'auth.json'), 'utf-8'));
+  assert.equal(auth.refreshToken, 'passkey-refresh');
+});
+
+test('gipity login on a passkey-required account fails cleanly when the sign-in expires, saving nothing', async () => {
+  mock.reset();
+  mock.on('POST /auth/verify', { body: {
+    passkeyRequired: true, verificationUrl: 'https://a.gipity.ai/auth/passkey?step=s', pollToken: 'q'.repeat(43), interval: 0, expiresIn: 30,
+  } });
+  mock.on('POST /auth/passkey/poll', { status: 410, body: { error: { code: 'EXPIRED', message: 'This sign-in has expired.' } } });
+  const home = mkdtempSync(join(tmpdir(), 'gipity-login-'));
+  const r = await runCliAsync(
+    ['--api-base', mock.apiBase, 'login', '--email', 'ec-test@914-6.com', '--code', '123456'],
+    { env: { HOME: home } },
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /expired or was cancelled/);
+  assert.equal(existsSync(join(home, '.gipity', 'auth.json')), false);
 });

@@ -5,6 +5,7 @@ import { prompt, decodeJwtExp } from '../utils.js';
 import { success, error as clrError, muted } from '../colors.js';
 import { flushBugQueue } from '../bug-queue.js';
 import { warnBeforeCodeIfUnexpectedNewAccount, warnIfUnexpectedNewAccount } from '../login-flow.js';
+import { verifyEmailCode } from '../passkey-login.js';
 
 export const loginCommand = new Command('login')
   .description('Log in or sign up')
@@ -67,11 +68,8 @@ export const loginCommand = new Command('login')
 
 async function verify(email: string, code: string, json: boolean, say: (line: string) => void): Promise<void> {
   const priorAuth = getAuth();
-  const res = await publicPost<{
-    accessToken: string;
-    refreshToken: string;
-    isNewUser?: boolean;
-  }>('/auth/verify', { email, code });
+  // An account that requires a passkey: prints the link, waits for the browser.
+  const res = await verifyEmailCode(email, code, say);
 
   const exp = decodeJwtExp(res.accessToken);
   if (!exp) {
@@ -94,7 +92,7 @@ async function verify(email: string, code: string, json: boolean, say: (line: st
   // reports that got stranded while this account's session was expired/offline.
   const delivered = await flushBugQueue().catch(() => 0);
   if (json) {
-    console.log(JSON.stringify({ loggedIn: true, email, newAccount: res.isNewUser === true, expiresAt, queuedBugReportsDelivered: delivered }));
+    console.log(JSON.stringify({ loggedIn: true, email, newAccount: res.isNewUser === true, passkey: res.passkey === true, expiresAt, queuedBugReportsDelivered: delivered }));
     return;
   }
   if (delivered > 0) {

@@ -94,3 +94,27 @@ export function spawnSyncCommand(
   }
   return spawnSync(cmd, [...args], { windowsHide: true, ...options });
 }
+
+/** Best-effort: open a URL in the user's browser. Never throws; callers always
+ *  print the URL too, as the fallback. */
+export function openInBrowser(url: string): void {
+  // Windows `start` is a cmd.exe builtin, not an executable - spawn can't
+  // launch it directly, so go through `cmd /c start`. The empty "" is the
+  // window-title arg; without it a quoted URL would be swallowed as the title.
+  const [cmd, args] =
+    process.platform === 'darwin' ? ['open', [url]] as const :
+    process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] as const :
+    ['xdg-open', [url]] as const;
+  try {
+    const child = spawnCommand(cmd, args, { stdio: 'ignore', detached: true });
+    // A missing/non-executable launcher (ENOENT, or EACCES on WSL/minimal Linux
+    // where xdg-open isn't runnable) is reported ASYNCHRONOUSLY via an 'error'
+    // event - not a throw - so the try/catch alone can't stop it. With no
+    // listener Node escalates it to an unhandled 'error' and crashes the whole
+    // process. Swallow it; the caller already printed the URL as the fallback.
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    // Synchronous spawn failure - caller prints the URL.
+  }
+}
