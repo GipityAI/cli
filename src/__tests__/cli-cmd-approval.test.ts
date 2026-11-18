@@ -6,7 +6,7 @@ import { makeAuthedHome, tempDir } from './helpers/test-home.js';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { payloadHash, approvalChallenge } from '../approval-verify.js';
+import { payloadHash, summaryHash, approvalChallenge } from '../approval-verify.js';
 import { SERVER_PROOF_FIXTURE } from './fixtures/approval-proof.js';
 
 let mock: MockServer;
@@ -79,7 +79,7 @@ function signedApproval(payload: unknown) {
   const id = 'ap_Signed001';
   const expiresAt = new Date(Math.floor(Date.now() / 1000) * 1000 + 300_000).toISOString();
   const hash = payloadHash(payload);
-  const challenge = approvalChallenge(id, hash, expiresAt);
+  const challenge = approvalChallenge(id, hash, summaryHash('Open valve', null), expiresAt);
   const ad = Buffer.concat([sha(new URL(origin).hostname), Buffer.from([0x05]), Buffer.from([0, 0, 0, 7])]);
   const cd = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge, origin, crossOrigin: false }));
   const signature = sign('sha256', Buffer.concat([ad, sha(cd)]), privateKey);
@@ -89,7 +89,7 @@ function signedApproval(payload: unknown) {
     detail: {
       guid: id, kind: 'passkey', title: 'Open valve', description: null, status: 'approved', created_at: new Date().toISOString(), resolved_at: null,
       passkey: {
-        id, status: 'approved', summary: 'Open valve', payloadHash: hash, expiresAt, approver: 'u_Approver1',
+        id, status: 'approved', summary: 'Open valve', details: null, payloadHash: hash, expiresAt, approver: 'u_Approver1',
         resolvedAt: new Date().toISOString(), consumedAt: null,
         proof: {
           credentialId: 'cred1', publicKeyJwk: { ...jwk, alg: 'ES256' }, authenticatorData: ad.toString('base64url'),
@@ -161,11 +161,11 @@ test('gipity approval verify checks a platform-produced proof against https://a.
 test('gipity approval passkeys lists passkeys and prints where to manage them', async () => {
   mock.reset();
   mock.on('GET /approvals/passkeys/credentials', { body: { data: [
-    { id: 'pk_Phone0001', label: 'My phone', createdAt: '2026-11-01T10:00:00.000Z', lastUsedAt: null },
+    { id: 'pk_Phone0001', label: 'My phone', fingerprint: 'feed 9234 487a e4fe', createdAt: '2026-11-01T10:00:00.000Z', lastUsedAt: null },
   ] } });
   const r = await run(['approval', 'passkeys']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /pk_Phone0001 {2}My phone/);
+  assert.match(r.stdout, /pk_Phone0001 {2}My phone {2}feed 9234 487a e4fe/);
   assert.match(r.stdout, /\/approvals\/passkeys/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });

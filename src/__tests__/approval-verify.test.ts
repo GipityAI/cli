@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { verifyApproval, canonicalJson, payloadHash, approvalChallenge, type ApprovalForVerify } from '../approval-verify.js';
+import { verifyApproval, canonicalJson, payloadHash, summaryHash, approvalChallenge, keyFingerprint, type ApprovalForVerify } from '../approval-verify.js';
 import { SERVER_PROOF_FIXTURE } from './fixtures/approval-proof.js';
 
 const fx = SERVER_PROOF_FIXTURE;
@@ -22,7 +22,7 @@ test('canonical JSON and payload hash match the platform', () => {
   assert.equal(canonicalJson({ unit: 'C', cmd: 'set', target: 65 }), '{"cmd":"set","target":65,"unit":"C"}');
   assert.equal(payloadHash(fx.payload), fx.approval.payloadHash);
   assert.equal(payloadHash({ target: 65, unit: 'C', cmd: 'set' }), fx.approval.payloadHash);
-  assert.equal(approvalChallenge(fx.approval.id, fx.approval.payloadHash, fx.approval.expiresAt), fx.approval.proof.challenge);
+  assert.equal(approvalChallenge(fx.approval.id, fx.approval.payloadHash, summaryHash(fx.approval.summary, fx.approval.details), fx.approval.expiresAt), fx.approval.proof.challenge);
   assert.throws(() => canonicalJson({ a: undefined }), /undefined/);
 });
 
@@ -76,12 +76,23 @@ test('an Ed25519 passkey verifies too', () => {
   const expiresAt = new Date(Date.now() + 60_000).toISOString().replace(/\.\d{3}Z$/, '.000Z');
   const hash = payloadHash({ a: 1 });
   const ad = Buffer.concat([sha('a.gipity.ai'), Buffer.from([0x05]), Buffer.from([0, 0, 0, 1])]);
-  const cd = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: approvalChallenge(id, hash, expiresAt), origin: ORIGIN }));
+  const cd = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: approvalChallenge(id, hash, summaryHash('Ed', null), expiresAt), origin: ORIGIN }));
   const signature = sign(null, Buffer.concat([ad, sha(cd)]), privateKey);
   const r = verifyApproval({
-    id, status: 'approved', payloadHash: hash, expiresAt,
+    id, status: 'approved', summary: 'Ed', payloadHash: hash, expiresAt,
     proof: { credentialId: 'x', publicKeyJwk: jwk, authenticatorData: ad.toString('base64url'), clientDataJSON: cd.toString('base64url'),
       signature: signature.toString('base64url'), rpId: 'a.gipity.ai', origin: ORIGIN, challenge: '' },
   }, { payload: { a: 1 }, pinnedJwk: jwk, expectedOrigin: ORIGIN });
   assert.deepEqual(failed(r), []);
+});
+
+test('the passkey fingerprint matches the server and the Python client', () => {
+  assert.equal(keyFingerprint(fx.approval.proof.publicKeyJwk), 'feed 9234 487a e4fe');
+  assert.equal(keyFingerprint(fx.pinnedJwk), 'feed 9234 487a e4fe');
+});
+
+test('a changed summary breaks the signature binding', () => {
+  const r = verifyApproval({ ...approval, summary: 'Set boiler to 95C' },
+    { payload: fx.payload, pinnedJwk: fx.pinnedJwk, expectedOrigin: ORIGIN, now: beforeExpiry });
+  assert.deepEqual(failed(r), ['clientData challenge matches']);
 });

@@ -7,7 +7,8 @@
  * Rules (the app-approvals skill documents the same):
  *   payloadHash = hex sha256 of the canonical JSON of the payload (RFC 8785:
  *                 keys sorted, no whitespace, JSON.stringify scalars)
- *   challenge   = sha256("gipity-approval:v1|" + id + "|" + payloadHash + "|" + expiresAt)
+ *   summaryHash = hex sha256 of the canonical JSON of {"details": details or null, "summary": summary}
+ *   challenge   = sha256("gipity-approval:v2|" + id + "|" + payloadHash + "|" + summaryHash + "|" + expiresAt)
  *   clientDataJSON.type == "webauthn.get", .challenge == base64url(challenge), .origin == expected origin
  *   authenticatorData: rpIdHash == sha256(rpId), flags UP (0x01) and UV (0x04) set
  *   signature over authenticatorData || sha256(clientDataJSON), verified with the pinned key
@@ -33,6 +34,8 @@ export interface ApprovalProof {
 export interface ApprovalForVerify {
   id: string;
   status: string;
+  summary: string;
+  details?: string | null;
   payloadHash: string;
   expiresAt: string;
   proof: ApprovalProof | null;
@@ -60,7 +63,7 @@ export interface VerifyResult {
   checks: VerifyCheck[];
 }
 
-const CHALLENGE_PREFIX = 'gipity-approval:v1|';
+const CHALLENGE_PREFIX = 'gipity-approval:v2|';
 
 /** RFC 8785 canonical JSON. Throws on values JSON can't represent exactly. */
 export function canonicalJson(value: unknown): string {
@@ -91,8 +94,32 @@ export function payloadHash(payload: unknown): string {
   return sha256(canonicalJson(payload)).toString('hex');
 }
 
-export function approvalChallenge(id: string, hash: string, expiresAt: string): string {
-  return sha256(`${CHALLENGE_PREFIX}${id}|${hash}|${expiresAt}`).toString('base64url');
+/** The words the approver read (summary + details), hashed into the challenge. */
+export function summaryHash(summary: string, details: string | null | undefined): string {
+  return payloadHash({ summary, details: details ?? null });
+}
+
+export function approvalChallenge(id: string, hash: string, sumHash: string, expiresAt: string): string {
+  return sha256(`${CHALLENGE_PREFIX}${id}|${hash}|${sumHash}|${expiresAt}`).toString('base64url');
+}
+
+/**
+ * The passkey fingerprint shown on the Gipity passkey pages: the first 16 hex
+ * characters of the RFC 7638 JWK thumbprint (sha256 of the key's required
+ * members, sorted, no whitespace), in groups of four. Compare it with the one
+ * on https://a.gipity.ai/approvals/passkeys before pinning a key.
+ */
+export function keyFingerprint(jwk: JsonWebKey): string {
+  const members: Record<string, string | undefined> =
+    jwk.kty === 'EC' ? { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }
+      : jwk.kty === 'OKP' ? { crv: jwk.crv, kty: jwk.kty, x: jwk.x }
+        : jwk.kty === 'RSA' ? { e: jwk.e, kty: jwk.kty, n: jwk.n }
+          : {};
+  if (Object.keys(members).length === 0 || Object.values(members).some((v) => typeof v !== 'string')) {
+    throw new Error('not an EC, OKP or RSA public key');
+  }
+  const hex = sha256(JSON.stringify(members)).toString('hex').slice(0, 16);
+  return hex.match(/.{4}/g)!.join(' ');
 }
 
 function sameKey(a: JsonWebKey, b: JsonWebKey): boolean {
@@ -123,7 +150,8 @@ export function verifyApproval(approval: ApprovalForVerify, opts: VerifyOptions)
   const hash = payloadHash(opts.payload);
   add('payload hash matches', hash === approval.payloadHash, hash === approval.payloadHash ? undefined : `local ${hash}`);
 
-  const challenge = approvalChallenge(approval.id, hash, approval.expiresAt);
+  const sumHash = summaryHash(approval.summary, approval.details);
+  const challenge = approvalChallenge(approval.id, hash, sumHash, approval.expiresAt);
   let clientData: { type?: string; challenge?: string; origin?: string } = {};
   const clientDataBytes = Buffer.from(proof.clientDataJSON, 'base64url');
   try {

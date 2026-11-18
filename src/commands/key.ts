@@ -57,6 +57,7 @@ interface KeyInfo {
   role: string;
   scopes: KeyScopes | null;
   last_used_at: string | null;
+  last_used_ip: string | null;
   expires_at: string | null;
   created_at: string;
 }
@@ -164,7 +165,7 @@ keyCommand
       res.data,
       opts,
       'No API keys. Mint one with: gipity key create "my script" --role editor',
-      (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${describeScopes(k.scopes)}  ${k.prefix}...  last used ${fmtDate(k.last_used_at)}  expires ${fmtDate(k.expires_at)}`)}`,
+      (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${describeScopes(k.scopes)}  ${k.prefix}...  last used ${fmtDate(k.last_used_at)}${k.last_used_ip ? ` from ${k.last_used_ip}` : ''}  expires ${fmtDate(k.expires_at)}`)}`,
     );
   }));
 

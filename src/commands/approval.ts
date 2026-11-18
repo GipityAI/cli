@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { Command, Option } from 'commander';
 import { get, post, del, getBaseUrl } from '../api.js';
 import { muted, success } from '../colors.js';
-import { verifyApproval, type ApprovalForVerify } from '../approval-verify.js';
+import { verifyApproval, keyFingerprint, type ApprovalForVerify } from '../approval-verify.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
 interface ApprovalSummary {
@@ -142,7 +142,6 @@ approvalCommand
   }));
 
 interface PasskeyView extends ApprovalForVerify {
-  summary: string;
   approver: string;
   resolvedAt: string | null;
   consumedAt: string | null;
@@ -181,7 +180,7 @@ approvalCommand
         `Expires:      ${p.expiresAt}`,
         `Resolved:     ${p.resolvedAt ?? '-'}`,
         `Consumed:     ${p.consumedAt ?? '-'}`,
-        `Proof:        ${p.proof ? `signed by passkey ${p.proof.credentialId}` : 'none'}`,
+        `Proof:        ${p.proof ? `signed by passkey ${p.proof.credentialId} (fingerprint ${keyFingerprint(p.proof.publicKeyJwk)})` : 'none'}`,
       );
     } else {
       lines.push(`Status: ${data.status}`);
@@ -189,7 +188,7 @@ approvalCommand
     printResult(lines.join('\n'), opts, data);
   }));
 
-interface PasskeySummary { id: string; label: string | null; createdAt: string; lastUsedAt: string | null }
+interface PasskeySummary { id: string; label: string | null; fingerprint: string; createdAt: string; lastUsedAt: string | null }
 
 approvalCommand
   .command('passkeys')
@@ -209,7 +208,7 @@ approvalCommand
       return;
     }
     console.log(data.length
-      ? data.map(k => `${k.id}  ${k.label ?? 'Passkey'}  ${muted(`added ${k.createdAt.slice(0, 10)}${k.lastUsedAt ? `, last used ${k.lastUsedAt.slice(0, 10)}` : ''}`)}`).join('\n')
+      ? data.map(k => `${k.id}  ${k.label ?? 'Passkey'}  ${k.fingerprint}  ${muted(`added ${k.createdAt.slice(0, 10)}${k.lastUsedAt ? `, last used ${k.lastUsedAt.slice(0, 10)}` : ''}`)}`).join('\n')
       : 'No passkeys yet.');
     console.log(muted(`Add or remove passkeys in the browser: ${manageUrl}`));
   }));
@@ -230,9 +229,11 @@ approvalCommand
     const expectedOrigin = new URL(opts.origin ?? getBaseUrl()).origin;
     const result = verifyApproval(data.passkey, { payload, pinnedJwk, expectedOrigin });
     if (opts.json) {
-      console.log(JSON.stringify({ id: guid, status: data.passkey.status, ...result }));
+      const fingerprint = data.passkey.proof ? keyFingerprint(data.passkey.proof.publicKeyJwk) : null;
+      console.log(JSON.stringify({ id: guid, status: data.passkey.status, fingerprint, ...result }));
     } else {
       for (const c of result.checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'}  ${c.check}${c.detail ? muted(`  (${c.detail})`) : ''}`);
+      if (data.passkey.proof) console.log(muted(`Signed by the passkey with fingerprint ${keyFingerprint(data.passkey.proof.publicKeyJwk)}`));
       if (!result.pinned) console.log(muted('Key not pinned: checked against the key in the proof. Pass --key with the approver key you pinned.'));
       if (result.ok && data.passkey.status !== 'approved') console.log(muted(`Signature is valid, but the approval is ${data.passkey.status}.`));
     }
