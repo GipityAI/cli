@@ -1,10 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { Command, Option } from 'commander';
-import { get, post } from '../api.js';
+import { get, post, del, getBaseUrl } from '../api.js';
 import { muted, success } from '../colors.js';
+import { verifyApproval, type ApprovalForVerify } from '../approval-verify.js';
 import { run, printList, printResult } from '../helpers/index.js';
 
 interface ApprovalSummary {
   guid: string;
+  kind?: 'link' | 'passkey';
   title: string;
   status: string;
   response_type: string;
@@ -39,7 +42,7 @@ approvalCommand
   .action((opts) => run('List', async () => {
     const res = await get<{ data: ApprovalSummary[] }>(`/approvals?status=${encodeURIComponent(opts.status)}`);
     printList(res.data, opts, 'No approvals.', a =>
-      `${a.guid}  ${a.title}  ${muted(`[${a.status}] ${timeAgo(a.created_at)}`)}`,
+      `${a.guid}  ${a.title}  ${muted(`[${a.status}${a.kind === 'passkey' ? ', passkey' : ''}] ${timeAgo(a.created_at)}`)}`,
     );
   }));
 
@@ -136,4 +139,106 @@ approvalCommand
     }
     await post(`/approvals/${guid}/cancel`, {});
     printResult(success(`Cancelled ${guid}.`), opts, { guid, cancelled: true });
+  }));
+
+interface PasskeyView extends ApprovalForVerify {
+  summary: string;
+  approver: string;
+  resolvedAt: string | null;
+  consumedAt: string | null;
+}
+
+interface ApprovalDetail {
+  guid: string;
+  kind: 'link' | 'passkey';
+  title: string;
+  description: string | null;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
+  passkey: PasskeyView | null;
+}
+
+function requireGuid(guid: string): void {
+  if (!guid.startsWith('ap_')) throw new Error('Expected approval guid like ap_xxxxxxxx');
+}
+
+approvalCommand
+  .command('show <guid>')
+  .description('Show one approval (for a passkey approval: status, payload hash, expiry and whether it carries a signed proof)')
+  .option('--json', 'Output as JSON')
+  .action((guid: string, opts) => run('Show', async () => {
+    requireGuid(guid);
+    const { data } = await get<{ data: ApprovalDetail }>(`/approvals/${guid}`);
+    const lines = [`${data.guid}  ${data.title}`];
+    if (data.description) lines.push(muted(data.description));
+    if (data.passkey) {
+      const p = data.passkey;
+      lines.push(
+        `Status:       ${p.status} (passkey)`,
+        `Approver:     ${p.approver}`,
+        `Payload hash: ${p.payloadHash}`,
+        `Expires:      ${p.expiresAt}`,
+        `Resolved:     ${p.resolvedAt ?? '-'}`,
+        `Consumed:     ${p.consumedAt ?? '-'}`,
+        `Proof:        ${p.proof ? `signed by passkey ${p.proof.credentialId}` : 'none'}`,
+      );
+    } else {
+      lines.push(`Status: ${data.status}`);
+    }
+    printResult(lines.join('\n'), opts, data);
+  }));
+
+interface PasskeySummary { id: string; label: string | null; createdAt: string; lastUsedAt: string | null }
+
+approvalCommand
+  .command('passkeys')
+  .description('List the passkeys you approve with (add them in the browser at the printed link)')
+  .option('--remove <id>', 'Remove one of your passkeys by id')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Passkeys', async () => {
+    if (opts.remove) {
+      await del(`/approvals/passkeys/credentials/${encodeURIComponent(opts.remove)}`);
+      printResult(success(`Removed ${opts.remove}.`), opts, { id: opts.remove, removed: true });
+      return;
+    }
+    const { data } = await get<{ data: PasskeySummary[] }>('/approvals/passkeys/credentials');
+    const manageUrl = `${getBaseUrl()}/approvals/passkeys`;
+    if (opts.json) {
+      console.log(JSON.stringify({ passkeys: data, manageUrl }));
+      return;
+    }
+    console.log(data.length
+      ? data.map(k => `${k.id}  ${k.label ?? 'Passkey'}  ${muted(`added ${k.createdAt.slice(0, 10)}${k.lastUsedAt ? `, last used ${k.lastUsedAt.slice(0, 10)}` : ''}`)}`).join('\n')
+      : 'No passkeys yet.');
+    console.log(muted(`Add or remove passkeys in the browser: ${manageUrl}`));
+  }));
+
+approvalCommand
+  .command('verify <guid>')
+  .description('Verify a passkey approval offline, as a device does: recompute the payload hash and challenge and check the passkey signature')
+  .requiredOption('--payload <file>', 'JSON file with the exact payload the approval is for')
+  .option('--key <file>', "The approver's public key (JWK JSON) pinned at enrollment; without it the proof's own key is used and the result says so")
+  .option('--origin <url>', 'Relying-party origin the passkey signed for (default: the API base)')
+  .option('--json', 'Output as JSON')
+  .action((guid: string, opts) => run('Verify', async () => {
+    requireGuid(guid);
+    const payload = JSON.parse(readFileSync(opts.payload, 'utf8'));
+    const pinnedJwk = opts.key ? JSON.parse(readFileSync(opts.key, 'utf8')) : undefined;
+    const { data } = await get<{ data: ApprovalDetail }>(`/approvals/${guid}`);
+    if (!data.passkey) throw new Error(`${guid} is not a passkey approval`);
+    const expectedOrigin = new URL(opts.origin ?? getBaseUrl()).origin;
+    const result = verifyApproval(data.passkey, { payload, pinnedJwk, expectedOrigin });
+    if (opts.json) {
+      console.log(JSON.stringify({ id: guid, status: data.passkey.status, ...result }));
+    } else {
+      for (const c of result.checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'}  ${c.check}${c.detail ? muted(`  (${c.detail})`) : ''}`);
+      if (!result.pinned) console.log(muted('Key not pinned: checked against the key in the proof. Pass --key with the approver key you pinned.'));
+      if (result.ok && data.passkey.status !== 'approved') console.log(muted(`Signature is valid, but the approval is ${data.passkey.status}.`));
+    }
+    if (!result.ok) {
+      // --json already printed the failing checks; exit non-zero without a second JSON line.
+      if (opts.json) { process.exitCode = 1; return; }
+      throw new Error('verification failed');
+    }
   }));
