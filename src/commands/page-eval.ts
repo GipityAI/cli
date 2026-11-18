@@ -14,8 +14,10 @@ export interface EvalResult {
   truncated: boolean;
   // Results of --step expressions, in order, each run against the SAME page load.
   stepResults?: string[];
-  // Server-side wall time of the browser command chain (see evalTimingLine).
+  // Server-side wall time of the browser command chain.
   browserMs?: number;
+  // Where the server-side time went, phase by phase (see evalTimingLine).
+  timing?: EvalTiming;
   // Result of the second expression run after an in-place reload (--reload).
   reloadResult?: string;
   reloadTruncated?: boolean;
@@ -151,6 +153,14 @@ export function summarizeExpr(expr: string): string {
     ? `(${expr.trim().length} chars)`
     : `(+${meaningful.length - 1} more ${meaningful.length - 1 === 1 ? 'line' : 'lines'}, ${expr.trim().length} chars)`;
   return `${head} ${shape}`;
+}
+
+/** The server's phase-by-phase breakdown of one eval. `scriptMs` has one entry
+ *  per leg (<expr>, then each --step); `queueMs` is time outside the browser
+ *  (waiting for a sandbox); `cleanupMs` the console drain, frame probe and close. */
+export interface EvalTiming {
+  totalMs: number; queueMs: number; browserStartMs: number; pageLoadMs: number; settleMs: number;
+  scriptMs: number[]; reloadMs?: number; cleanupMs: number;
 }
 
 type EvalJobRecord =
@@ -391,19 +401,38 @@ export function slowRenderMessage(fps: number, o: { camera: boolean; waitMs: num
 }
 
 /** A slow eval should say which leg was slow, instead of leaving the caller to
- *  guess a longer --wait. Silent under SLOW_EVAL_MS. Exported for tests. */
-const SLOW_EVAL_MS = 20_000;
-export function evalTimingLine(t: { hostMs: number; submitMs: number; pollMs: number; browserMs?: number }): string | null {
+ *  guess a longer --wait. Silent under SLOW_EVAL_MS. Uses the server's phase
+ *  breakdown when it has one. Exported for tests. */
+const SLOW_EVAL_MS = 10_000;
+// Above this, say before waiting that the call may run long.
+const LONG_EVAL_WARN_MS = 100_000;
+export function evalTimingLine(t: { hostMs: number; submitMs: number; pollMs: number; browserMs?: number; timing?: EvalTiming }): string | null {
   const total = t.hostMs + t.submitMs + t.pollMs;
   if (total < SLOW_EVAL_MS) return null;
   const s = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
-  const parts = [
-    t.hostMs >= 500 ? `hosting files ${s(t.hostMs)}` : null,
-    t.submitMs >= 500 ? `camera/feed setup ${s(t.submitMs)}` : null,
-    t.browserMs !== undefined ? `browser ${s(t.browserMs)} (launch, page load, waits, script)` : `browser ${s(t.pollMs)}`,
-    t.browserMs !== undefined && t.pollMs - t.browserMs >= 2000 ? `queue + cleanup ${s(t.pollMs - t.browserMs)}` : null,
-  ].filter(Boolean);
-  return `timing: ${s(total)} = ${parts.join(' + ')}`;
+  const some = (label: string, ms: number | undefined, min = 500) => (ms !== undefined && ms >= min ? `${label} ${s(ms)}` : null);
+  const head = [
+    some('hosting files', t.hostMs),
+    some('camera/feed setup', t.submitMs),
+  ];
+  const tm = t.timing;
+  const browser = tm
+    ? [
+      some('sandbox queue', tm.queueMs),
+      some('browser start', tm.browserStartMs, 0),
+      some('page load', tm.pageLoadMs, 0),
+      some('wait/wait-for', tm.settleMs),
+      ...tm.scriptMs.map((ms, i) => `${i === 0 ? 'script' : `step ${i}`} ${s(ms)}`),
+      some('reload', tm.reloadMs),
+      some('cleanup', tm.cleanupMs),
+      // Result pickup: the client polls the finished job.
+      some('result pickup', t.pollMs - tm.totalMs, 1000),
+    ]
+    : [
+      t.browserMs !== undefined ? `browser ${s(t.browserMs)}` : `browser ${s(t.pollMs)}`,
+      t.browserMs !== undefined && t.pollMs - t.browserMs >= 2000 ? `queue + cleanup ${s(t.pollMs - t.browserMs)}` : null,
+    ];
+  return `timing: ${s(total)} = ${[...head, ...browser].filter(Boolean).join(' + ')}`;
 }
 
 /** Poll the async eval job until it finishes. Eval runs server-side as a
@@ -411,8 +440,12 @@ export function evalTimingLine(t: { hostMs: number; submitMs: number; pollMs: nu
  *  we submit, then poll the result out of the job store. `expectedWorkMs` is
  *  the time the server-side work is expected to take (see evalWorkBudgetMs);
  *  the client budget is that plus 60s of headroom for browser open/cold start. */
-export async function pollEvalResult(evalJobId: string, expectedWorkMs: number): Promise<EvalResult> {
-  const deadline = Date.now() + expectedWorkMs + 60_000;
+export async function pollEvalResult(evalJobId: string, expectedWorkMs: number, serverMaxMs?: number): Promise<EvalResult> {
+  // The server states the job's real upper bound (every leg ends on its own
+  // wall-clock deadline); wait that plus a little for the result to land.
+  // Without it, fall back to our own estimate plus flat headroom.
+  const budgetMs = serverMaxMs !== undefined ? serverMaxMs + 10_000 : expectedWorkMs + 60_000;
+  const deadline = Date.now() + budgetMs;
   let missCount = 0;
   while (Date.now() < deadline) {
     let rec: EvalJobRecord;
@@ -429,7 +462,9 @@ export async function pollEvalResult(evalJobId: string, expectedWorkMs: number):
     }
     if (rec.status === 'done') return rec;
     if (rec.status === 'error') throw new ApiError(rec.httpStatus, rec.code, rec.reason);
-    await sleep(1000);
+    // A finished job sits in Redis until picked up; a short interval keeps that
+    // pickup from adding up to a second to every call.
+    await sleep(250);
   }
   // This is the CLIENT giving up, not the page failing — and the budget above
   // already covers everything the caller asked for, so "your expression is too
@@ -439,7 +474,7 @@ export async function pollEvalResult(evalJobId: string, expectedWorkMs: number):
   throw new ApiError(
     504,
     'EVAL_TIMEOUT',
-    `the browser did not report back within ${Math.round((expectedWorkMs + 60_000) / 1000)}s: that budget already ` +
+    `the browser did not report back within ${Math.round(budgetMs / 1000)}s: that budget already ` +
     `covers --wait, --wait-for, the eval body and any --camera setup, so this is the browser itself being slow or ` +
     `stuck (a cold sandbox, a heavy page), not your expression being too big. Lowering --wait does NOT help and on ` +
     `a --camera run actively hurts (the wait is what lets the vision model load: cut it and the eval reads an ` +
@@ -740,7 +775,7 @@ export const pageEvalCommand = new Command('eval')
       }
 
       const submitStart = Date.now();
-      const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
+      const kickoff = await post<{ data: { evalJobId: string; maxMs?: number } }>('/tools/browser/eval', {
         url, expr: sentExpr, waitMs: sentWaitMs,
         steps: sentSteps.length ? sentSteps : undefined,
         reloadExpr,
@@ -754,6 +789,15 @@ export const pageEvalCommand = new Command('eval')
         cameraUrl: camera?.url,
       });
       const pollStart = Date.now();
+      // Say up front when this call can outlast a typical 120s agent tool cap,
+      // so a long run is a choice, not a surprise background task.
+      const maxMs = kickoff.data.maxMs;
+      if (maxMs !== undefined && maxMs > LONG_EVAL_WARN_MS) {
+        console.error(muted(
+          `This eval can take up to ${Math.round(maxMs / 1000)}s (page load + --wait/--wait-for + --timeout per script, ` +
+          `each a hard limit). Lower --timeout or --wait-timeout to keep it shorter.`,
+        ));
+      }
       let d: EvalResult;
       try {
         d = await pollEvalResult(kickoff.data.evalJobId, evalWorkBudgetMs({
@@ -763,7 +807,7 @@ export const pageEvalCommand = new Command('eval')
           hasCamera: !!camera,
           scriptBudgetMs: sentScriptBudgetMs,
           legs: 1 + sentSteps.length,
-        }));
+        }), maxMs);
       } catch (err) {
         // The server's overrun message names the budget but not the flag that
         // raises it — and the flag is what the caller needs next. Name it, with
@@ -778,7 +822,7 @@ export const pageEvalCommand = new Command('eval')
       }
       const timing = evalTimingLine({
         hostMs: submitStart - hostStart, submitMs: pollStart - submitStart,
-        pollMs: Date.now() - pollStart, browserMs: d.browserMs,
+        pollMs: Date.now() - pollStart, browserMs: d.browserMs, timing: d.timing,
       });
       if (timing) console.error(muted(timing));
       const { result, noValue } = normalizeEvalResult(d.result);
@@ -988,6 +1032,9 @@ Which one:
     calls; every call re-loads the page and re-pays it. Start that work on page load and
     absorb it in the pre-eval window: --wait <ms> (max ${MAX_WAIT_MS}) or, better,
     --wait-for '<ready-selector>' --wait-timeout ${WAIT_FOR_MAX_MS}.
+Every one of these is a hard limit: a call takes at most page load (~20s) + the wait
++ --timeout per script, plus a few seconds of browser start/close. Calls over 10s print
+a 'timing:' line naming where the time went (--json: the 'timing' field).
 
 Several things to check on one page? Pass --step (max ${MAX_EVAL_STEPS}) instead of running
 'page eval' N times: the steps run in order against the ONE loaded page, so a slow

@@ -233,7 +233,7 @@ async function observeClient(
 ): Promise<ObserveResult> {
   const base: ObserveResult = { i, label, samples: [], startedAt: 0, endedAt: 0 };
   try {
-    const kickoff = await post<{ data: { evalJobId: string } }>('/tools/browser/eval', {
+    const kickoff = await post<{ data: { evalJobId: string; maxMs?: number } }>('/tools/browser/eval', {
       url,
       expr,
       waitMs: settleMs,
@@ -245,8 +245,8 @@ async function observeClient(
       // anything still applied at the end of the hold so the harness finishes.
       lifecycle: lifecycle?.length ? { steps: lifecycle, untilMs: holdMs } : undefined,
     });
-    // Server work ≈ nav + settle + the in-page hold; pollEvalResult adds 60s headroom.
-    const d = await pollEvalResult(kickoff.data.evalJobId, settleMs + holdMs + (barrier ? JOIN_ALLOWANCE_MS : 0));
+    // The server states the job's upper bound; the estimate is the fallback.
+    const d = await pollEvalResult(kickoff.data.evalJobId, settleMs + holdMs + (barrier ? JOIN_ALLOWANCE_MS : 0), kickoff.data.maxMs);
     const raw = d.result?.trim() ?? '';
     if (raw.startsWith('EvalError:') || raw.startsWith('ObserveError:')) {
       return { ...base, error: raw };

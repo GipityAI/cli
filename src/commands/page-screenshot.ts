@@ -270,12 +270,19 @@ export function looksLikeImagePath(p: string): boolean {
  *  picture of the wrong moment. Exported for tests. */
 export function buildWaitForGate(selector: string, timeoutMs: number): string {
   const sel = JSON.stringify(selector);
+  // Checked on every DOM mutation (a microtask, so the gate opens the moment the
+  // app sets its ready attribute) with a slow timer as backstop: a timer-only
+  // poll lagged by seconds on a vision page busy inferring every frame.
   return (
-    `await (async () => { const __t0 = Date.now(); ` +
-    `while (Date.now() - __t0 < ${timeoutMs}) { ` +
-    `try { if (document.querySelector(${sel})) return; } catch (e) { throw new Error('wait-for: invalid selector ' + ${sel}); } ` +
-    `await new Promise((r) => setTimeout(r, 100)); } ` +
-    `throw new Error('wait-for: nothing matched ' + ${sel} + ' within ${timeoutMs}ms: the page never reached that state (raise --wait-timeout, fix the selector, or check the app actually gets there headlessly)'); })();`
+    `await (async () => { const __q = ${sel}; ` +
+    `try { document.querySelector(__q); } catch (e) { throw new Error('wait-for: invalid selector ' + __q); } ` +
+    `if (document.querySelector(__q)) return; ` +
+    `const __ok = await new Promise((res) => { let o; const end = (v) => { clearTimeout(t); clearInterval(iv); if (o) o.disconnect(); res(v); }; ` +
+    `try { o = new MutationObserver(() => { if (document.querySelector(__q)) end(true); }); ` +
+    `o.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch (e) {} ` +
+    `const iv = setInterval(() => { if (document.querySelector(__q)) end(true); }, 100); ` +
+    `const t = setTimeout(() => end(!!document.querySelector(__q)), ${timeoutMs}); }); ` +
+    `if (!__ok) throw new Error('wait-for: nothing matched ' + __q + ' within ${timeoutMs}ms: the page never reached that state (raise --wait-timeout, fix the selector, or check the app actually gets there headlessly)'); })();`
   );
 }
 

@@ -6,7 +6,7 @@ import * as tarPack from 'tar-stream';
 import { runCliAsync } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
-import { timestampSlug, defaultFilename, augmentSandboxTimeout } from '../commands/page-screenshot.js';
+import { timestampSlug, defaultFilename, augmentSandboxTimeout, buildWaitForGate } from '../commands/page-screenshot.js';
 import {
   summarizeExpr, evalWorkBudgetMs, pollEvalResult, evalTimingLine, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
   capScriptBudgetMs, budgetOverrunHint, navigationAbortHint, isEmptyStateResult,
@@ -2165,12 +2165,32 @@ test('page test explains an ObserveError sample, and stays quiet on clean sample
 
 test('page eval timing line: silent when fast, names each leg when slow', () => {
   assert.equal(evalTimingLine({ hostMs: 100, submitMs: 300, pollMs: 6000, browserMs: 5500 }), null);
+  // An older server: only the chain's total.
   const line = evalTimingLine({ hostMs: 2000, submitMs: 15000, pollMs: 36000, browserMs: 30000 })!;
   assert.match(line, /^timing: 53\.0s = /);
   assert.match(line, /hosting files 2\.0s/);
   assert.match(line, /camera\/feed setup 15\.0s/);
   assert.match(line, /browser 30\.0s/);
   assert.match(line, /queue \+ cleanup 6\.0s/);
+});
+
+test('page eval timing line: names every phase from the server breakdown', () => {
+  const line = evalTimingLine({
+    hostMs: 800, submitMs: 1200, pollMs: 14_600,
+    timing: { totalMs: 14_400, queueMs: 40, browserStartMs: 1600, pageLoadMs: 600, settleMs: 7600, scriptMs: [2300, 900], cleanupMs: 1200 },
+  })!;
+  assert.match(line, /^timing: 16\.6s = /);
+  assert.match(line, /page load 0\.6s/);
+  assert.match(line, /wait\/wait-for 7\.6s/);
+  assert.match(line, /script 2\.3s \+ step 1 0\.9s/);
+  assert.match(line, /cleanup 1\.2s/);
+  // A 40ms queue and a quick result pickup are noise, not news.
+  assert.doesNotMatch(line, /queue|pickup/);
+});
+
+test('page screenshot --wait-for gate is a valid script body', () => {
+  // The gate is spliced into an async body server-side: it must parse there.
+  assert.doesNotThrow(() => new Function(`return (async function(){${buildWaitForGate('[data-vision="ready"]', 5000)}})`));
 });
 
 test('page screenshot: a too-tall viewport points at --full', async () => {
