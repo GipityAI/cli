@@ -401,6 +401,89 @@ test('gipity load --json prints only JSON on stdout', { skip: process.platform =
   assert.match(r.stderr, /Resolved template vars/);
 });
 
+// ── save --with-data / load with data ─────────────────────────────────
+
+test('gipity save --with-data asks for the rows and reports them; plain save does not', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0/export', (req): { raw: Buffer; contentType: string; headers: Record<string, string> } => ({
+    raw: Buffer.from('PK\x05\x06' + '\0'.repeat(18)),
+    contentType: 'application/zip',
+    headers: req.url.includes('with_data=1')
+      ? { 'content-disposition': 'attachment; filename="alpha.gip"', 'x-gip-data-tables': '3', 'x-gip-data-rows': '42' }
+      : { 'content-disposition': 'attachment; filename="alpha.gip"' },
+  }));
+  const out = join(makeAuthedHome(), 'out.gip');
+  const r = await inProject(['save', out, '--with-data', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).data, { tables: 3, rows: 42 });
+  assert.match(mock.requests()[0].url, /\?with_data=1$/);
+
+  const human = await inProject(['save', out, '--with-data']);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /Data:\s+42 row\(s\) from 3 table\(s\)/);
+  assert.match(human.stderr, /holds the app's data/);
+
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0/export', { raw: Buffer.from('PK'), contentType: 'application/zip' });
+  const plain = await inProject(['save', out, '--json']);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(JSON.parse(plain.stdout).data, undefined);
+  assert.equal(mock.requests()[0].url, '/projects/p_ProjA00n0/export');
+});
+
+test('gipity save --with-data shows the cap error', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0/export', { status: 413, body: { error: { code: 'DATA_TOO_LARGE', message: 'The app\'s database rows are over 250 MB, the most a .gip can carry.' } } });
+  const r = await inProject(['save', join(makeAuthedHome(), 'x.gip'), '--with-data']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /over 250 MB/);
+});
+
+const DATA = { databases: [{ database: 'default', tables: [{ table: 'orders', rows: 2 }, { table: 'customers', rows: 3 }] }], rows: 5, bytes: 2048 };
+
+test('gipity load --inspect lists the saved tables and row counts', async () => {
+  mock.reset();
+  mock.on('POST /projects/inspect', { body: { data: {
+    meta: null, fileCount: 2, totalBytes: 100, topLevel: ['gipity.yaml', 'migrations'],
+    manifest: { found: false, valid: false, phases: [], functions: [], hasDatabase: false },
+    data: DATA,
+  } } });
+  const bundle = join(makeAuthedHome(), 'app.gip');
+  writeFileSync(bundle, 'PK');
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'load', bundle, '--inspect'], { env: { HOME: home } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Data: 5 row\(s\) in 2 table\(s\)/);
+  assert.match(r.stdout, /default\.customers\s+3 row\(s\)/);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test('gipity load reports loaded rows, and a failed data load exits non-zero', { skip: process.platform === 'win32' }, async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'tester' } } });
+  mock.on('POST /projects/import', { status: 201, body: { data: {
+    project: { short_guid: PROJ_B.short_guid, name: 'Loaded', slug: 'loaded-data' },
+    written: 3, manifest: {}, meta: null,
+    data: { loaded: true, rows: 5, databases: DATA.databases, phases: [] },
+  } } });
+  const { env } = jsonPurityEnv('loaded-data');
+  const bundle = join(env.HOME, 'app.gip');
+  writeFileSync(bundle, 'PK');
+  const ok = await runCliAsync(['--api-base', mock.apiBase, 'load', bundle], { env });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /Loaded 5 row\(s\)/);
+  assert.match(ok.stdout, /default\.orders\s+2 row\(s\)/);
+  assert.match(ok.stdout, /gipity deploy prod/);
+
+  mock.on('POST /projects/import', { status: 207, body: { data: {
+    project: { short_guid: PROJ_B.short_guid, name: 'Loaded', slug: 'loaded-data' },
+    written: 3, manifest: {}, meta: null,
+    data: { loaded: false, error: 'The database phase failed, so no rows were loaded: bad migration', phases: [] },
+  } } });
+  const bad = await runCliAsync(['--api-base', mock.apiBase, 'load', bundle, '--json'], { env });
+  assert.equal(bad.status, 1);
+  assert.equal(parseStdoutJson(bad.stdout).data && (parseStdoutJson(bad.stdout).data as { loaded: boolean }).loaded, false);
+});
+
 test('writeYamlAuthMode appends an auth block, then replaces it, keeping the rest of the file', async () => {
   const { writeYamlAuthMode } = await import('../commands/project-auth.js');
   const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs');

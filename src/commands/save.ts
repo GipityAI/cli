@@ -3,8 +3,10 @@
  *
  * A .gip is a zip of the project's file tree plus a reserved
  * `_gip/manifest.json` metadata entry. It pairs with `gipity load`, which
- * creates a brand-new project from a bundle. Code-only: secrets, custom
- * domains, chats, and database rows are never in a .gip.
+ * creates a brand-new project from a bundle. Secrets, custom domains, chats
+ * and app runtime uploads are never in a .gip. Database rows are left out
+ * unless the owner passes `--with-data` (every table's rows, up to the
+ * server's size cap); the schema always comes from the bundle's migrations.
  */
 import fs from 'fs';
 import path from 'path';
@@ -47,12 +49,15 @@ function dispositionFilename(headers: Headers): string | null {
 export const saveCommand = new Command('save')
   .description('Save this app as a portable .gip bundle')
   .argument('[output]', 'Output .gip path, or a directory to write <slug>.gip into (default: ./<slug>.gip)')
+  .option('--with-data', 'Also save every table\'s rows from the app\'s database (owner only)')
   .option('--json', 'Output as JSON')
-  .addHelpText('after', '\nRestore anywhere with `gipity load <file>.gip` - it always creates a NEW project.')
+  .addHelpText('after', '\nRestore anywhere with `gipity load <file>.gip` - it always creates a NEW project.'
+    + '\nWith --with-data, load also builds the database from the migrations and loads the rows.')
   .action((output: string | undefined, opts) => run('Save', async () => {
     const config = requireConfig();
 
-    const doExport = () => downloadWithHeaders(`/projects/${config.projectGuid}/export`);
+    const query = opts.withData ? '?with_data=1' : '';
+    const doExport = () => downloadWithHeaders(`/projects/${config.projectGuid}/export${query}`);
     const { buffer, headers } = opts.json
       ? await doExport()
       : await withSpinner('Exporting...', doExport, { done: null });
@@ -68,6 +73,9 @@ export const saveCommand = new Command('save')
     const sha256 = createHash('sha256').update(buffer).digest('hex');
     const skipped = Number(headers.get('x-gip-skipped') ?? 0);
     const entries = zipEntryCount(buffer);
+    const data = opts.withData
+      ? { tables: Number(headers.get('x-gip-data-tables') ?? 0), rows: Number(headers.get('x-gip-data-rows') ?? 0) }
+      : null;
 
     if (opts.json) {
       console.log(JSON.stringify({
@@ -76,6 +84,7 @@ export const saveCommand = new Command('save')
         sha256,
         ...(entries !== null ? { entries } : {}),
         skipped,
+        ...(data ? { data } : {}),
       }));
       return;
     }
@@ -84,11 +93,16 @@ export const saveCommand = new Command('save')
     console.log(`  Path:     ${dest}`);
     console.log(`  Size:     ${formatBytes(buffer.length)}`);
     if (entries !== null) console.log(`  Entries:  ${entries} (including the bundle manifest)`);
+    if (data) console.log(`  Data:     ${data.rows} row(s) from ${data.tables} table(s)`);
     console.log(`  SHA-256:  ${sha256}`);
     if (skipped > 0) {
       console.log('');
       console.warn(warning(`${skipped} file(s) were skipped (unreadable or over 100 MB) - this bundle is partial.`));
       console.warn(warning('Large assets belong in Gipity Storage, not in a code bundle.'));
+    }
+    if (data) {
+      console.log('');
+      console.warn(warning('This bundle holds the app\'s data. Share it only with people allowed to see that data.'));
     }
     console.log('');
     console.log(muted('Restore anywhere with `gipity load ' + path.basename(dest) + '` (creates a new project).'));

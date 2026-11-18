@@ -47,6 +47,7 @@ interface KeyScopes {
   functions?: string[];
   tables?: Record<string, 'read' | 'write'>;
   files?: 'read' | 'write';
+  approvals?: 'read';
   ip?: string[];
 }
 
@@ -67,7 +68,7 @@ const splitList = (v: string): string[] => v.split(',').map(x => x.trim()).filte
 
 /** Build the scopes body from the create flags; null when none were given.
  *  The server validates names, access levels and addresses. */
-export function scopesFromFlags(opts: { functions?: string; tables?: string; files?: string; ip?: string }): KeyScopes | null {
+export function scopesFromFlags(opts: { functions?: string; tables?: string; files?: string; approvals?: string; ip?: string }): KeyScopes | null {
   const scopes: KeyScopes = {};
   if (opts.functions !== undefined) {
     const fns = splitList(opts.functions);
@@ -87,6 +88,7 @@ export function scopesFromFlags(opts: { functions?: string; tables?: string; fil
     }
   }
   if (opts.files !== undefined) scopes.files = opts.files as 'read' | 'write';
+  if (opts.approvals !== undefined) scopes.approvals = opts.approvals as 'read';
   if (opts.ip !== undefined) {
     const ips = splitList(opts.ip);
     if (!ips.length) throw new Error('--ip needs at least one address or CIDR range');
@@ -102,6 +104,7 @@ export function describeScopes(scopes: KeyScopes | null): string {
   if (scopes.functions) parts.push(`fn: ${scopes.functions.join(',')}`);
   if (scopes.tables) parts.push(`tables: ${Object.entries(scopes.tables).map(([t, a]) => `${t}:${a}`).join(',')}`);
   if (scopes.files) parts.push(`files: ${scopes.files}`);
+  if (scopes.approvals) parts.push(`approvals: ${scopes.approvals}`);
   if (scopes.ip) parts.push(`ip: ${scopes.ip.join(',')}`);
   return parts.join('  ');
 }
@@ -121,6 +124,7 @@ keyCommand
   .option('--functions <names>', 'Scope: only these functions (comma-separated)')
   .option('--tables <list>', 'Scope: only these Records tables, e.g. commands:write,logs:read')
   .addOption(new Option('--files <access>', 'Scope: app files access').choices(['read', 'write']))
+  .addOption(new Option('--approvals <access>', 'Scope: read and consume passkey approvals').choices(['read']))
   .option('--ip <list>', 'Scope: only from these IPs / CIDR ranges (comma-separated)')
   .option(...projectOpt)
   .option('--json', 'Output as JSON')

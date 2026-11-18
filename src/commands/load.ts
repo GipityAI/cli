@@ -7,6 +7,11 @@
  * `--inspect` to peek inside a source - metadata, contents, deploy phases,
  * and each function's permission surface - without creating anything.
  *
+ * A bundle saved with `gipity save --with-data` also carries database rows:
+ * the server builds the new app's database from the bundle's migrations and
+ * loads them, and the summary lists each table's row count (`--inspect` shows
+ * the same counts without loading anything).
+ *
  * Sources:
  * - a local .gip file (from `gipity save`) - uploaded as raw zip bytes
  * - `github:owner/repo[/sub/path][@ref]` or a github.com URL - resolved
@@ -39,7 +44,17 @@ interface GipMeta {
   source_project: string;
   exported_at: string;
   file_count: number;
+  data?: GipDataManifest;
 }
+interface GipDataManifest {
+  databases: Array<{ database: string; tables: Array<{ table: string; rows: number }> }>;
+  rows: number;
+  bytes: number;
+}
+interface PhaseResult { name: string; status: string; summary: string }
+type DataImport =
+  | { loaded: true; databases: Array<{ database: string; tables: Array<{ table: string; rows: number }> }>; rows: number; phases: PhaseResult[] }
+  | { loaded: false; error: string; phases: PhaseResult[] };
 interface ManifestFunctionSummary {
   name: string;
   auth?: string;
@@ -61,6 +76,7 @@ interface InspectData {
   totalBytes: number;
   topLevel: string[];
   manifest: GipManifestSummary;
+  data: GipDataManifest | null;
 }
 interface ImportData {
   project: { short_guid: string; name: string; slug: string };
@@ -68,6 +84,7 @@ interface ImportData {
   failed?: Array<{ path: string; error: string }>;
   manifest: GipManifestSummary;
   meta: GipMeta | null;
+  data?: DataImport;
 }
 
 /** A source the server resolves via the user's GitHub connection: the
@@ -133,6 +150,13 @@ function printManifest(m: GipManifestSummary): void {
   }
 }
 
+/** One line per table: `  database.table  N rows`. */
+function printTableCounts(databases: Array<{ database: string; tables: Array<{ table: string; rows: number }> }>): void {
+  const rows = databases.flatMap(db => db.tables.map(t => ({ name: `${db.database}.${t.table}`, rows: t.rows })));
+  const width = Math.max(0, ...rows.map(r => r.name.length));
+  for (const r of rows) console.log(`  ${r.name.padEnd(width)}  ${muted(`${r.rows} row(s)`)}`);
+}
+
 function printInspect(d: InspectData, source: string): void {
   if (d.meta) {
     console.log(bold(d.meta.name));
@@ -147,6 +171,14 @@ function printInspect(d: InspectData, source: string): void {
   console.log('');
   printManifest(d.manifest);
   console.log('');
+  if (d.data) {
+    const tables = d.data.databases.reduce((n, db) => n + db.tables.length, 0);
+    console.log(bold(`Data: ${d.data.rows} row(s) in ${tables} table(s), ${formatBytes(d.data.bytes)}`));
+    printTableCounts(d.data.databases);
+  } else {
+    console.log(muted('Data:      none (code, migrations and seeds only)'));
+  }
+  console.log('');
   console.log(muted('Load it with `gipity load ' + source + '` - always creates a NEW project.'));
 }
 
@@ -154,7 +186,7 @@ export const loadCommand = new Command('load')
   .description('Create a new app from a .gip bundle or a GitHub repo')
   .argument('<source>', 'A .gip file (from `gipity save`), github:owner/repo[/sub/path][@ref], or a github.com URL')
   .option('--name <name>', 'Name for the new project (default: the source\'s saved name)')
-  .option('--inspect', 'Peek inside the source - contents, deploy phases, function permissions - without creating anything')
+  .option('--inspect', 'Peek inside the source - contents, deploy phases, function permissions, saved data - without creating anything')
   .option('--json', 'Output as JSON')
   .addHelpText('after', '\nLoad always creates a NEW project - it never merges into an existing one.'
     + '\nGitHub sources need a one-time `gipity github connect` (re-run it to grant more repos).')
@@ -242,7 +274,9 @@ export const loadCommand = new Command('load')
         failed: data.failed,
         partial,
         applied,
+        ...(data.data ? { data: data.data } : {}),
       }));
+      if (data.data && !data.data.loaded) process.exitCode = 1;
       return;
     }
 
@@ -258,6 +292,23 @@ export const loadCommand = new Command('load')
       console.warn(warning('The project was still created and linked; the files above are missing from it.'));
     }
 
+    if (data.data?.loaded) {
+      console.log('');
+      console.log(success(`Loaded ${data.data.rows} row(s) into the app's database:`));
+      printTableCounts(data.data.databases);
+    } else if (data.data) {
+      console.log('');
+      console.warn(warning(`The bundle's rows were not loaded: ${data.data.error}`));
+      console.warn(warning('The project was still created and linked, with an empty database. Delete it with `gipity project delete` and load again once the problem is fixed.'));
+      process.exitCode = 1;
+    }
+
     console.log('');
-    console.log(`${muted('Next:')} cd ${dir} && ${brand('gipity deploy dev')}`);
+    if (data.data?.loaded) {
+      // The rows went into prod (where a new app lives); a dev environment starts empty.
+      console.log(`${muted('Next:')} cd ${dir} && ${brand('gipity deploy prod')}`);
+      console.log(muted('The rows are in the prod database. `gipity env create dev --data` gives you a dev copy with them.'));
+    } else {
+      console.log(`${muted('Next:')} cd ${dir} && ${brand('gipity deploy dev')}`);
+    }
   }));

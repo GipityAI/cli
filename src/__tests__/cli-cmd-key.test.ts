@@ -96,7 +96,7 @@ test('gipity key create --json prints a failure as a JSON error object', async (
   assert.match(out.error.message, /already exists/);
 });
 
-test('gipity key create sends scopes from --functions/--tables/--files/--ip and shows them', async () => {
+test('gipity key create sends scopes from --functions/--tables/--files/--approvals/--ip and shows them', async () => {
   mock.reset();
   let seenBody: any;
   mock.on('POST /projects/p_TestProj/api-keys', (req) => {
@@ -109,15 +109,16 @@ test('gipity key create sends scopes from --functions/--tables/--files/--ip and 
 
   const r = await fresh(['key', 'create', 'front door', '--role', 'editor',
     '--functions', 'send-command, heartbeat', '--tables', 'commands:write,logs:read',
-    '--files', 'read', '--ip', '203.0.113.7/32,2001:db8::/48']);
+    '--files', 'read', '--approvals', 'read', '--ip', '203.0.113.7/32,2001:db8::/48']);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(seenBody.scopes, {
     functions: ['send-command', 'heartbeat'],
     tables: { commands: 'write', logs: 'read' },
     files: 'read',
+    approvals: 'read',
     ip: ['203.0.113.7/32', '2001:db8::/48'],
   });
-  assert.match(r.stdout, /Scopes: fn: send-command,heartbeat {2}tables: commands:write,logs:read {2}files: read {2}ip: 203\.0\.113\.7\/32,2001:db8::\/48/);
+  assert.match(r.stdout, /Scopes: fn: send-command,heartbeat {2}tables: commands:write,logs:read {2}files: read {2}approvals: read {2}ip: 203\.0\.113\.7\/32,2001:db8::\/48/);
 });
 
 test('gipity key create rejects a malformed --tables entry before calling the server', async () => {

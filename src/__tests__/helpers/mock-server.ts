@@ -14,10 +14,10 @@ import { AddressInfo } from 'net';
  */
 
 export type MockHandler =
-  | { status?: number; body?: unknown; raw?: string | Buffer; contentType?: string }
+  | { status?: number; body?: unknown; raw?: string | Buffer; contentType?: string; headers?: Record<string, string> }
   | ((req: { method: string; url: string; body: unknown; headers: Record<string, string | string[] | undefined> }) =>
-      Promise<{ status?: number; body?: unknown; raw?: string | Buffer; contentType?: string }> |
-      { status?: number; body?: unknown; raw?: string | Buffer; contentType?: string });
+      Promise<{ status?: number; body?: unknown; raw?: string | Buffer; contentType?: string; headers?: Record<string, string> }> |
+      { status?: number; body?: unknown; raw?: string | Buffer; contentType?: string; headers?: Record<string, string> });
 
 export class MockServer {
   private routes = new Map<string, MockHandler>();
@@ -80,6 +80,7 @@ export class MockServer {
       const contentType = resolved.contentType ?? 'application/json';
       res.statusCode = status;
       res.setHeader('content-type', contentType);
+      for (const [k, v] of Object.entries(resolved.headers ?? {})) res.setHeader(k, v);
       if (resolved.raw !== undefined) {
         res.end(resolved.raw);
       } else {
