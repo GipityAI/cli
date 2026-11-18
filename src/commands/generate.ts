@@ -8,6 +8,7 @@ import { error as clrError, success, muted } from '../colors.js';
 import { printCommandError } from '../helpers/command.js';
 import { withSpinner } from '../progress.js';
 import { guessMime } from '../upload.js';
+import { uploadAppFile } from './upload.js';
 import {
   addGenerationSubcommands, isQueuedModel, submitGenerations, waitForGenerations, statusText, type Generation,
 } from './generate-async.js';
@@ -257,8 +258,17 @@ image. --no-wait queues it and prints the id instead (check it with
 
 Editing (--input): pass one or more source images and the prompt becomes an edit
 instruction applied to them - "make it night time", "add a hat", "remove the car
-in the background", or compose several inputs together. Editing routes to Gemini
-automatically; the CLI reads the file bytes itself, so there is no base64/argv fiddling.
+in the background", or compose several inputs together. With a cloud model, editing
+routes to Gemini automatically; the CLI reads the file bytes itself, so there is no
+base64/argv fiddling.
+
+--input with a Gipity GPU model (--model gipity-...): the CLI uploads each photo
+privately to your project, then the model starts from it (redrawing --strength of
+it, 0.05-1, default 0.6) or, for models that take references, uses the photos as
+"picture 1", "picture 2" (up to the model's limit, together with --ref). Images
+made from uploaded photos are SFW only: --nsfw can't be combined with --input, and
+NSFW-only models refuse photos. \`gipity generate models\` shows how each model
+takes photos.
 
 Examples:
   gipity generate image "a cat wearing a top hat"
@@ -270,9 +280,12 @@ Examples:
   gipity generate image "a red canoe at sunrise" --model gipity-krea2-realistic --aspect landscape
   gipity generate image "same canoe, now at night" --model gipity-qwen21-consistent --ref gen_abc12345
   gipity generate image "a lighthouse" --model gipity-krea2-realistic --n 4 --no-wait
+  gipity generate image "the same street at night" --model gipity-krea2-realistic --input street.jpg --strength 0.5
+  gipity generate image "the woman from picture 1 on a beach" --model gipity-qwen-edit-consistent --input portrait.jpg
 `)
   .argument('<prompt>', 'Text description of the image, or (with --input) the edit instruction to apply')
-  .option('--input <file>', 'Source image to edit/compose (repeatable). With --input the prompt is an edit instruction; routes to Gemini.', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--input <file>', 'Source image (repeatable). Cloud models: the prompt is an edit instruction (routes to Gemini). Gipity GPU models: the model starts from the photo or uses it as a reference (SFW only).', (v: string, acc: string[]) => (acc || []).concat(v))
+  .option('--strength <0.05-1>', 'With --input on a Gipity GPU model that starts from the photo: how much of it to redraw (default 0.6)', (v) => parseFloat(v))
   .addOption(new Option('--provider <provider>', 'Image provider (default: bfl)').choices(IMAGE_PROVIDER_IDS))
   .option('--model <model>', `Model id for the chosen provider, or a tier alias (${IMAGE_TIER_ALIAS_IDS.join(', ')}); see Models below`)
   .option('--size <size>', 'Dimensions as WxH, e.g. "1024x1024" (Gemini snaps to its nearest tier and aspect ratio)')
@@ -297,6 +310,7 @@ Examples:
         await generateQueued(config.projectGuid, prompt, opts);
         return;
       }
+      if (opts.strength !== undefined) throw new Error('--strength is for Gipity GPU models with --input (--model gipity-...).');
       const inputImages = opts.input ? readInputImages(opts.input) : undefined;
       const doGenerate = () => post<GenerateResult>(`/projects/${config.projectGuid}/generate/image`, {
         prompt,
@@ -353,11 +367,25 @@ function numberedPath(base: string, i: number, n: number): string {
 
 /** Queued (async) path: submit, wait with live status, download each image. */
 async function generateQueued(projectGuid: string, prompt: string, opts: any): Promise<void> {
-  if (opts.input) throw new Error('--input editing is not available on queued generations; drop --input or pick a cloud model.');
   if (!opts.model || !String(opts.model).startsWith('gipity-')) {
     throw new Error('--no-wait is for Gipity GPU models (--model gipity-...; see `gipity generate models`). Cloud models render right away: drop --no-wait.');
   }
+  const inputs: string[] = opts.input ?? [];
+  if (opts.strength !== undefined) {
+    if (!inputs.length) throw new Error('--strength needs --input: it says how much of the photo to redraw.');
+    if (!Number.isFinite(opts.strength) || opts.strength < 0.05 || opts.strength > 1) throw new Error('--strength must be a number from 0.05 to 1.');
+  }
+  // Images made from uploaded photos are SFW only (the server enforces it too).
+  if (inputs.length && opts.nsfw) throw new Error('Images made from uploaded photos are SFW only: leave --nsfw off.');
   const started = Date.now();
+  const images: { file_guid: string }[] = [];
+  for (const p of inputs) {
+    const mime = guessMime(p);
+    if (!mime.startsWith('image/')) throw new Error(`--input ${p} is not an image (${mime}).`);
+    const upload = () => uploadAppFile(projectGuid, p, { public: false });
+    const f = opts.json ? await upload() : await withSpinner(`Uploading ${p}...`, upload, { done: null });
+    images.push({ file_guid: f.guid });
+  }
   const submitted = await submitGenerations(projectGuid, {
     model: opts.model,
     prompt,
@@ -369,6 +397,8 @@ async function generateQueued(projectGuid: string, prompt: string, opts: any): P
     nsfw: opts.nsfw ? true : undefined,
     format: opts.format,
     references: opts.ref,
+    images: images.length ? images : undefined,
+    strength: opts.strength,
   });
 
   if (opts.wait === false) {

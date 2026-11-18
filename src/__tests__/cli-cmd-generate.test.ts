@@ -454,6 +454,52 @@ test('submit errors (NSFW not allowed) surface the server message', async () => 
   assert.match(r.stderr, /Allow NSFW services/);
 });
 
+// --input on a Gipity GPU model: upload privately, then submit images + strength (SFW only).
+function mockUpload(guid: string) {
+  mock.on('POST /api/p_TestProj/uploads/init', { body: { data: { upload_guid: `up_${guid}`, method: 'PUT', url: `${mock.apiBase}/s3/${guid}`, expires_in: 600 } } });
+  mock.on(`PUT /s3/${guid}`, { body: {} });
+  mock.on('POST /api/p_TestProj/uploads/complete', { body: { data: { guid, name: 'street.jpg', size: 4, content_type: 'image/jpeg', url: 'https://x/serve', is_public: false } } });
+}
+
+test('--input with a gipity-* model uploads the photo privately and submits images + strength', async () => {
+  mock.reset();
+  mockUpload('fl_photo1111');
+  mock.on(`POST ${GENS}`, { status: 202, body: { data: [gen()] } });
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(dir, 'street.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+  const r = await freshFast(dir, ['generate', 'image', 'the same street at night', '--model', 'gipity-krea2-realistic', '--input', 'street.jpg', '--strength', '0.4', '--no-wait']);
+  assert.equal(r.status, 0, r.stderr);
+  const init = mock.requests().find((q) => q.url === '/api/p_TestProj/uploads/init')!.body as any;
+  assert.equal(init.public, false, 'uploaded privately');
+  assert.equal(init.content_type, 'image/jpeg');
+  const body = mock.requests().find((q) => q.method === 'POST' && q.url === GENS)!.body as any;
+  assert.deepEqual(body.images, [{ file_guid: 'fl_photo1111' }]);
+  assert.equal(body.strength, 0.4);
+  assert.equal(body.nsfw, undefined);
+  // Never the Gemini edit route.
+  assert.equal(mock.requests().some((q) => q.url === '/projects/p_TestProj/generate/image'), false);
+});
+
+test('--input with a gipity-* model refuses --nsfw, and --strength needs --input and a GPU model', async () => {
+  mock.reset();
+  const dir = makeProjectDir({ apiBase: mock.apiBase });
+  writeFileSync(join(dir, 'p.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+  const nsfw = await freshFast(dir, ['generate', 'image', 'x', '--model', 'gipity-krea2-realistic', '--input', 'p.jpg', '--nsfw']);
+  assert.equal(nsfw.status, 1);
+  assert.match(nsfw.stderr, /SFW only/);
+  const noInput = await freshFast(dir, ['generate', 'image', 'x', '--model', 'gipity-krea2-realistic', '--strength', '0.5']);
+  assert.equal(noInput.status, 1);
+  assert.match(noInput.stderr, /--strength needs --input/);
+  const range = await freshFast(dir, ['generate', 'image', 'x', '--model', 'gipity-krea2-realistic', '--input', 'p.jpg', '--strength', '2']);
+  assert.equal(range.status, 1);
+  assert.match(range.stderr, /0\.05 to 1/);
+  const cloud = await freshFast(dir, ['generate', 'image', 'x', '--input', 'p.jpg', '--strength', '0.5']);
+  assert.equal(cloud.status, 1);
+  assert.match(cloud.stderr, /--strength is for Gipity GPU models/);
+  // Nothing was uploaded or submitted for any of these.
+  assert.equal(mock.requests().length, 0);
+});
+
 test('gipity generate status / cancel / list read the generations API', async () => {
   mock.reset();
   mock.on(`GET ${GENS}`, (req) => ({ body: { data: req.url.includes('status=open')

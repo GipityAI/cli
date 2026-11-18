@@ -10,15 +10,46 @@ import { withSpinner } from '../progress.js';
 import { run } from '../helpers/index.js';
 
 interface InitResponse { data: ReadyInit }
-interface CompleteResponse {
-  data: {
-    guid: string;
-    name: string;
-    size: number;
-    content_type: string;
-    url: string;
-    is_public: boolean;
+export interface UploadedFile {
+  guid: string;
+  name: string;
+  size: number;
+  content_type: string;
+  url: string;
+  is_public: boolean;
+}
+interface CompleteResponse { data: UploadedFile }
+
+/** Upload one local file into the project's app-uploads store (init, presigned
+ *  PUT or multipart, complete) and return the stored file. Shared by
+ *  `gipity upload` and `gipity generate image --input` (Gipity GPU models). */
+export async function uploadAppFile(
+  projectGuid: string, file: string, opts: { public: boolean; contentType?: string },
+): Promise<UploadedFile> {
+  let size: number;
+  try {
+    const st = statSync(file);
+    if (!st.isFile()) throw new Error('not a regular file');
+    size = st.size;
+  } catch (err) {
+    throw new Error(`can't read ${file}: ${(err as Error).message}`);
+  }
+  if (size === 0) throw new Error(`${file} is empty - nothing to upload.`);
+  const contentType = opts.contentType || guessMime(file);
+  const init = await post<InitResponse>(`/api/${projectGuid}/uploads/init`, {
+    filename: basename(file),
+    content_type: contentType,
+    size,
+    public: opts.public,
+  });
+  const fields = await transferToS3(file, size, contentType, init.data);
+  const completeBody: { upload_guid: string; parts?: Array<{ part_number: number; etag: string }> } = {
+    upload_guid: init.data.upload_guid,
   };
+  // Multipart completion needs the part etags; a single presigned PUT does not.
+  if ('parts' in fields) completeBody.parts = fields.parts;
+  const comp = await post<CompleteResponse>(`/api/${projectGuid}/uploads/complete`, completeBody);
+  return comp.data;
 }
 
 // The app-uploads store (`/api/<guid>/uploads/*`) mints a DURABLE, worker-reachable
@@ -42,40 +73,12 @@ Public by default (a media.gipity.ai CDN url any job or function can fetch);
 `)
   .action((file: string, opts) => run('Upload', async () => {
     const { config } = await resolveProjectContext();
-
-    let size: number;
-    try {
-      const st = statSync(file);
-      if (!st.isFile()) throw new Error('not a regular file');
-      size = st.size;
-    } catch (err) {
-      throw new Error(`can't read ${file}: ${(err as Error).message}`);
-    }
-    if (size === 0) throw new Error(`${file} is empty - nothing to upload.`);
-
-    const filename = basename(file);
-    const contentType = opts.contentType || guessMime(file);
-
-    const doUpload = async (): Promise<CompleteResponse['data']> => {
-      const init = await post<InitResponse>(`/api/${config.projectGuid}/uploads/init`, {
-        filename,
-        content_type: contentType,
-        size,
-        public: !opts.private,
-      });
-      const fields = await transferToS3(file, size, contentType, init.data);
-      const completeBody: { upload_guid: string; parts?: Array<{ part_number: number; etag: string }> } = {
-        upload_guid: init.data.upload_guid,
-      };
-      // Multipart completion needs the part etags; a single presigned PUT does not.
-      if ('parts' in fields) completeBody.parts = fields.parts;
-      const comp = await post<CompleteResponse>(`/api/${config.projectGuid}/uploads/complete`, completeBody);
-      return comp.data;
-    };
-
+    let size = 0;
+    try { size = statSync(file).size; } catch { /* uploadAppFile reports it */ }
+    const doUpload = () => uploadAppFile(config.projectGuid, file, { public: !opts.private, contentType: opts.contentType });
     const data = opts.json
       ? await doUpload()
-      : await withSpinner(`Uploading ${filename} (${formatSize(size)})...`, doUpload, { done: null });
+      : await withSpinner(`Uploading ${basename(file)} (${formatSize(size)})...`, doUpload, { done: null });
 
     if (opts.json) {
       console.log(JSON.stringify(data));

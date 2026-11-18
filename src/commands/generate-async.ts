@@ -47,6 +47,9 @@ export interface ImageModelInfo {
   nsfw?: boolean;
   sizes?: Record<string, [number, number]>;
   max_references?: number;
+  /** How the model takes uploaded photos: 'start' (redraws one), 'reference' (pictures 1, 2 ...) or none. */
+  image_mode?: 'start' | 'reference' | null;
+  max_images?: number;
   avoid_supported?: boolean;
   available?: boolean;
   unavailable_reason?: string | null;
@@ -278,7 +281,7 @@ const modelsCommand = new Command('models')
       const width = Math.max(...queued.map((m) => m.id.length));
       for (const m of queued) {
         const price = m.price_credits != null ? `${m.price_credits} credits` : 'not priced yet';
-        const tags = [m.nsfw ? warning('NSFW') : '', m.max_references ? muted(`refs:${m.max_references}`) : ''].filter(Boolean).join(' ');
+        const tags = [m.nsfw ? warning('NSFW') : '', m.max_references ? muted(`refs:${m.max_references}`) : '', m.image_mode ? muted(m.image_mode === 'start' ? 'photo:start' : `photos:${m.max_images ?? 0}`) : ''].filter(Boolean).join(' ');
         const state = m.available === false ? clrError(`unavailable${m.unavailable_reason ? `: ${m.unavailable_reason}` : ''}`) : '';
         console.log(`  ${m.id.padEnd(width)}  ${price.padEnd(16)} ${[tags, state].filter(Boolean).join(' ')}`.trimEnd());
         if (m.label || m.description) console.log(muted(`  ${''.padEnd(width)}  ${[m.label, m.description].filter(Boolean).join(': ')}`));
