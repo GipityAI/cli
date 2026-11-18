@@ -12,15 +12,14 @@
 //   GW_CHANGED_FILES  newline-separated paths changed vs the base
 //   GW_BASE           base ref (default origin/main)
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readSmokeList, distTest } from './smoke-list.mjs';
 
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: 'inherit' });
 const out = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8' }).trim();
 
-// The canonical smoke set, parsed from package.json's test:smoke so the two never
-// drift. Each entry is a bare stem, e.g. "cli-cmd-deploy" for that .test file.
-const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
-const SMOKE = [...pkg.scripts['test:smoke'].matchAll(/dist\/__tests__\/([^\s]+)\.test\.js/g)].map((m) => m[1]);
+// The canonical smoke set, from test-smoke.txt (shared with the full gate, so the
+// two never drift). Each entry is a bare stem, e.g. "cli-cmd-deploy".
+const SMOKE = readSmokeList();
 
 // Always run these regardless of the diff — cheap, and they exercise the paths
 // almost everything else depends on.
@@ -67,4 +66,4 @@ const toRun = selected ?? SMOKE;
 if (!selected) console.log('smoke-quick: change not localizable — running the FULL smoke set.');
 else console.log(`smoke-quick: ${toRun.length}/${SMOKE.length} smoke files for this diff — ${toRun.join(', ')}`);
 
-run('node', ['--test', ...toRun.map((t) => `dist/__tests__/${t}.test.js`)]);
+run('node', ['--test', ...toRun.map(distTest)]);
