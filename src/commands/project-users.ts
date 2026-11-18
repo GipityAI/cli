@@ -21,6 +21,26 @@ interface AppUserPage {
   total: number;
 }
 
+interface NativeSession {
+  guid: string;
+  device_label: string | null;
+  provider: string;
+  created_at: string;
+  last_used_at: string;
+  expires_at: string;
+}
+
+interface PushDevice {
+  label: string | null;
+  created_at: string;
+  last_seen_at: string;
+}
+
+interface UserSessions {
+  sessions: NativeSession[];
+  push_devices: { web: PushDevice[]; ios: PushDevice[] };
+}
+
 const EXPORT_PAGE_SIZE = 500;
 
 function fail(msg: string): never {
@@ -41,12 +61,30 @@ function day(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '-';
 }
 
-function formatTable(users: AppUser[]): string {
-  const head = ['GUID', 'Name', 'Email', 'Providers', 'Created', 'Last sign-in'];
-  const rows = users.map(u => [u.guid, u.display_name ?? '-', u.email ?? '-', u.providers.join(', ') || '-', day(u.created_at), day(u.last_login_at)]);
+function table(head: string[], rows: string[][]): string {
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map(r => r[i].length)));
   const line = (cells: string[]) => cells.map((c, i) => c.padEnd(widths[i])).join('  ').trimEnd();
   return [bold(line(head)), ...rows.map(line)].join('\n');
+}
+
+function formatTable(users: AppUser[]): string {
+  return table(
+    ['GUID', 'Name', 'Email', 'Providers', 'Created', 'Last sign-in'],
+    users.map(u => [u.guid, u.display_name ?? '-', u.email ?? '-', u.providers.join(', ') || '-', day(u.created_at), day(u.last_login_at)]),
+  );
+}
+
+/** Push devices as "2 web (Chrome on Android, Safari on iPhone), 1 iOS". */
+export function pushSummary(push: UserSessions['push_devices']): string {
+  const part = (n: number, kind: string, list: PushDevice[]) => {
+    const labels = [...new Set(list.map(d => d.label).filter((l): l is string => !!l))];
+    return `${n} ${kind}${labels.length ? ` (${labels.join(', ')})` : ''}`;
+  };
+  const parts = [
+    ...(push.web.length ? [part(push.web.length, 'web', push.web)] : []),
+    ...(push.ios.length ? [part(push.ios.length, 'iOS', push.ios)] : []),
+  ];
+  return parts.length ? parts.join(', ') : 'none';
 }
 
 /** One CSV field: quoted when it holds a comma, quote, or line break. */
@@ -63,14 +101,16 @@ function toCsv(users: AppUser[]): string {
 export function registerUsersCommand(projectCommand: Command): void {
   const users = projectCommand
     .command('users')
-    .description("Manage the app's own users (app sign-in mode): list, export, delete, sign out")
+    .description("Manage the app's own users (app sign-in mode): list, export, delete, sign out, sessions")
     .addHelpText('after', `
 These are the people who signed in to this app with Google, Apple, Discord, an
 email code, Steam or a guest device. They belong to the app, not to Gipity.
   gipity project users --search ann         find users by name or email
   gipity project users export -o users.csv  every user, as CSV (or --format json)
   gipity project users delete <guid>        erase a user (runs the app's user_deleted hooks)
-  gipity project users signout <guid>       sign a user out everywhere (web and native apps)`);
+  gipity project users signout <guid>       sign a user out everywhere (web and native apps)
+  gipity project users sessions <guid>      their native app sessions and push devices
+  gipity project users sessions <guid> --revoke <ns_id>   end one native session now`);
 
   users
     .command('list', { isDefault: true })
@@ -129,6 +169,37 @@ email code, Steam or a guest device. They belong to the app, not to Gipity.
       if (!ok) { console.log('Cancelled.'); return; }
       const res = await del<{ data: { deleted: boolean } }>(`/projects/${requireConfig().projectGuid}/app-users/${encodeURIComponent(userGuid)}`);
       printResult(success(`Deleted user ${userGuid}.`), opts, { guid: userGuid, ...res.data });
+    }));
+
+  users
+    .command('sessions <userGuid>')
+    .description("Show a user's native app sessions (device, signed in, last used, expires) and push devices, or end one session with --revoke")
+    .option('--revoke <sessionGuid>', 'End this native session now: its refresh token and access token stop working')
+    .option('--json', 'Output as JSON')
+    .action((userGuid: string, opts) => run('Sessions', async () => {
+      const base = `/projects/${requireConfig().projectGuid}/app-users/${encodeURIComponent(userGuid)}/sessions`;
+      if (opts.revoke) {
+        const res = await del<{ data: { revoked: boolean } }>(`${base}/${encodeURIComponent(opts.revoke)}`);
+        const msg = res.data.revoked
+          ? success(`Ended session ${opts.revoke} for ${userGuid}: that device is signed out now.`)
+          : muted(`Session ${opts.revoke} had already ended.`);
+        printResult(msg, opts, { guid: userGuid, session: opts.revoke, ...res.data });
+        return;
+      }
+      const res = await get<{ data: UserSessions }>(base);
+      const d = res.data;
+      if (opts.json) { console.log(JSON.stringify(d)); return; }
+      if (d.sessions.length === 0) {
+        console.log(muted('No active native app sessions.'));
+      } else {
+        console.log(table(
+          ['Session', 'Device', 'Provider', 'Signed in', 'Last used', 'Expires'],
+          d.sessions.map(x => [x.guid, x.device_label ?? '-', x.provider, day(x.created_at), day(x.last_used_at), day(x.expires_at)]),
+        ));
+      }
+      console.log('');
+      console.log(`Push devices: ${pushSummary(d.push_devices)}`);
+      if (d.sessions.length > 0) console.log(muted(`End one: gipity project users sessions ${userGuid} --revoke <session>`));
     }));
 
   users

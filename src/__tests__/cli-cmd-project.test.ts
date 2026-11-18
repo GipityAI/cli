@@ -336,6 +336,53 @@ test('gipity project users signout revokes sessions and prints the count', async
   assert.match(r.stdout, /2 sessions ended/);
 });
 
+test('gipity project users sessions lists native sessions and push devices', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0/app-users/u_One/sessions', { body: { data: {
+    sessions: [
+      { guid: 'ns_abcd2345', device_label: 'Steam Deck', provider: 'steam', created_at: '2026-11-01T10:00:00Z', last_used_at: '2026-11-17T09:00:00Z', expires_at: '2027-01-16T09:00:00Z' },
+      { guid: 'ns_efgh6789', device_label: null, provider: 'guest', created_at: '2026-11-02T10:00:00Z', last_used_at: '2026-11-02T10:00:00Z', expires_at: '2027-01-01T10:00:00Z' },
+    ],
+    push_devices: {
+      web: [{ label: 'Chrome on Android', created_at: '2026-11-01T10:00:00Z', last_seen_at: '2026-11-17T09:00:00Z' }, { label: null, created_at: '2026-11-01T10:00:00Z', last_seen_at: '2026-11-01T10:00:00Z' }],
+      ios: [{ label: 'iOS', created_at: '2026-11-01T10:00:00Z', last_seen_at: '2026-11-17T09:00:00Z' }],
+    },
+  } } });
+  const r = await inProject(['project', 'users', 'sessions', 'u_One']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /ns_abcd2345\s+Steam Deck\s+steam\s+2026-11-01\s+2026-11-17\s+2027-01-16/);
+  assert.match(r.stdout, /ns_efgh6789\s+-\s+guest/);
+  assert.match(r.stdout, /Push devices: 2 web \(Chrome on Android\), 1 iOS \(iOS\)/);
+  assert.match(r.stdout, /--revoke <session>/);
+
+  const j = await inProject(['project', 'users', 'sessions', 'u_One', '--json']);
+  assert.equal(j.status, 0, j.stderr);
+  assert.equal(JSON.parse(j.stdout).sessions.length, 2);
+
+  mock.on('GET /projects/p_ProjA00n0/app-users/u_Two/sessions', { body: { data: { sessions: [], push_devices: { web: [], ios: [] } } } });
+  const none = await inProject(['project', 'users', 'sessions', 'u_Two']);
+  assert.match(none.stdout, /No active native app sessions/);
+  assert.match(none.stdout, /Push devices: none/);
+});
+
+test('gipity project users sessions --revoke ends one session', async () => {
+  mock.reset();
+  mock.on('DELETE /projects/p_ProjA00n0/app-users/u_One/sessions/ns_abcd2345', { body: { data: { revoked: true } } });
+  const r = await inProject(['project', 'users', 'sessions', 'u_One', '--revoke', 'ns_abcd2345']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Ended session ns_abcd2345 for u_One/);
+  assert.equal(mock.requests().at(-1)?.method, 'DELETE');
+
+  mock.on('DELETE /projects/p_ProjA00n0/app-users/u_One/sessions/ns_gone2345', { body: { data: { revoked: false } } });
+  const again = await inProject(['project', 'users', 'sessions', 'u_One', '--revoke', 'ns_gone2345', '--json']);
+  assert.deepEqual(JSON.parse(again.stdout), { guid: 'u_One', session: 'ns_gone2345', revoked: false });
+
+  mock.on('DELETE /projects/p_ProjA00n0/app-users/u_One/sessions/ns_nope2345', { status: 404, body: { error: { code: 'NOT_FOUND', message: 'No session ns_nope2345 for user u_One.' } } });
+  const missing = await inProject(['project', 'users', 'sessions', 'u_One', '--revoke', 'ns_nope2345']);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /No session ns_nope2345/);
+});
+
 test('gipity project delete --yes calls DELETE', async () => {
   mock.reset();
   mock.on('GET /projects', { body: { data: [PROJ_A, PROJ_B], totalCount: 2 } });
