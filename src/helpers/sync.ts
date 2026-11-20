@@ -55,7 +55,7 @@ export async function syncBeforeAction(opts: { sync?: boolean; json?: boolean; f
 
 /**
  * Pull down files the action itself wrote on the server. A deploy can rewrite
- * source (auto-declared functions in gipity.yaml, a share card re-synced to the
+ * source (an implied phase added to gipity.yaml, a share card re-synced to the
  * page title); the editor hooks only pull before the next user turn, so an agent
  * editing right after the deploy would read the stale local copy.
  */

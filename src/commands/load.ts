@@ -141,7 +141,7 @@ function printManifest(m: GipManifestSummary): void {
     console.log(bold('Functions and permissions:'));
     const width = Math.max(...m.functions.map(f => f.name.length));
     for (const f of m.functions) {
-      const parts: string[] = [`auth=${f.auth ?? 'public'}`];
+      const parts: string[] = [`auth=${f.auth ?? 'MISSING (deploy fails until set)'}`];
       if (f.tables?.length) parts.push(`tables=${f.tables.join(',')}`);
       if (f.fetch_domains?.length) parts.push(`fetch=${f.fetch_domains.join(',')}`);
       if (f.services?.length) parts.push(`services=${f.services.join(',')}`);

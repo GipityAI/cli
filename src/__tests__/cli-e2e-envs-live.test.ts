@@ -17,7 +17,7 @@
 //   GIPITY_E2E_CODE=914914
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCli, makeTmpHome } from './helpers/spawn-cli.js';
@@ -69,6 +69,10 @@ describe('cli-e2e-envs-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' 
     ok(['init', slug]);
     ok(['add', 'web-fullstack'], 180_000);
     write('functions/hello.js', hello(1));
+    const yaml = readFileSync(join(dir, 'gipity.yaml'), 'utf-8');
+    const declared = yaml.replace(/(\n(\s*)source: functions\n)/, '$1$2functions:\n$2  - name: hello\n$2    auth: public\n');
+    assert.notEqual(declared, yaml, 'could not declare hello in gipity.yaml');
+    write('gipity.yaml', declared);
     write('migrations/001-items.sql', `CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
 INSERT INTO items (name) SELECT 'seeded' WHERE NOT EXISTS (SELECT 1 FROM items);`);
     const d = json(['deploy']);

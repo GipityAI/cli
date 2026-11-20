@@ -12,7 +12,7 @@
 //   GIPITY_E2E_CODE=914914
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCli, makeTmpHome } from './helpers/spawn-cli.js';
@@ -79,8 +79,8 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     // user path now. web-fullstack ships blank (no example function or test
     // since 2026-07-23): its gipity.yaml declares files + database + functions
     // phases and auto-creates the project DB (6b). We write our own tiny
-    // function so 5a/5b exercise a real deployed endpoint; the functions phase
-    // auto-registers any new file under functions/ on deploy.
+    // function so 5a/5b exercise a real deployed endpoint, declared in
+    // gipity.yaml with an explicit auth (a deploy fails on an undeclared one).
     const r = cli(['add', 'web-fullstack'], { timeout: 120000 });
     assert.equal(r.status, 0, `add web-fullstack failed: ${r.stderr || r.stdout}`);
     assert.ok(existsSync(join(projectDir, 'gipity.yaml')), 'gipity.yaml missing');
@@ -89,6 +89,11 @@ describe('cli-e2e-live', { skip: !E2E_ENABLED && 'set GIPITY_E2E=1 to run' }, ()
     mkdirSync(join(projectDir, 'functions'), { recursive: true });
     writeFileSync(join(projectDir, 'functions', `${FN_NAME}.js`),
       `export default async function ${FN_NAME.replace(/-/g, '_')}(ctx) {\n  return { ok: true };\n}\n`);
+    const yamlPath = join(projectDir, 'gipity.yaml');
+    const yaml = readFileSync(yamlPath, 'utf-8');
+    const declared = yaml.replace(/(\n(\s*)source: functions\n)/, `$1$2functions:\n$2  - name: ${FN_NAME}\n$2    auth: public\n`);
+    assert.notEqual(declared, yaml, 'could not declare the function in gipity.yaml');
+    writeFileSync(yamlPath, declared);
   });
 
   it('4a. deploy succeeds (a new app deploys prod)', () => {
