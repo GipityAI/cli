@@ -23,6 +23,7 @@ Templates:
     - \`karaoke-captions\` - Forced-alignment app - karaoke captions, subtitle timing, language learning, dubbing alignment
     - \`paid-app\` - App that charges users money - SaaS subscription, paid membership, digital product store, "Pro" upgrade, paywalled content (Stripe one-time + subscriptions)
     - \`notify-demo\` - App that sends push notifications / alerts / reminders to users' phones or desktops - web push, PWA notifications, "notify me when..." features
+    - \`ai-chat\` - AI chat / assistant app - chat with your data, an analyst bot over a database, support assistant, ChatGPT-style app with saved conversations, tools that call your backend
 When unsure, default to \`web-simple\`. After adding the template, edit the generated files, then \`gipity deploy\`.
 Only skip this on a build request if the user explicitly says not to.
 
@@ -36,7 +37,7 @@ Kits are reusable building blocks added to an existing app, not whole templates 
     - \`gipity add realtime\` - Multiplayer / presence / shared state - channels, host election, server-persisted sync. Engine-agnostic; works in any app.
     - \`gipity add web-vision-mediapipe\` - On-device camera vision - gesture recognition, body pose, object detection. Runs fully client-side via MediaPipe Tasks; no server, no upload. Web only.
     - \`gipity add web-vision-detect\` - High-accuracy object detection in the browser - YOLOX (Apache-2.0) on ONNX Runtime Web, WebGPU with WASM fallback. 80 COCO classes, three speed/accuracy presets, or bring your own custom-trained YOLO/YOLOX ONNX model. Client-side; no server, no upload. Web only.
-    - \`gipity add chatbot\` - Drop-in chatbot - configurable persona, scope guardrails, static knowledge (20k budget), streaming responses. Headless engine + bubble widget; bring your own UI if you want. Works in any app.
+    - \`gipity add chatbot\` - Chatbot for any app - persona, scope guardrails, static knowledge (20k budget), streaming Markdown replies, and tools: the model calls your own functions as the signed-in visitor (with approve/deny for actions). Saved conversations, photo and text-file attachments, voice, image generation, a model picker. Corner bubble, inline panel or full-page chat with a sidebar; or the headless engine for your own UI.
     - \`gipity add audio-align\` - Audio + lyrics -> word-level timing JSON. Demucs vocal isolation + MMS_FA forced alignment, runs as a Gipity Jobs GPU job on an L4 (~$0.01 per 3-min song). For karaoke captions, subtitling, language learning, dubbing alignment.
     - \`gipity add i18n\` - Multi-language for web apps - language picker, locale persistence, RTL, plural/translation lookup. Scaffolds src/js/strings.js and wires it up; move your copy there and read it with t('key'). Web only.
     - \`gipity add contacts\` - Source-agnostic contact data layer for lead-gen/CRM apps: import people from LinkedIn CSV + Gmail + pasted lists, resolve duplicates into one person while keeping EVERY value from every source with provenance (multi-valued attributes, never overwrites). Exact email/URL auto-merge; fuzzy name+company goes to a human merge-review queue (reversible). Re-imports detect job changes and emit signals. User-definable tags, full-text search, and a transactional event spine. Ships backend functions + migrations. Needs a database (web-fullstack/api template).
@@ -186,7 +187,7 @@ App services skills (load before calling \`/services/*\` endpoints):
 - \`app-auth-client\` - sign-in client code: Gipity.auth SDK, popup vs redirect, --auth verification, raw REST flow
 - \`app-files\` - uploads, then displaying files and the storage helper (ownership check, delete)
 - \`app-image\` - text-to-image AND instruction editing (pass \`images\` to edit an uploaded photo); providers, sizes, aspect ratios
-- \`app-llm\` - chat completions, streaming, image input
+- \`app-llm\` - chat completions, streaming, tool calling, image input
 - \`app-location\` - user location & reverse geocoding for deployed apps (first-party - no third-party geocoder)
 - \`app-notify\` - push notifications for deployed apps (web, iOS home-screen web apps, and native iOS apps via APNs) - notify kit + injected notify() service, platform owns delivery
 - \`app-payments\` - charge end-users real money - Stripe one-time purchases & subscriptions, via the stripe kit (gipity add stripe)
@@ -213,7 +214,7 @@ App development skills:
 
 Kit skills (reusable building blocks - \`gipity add <kit>\`):
 - \`audio-align\` - the audio-align kit: forced alignment of audio + lyrics into word-level timing JSON
-- \`chatbot\` - the chatbot kit: persona + scope guardrails + static knowledge, bubble widget or headless engine
+- \`chatbot\` - the chatbot kit: persona, guardrails, knowledge, tools over your functions, saved chats, files, voice; widget or headless engine
 - \`leaderboard\` - game leaderboards: high scores or times, daily/weekly/monthly/season boards, tiebreaks, replays, cheat checks, bans
 
 Other key skills:

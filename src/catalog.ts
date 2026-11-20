@@ -17,6 +17,7 @@ export const APPS: CatalogEntry[] = [
   { key: 'karaoke-captions', hint: 'audio + lyrics -> word-synced karaoke captions (GPU job)' },
   { key: 'paid-app', hint: 'storefront that charges real money - Stripe checkout, members area, billing' },
   { key: 'notify-demo', hint: 'web-push demo - enable notifications, send a real ping' },
+  { key: 'ai-chat', hint: 'AI chat assistant - saved chats, tools over your data, files, voice' },
 ];
 
 /** Visible templates (registry/templates/): blank framework wiring. */
@@ -40,7 +41,7 @@ export const KITS: CatalogEntry[] = [
   { key: 'realtime', hint: 'multiplayer / presence / shared state' },
   { key: 'web-vision-mediapipe', hint: 'browser camera vision - gesture, pose, object detection' },
   { key: 'web-vision-detect', hint: 'browser object detection - YOLOX, WebGPU/WASM, custom models' },
-  { key: 'chatbot', hint: 'drop-in chatbot - persona, guardrails, streaming responses' },
+  { key: 'chatbot', hint: 'chatbot - tools over your functions, saved chats, files, voice' },
   { key: 'audio-align', hint: 'audio + lyrics -> word-level timing JSON (GPU job)' },
   { key: 'i18n', hint: 'multi-language web apps - language picker, RTL, translations' },
   { key: 'contacts', hint: 'multi-source contact layer - LinkedIn/Gmail import, dedupe with provenance' },
