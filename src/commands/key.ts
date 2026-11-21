@@ -46,6 +46,10 @@ listed with --user-keys and revoked the same way:
   gipity key list --user-keys
   gipity key revoke <ak_guid>
 
+Each listed key shows which functions it called and how often
+(calls: list_notes 12, add_note 3); --json has the full counts with the
+last call time and status per function.
+
 Account-level tokens that run the CLI headlessly are a different thing: see
 gipity token --help.`);
 
@@ -55,6 +59,17 @@ interface KeyScopes {
   files?: 'read' | 'write';
   approvals?: 'read';
   ip?: string[];
+}
+
+/** One function's counts for a key (per-key audit), busiest first. */
+interface KeyFunctionCalls {
+  name: string;
+  /** Calls that ran the function. */
+  calls: number;
+  /** Calls refused before it ran (outside the key, keys: lock, bad input). */
+  refused: number;
+  last_called_at: string;
+  last_status: string;
 }
 
 interface KeyInfo {
@@ -67,6 +82,7 @@ interface KeyInfo {
   last_used_ip: string | null;
   expires_at: string | null;
   created_at: string;
+  function_calls?: KeyFunctionCalls[];
 }
 
 /** A key a person made in the app for their own AI (GET ...?user_keys=1). */
@@ -85,6 +101,7 @@ interface UserKeyInfo {
   created_at: string;
   /** The AI app that connected through OAuth (the app's MCP server), else null. */
   oauth_client: string | null;
+  function_calls: KeyFunctionCalls[];
 }
 
 const fmtDate = (d: string | null): string => (d ? new Date(d).toLocaleDateString() : 'never');
@@ -120,6 +137,12 @@ export function scopesFromFlags(opts: { functions?: string; tables?: string; fil
     scopes.ip = ips;
   }
   return Object.keys(scopes).length ? scopes : null;
+}
+
+/** Compact per-function counts for listings, e.g. `calls: list_notes 12, add_note 3 (1 refused)`. */
+export function describeCalls(calls: KeyFunctionCalls[] | undefined): string {
+  if (!calls?.length) return 'calls: none';
+  return `calls: ${calls.map(c => `${c.name} ${c.calls}${c.refused ? ` (${c.refused} refused)` : ''}`).join(', ')}`;
 }
 
 /** One-line scope summary for listings. */
@@ -193,7 +216,7 @@ keyCommand
         res.data,
         opts,
         'No user keys. People make them in your app (a function with services: [keys]; see gipity skill read app-api-keys).',
-        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}${k.oauth_client ? muted(` (connected via ${k.oauth_client})`) : ''}  ${muted(`${k.created_by_name ?? '(no name)'} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}`)}`,
+        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}${k.oauth_client ? muted(` (connected via ${k.oauth_client})`) : ''}  ${muted(`${k.created_by_name ?? '(no name)'} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}  ${describeCalls(k.function_calls)}`)}`,
       );
       return;
     }
@@ -202,7 +225,7 @@ keyCommand
       res.data,
       opts,
       'No API keys. Mint one with: gipity key create "my script" --role editor',
-      (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${describeScopes(k.scopes)}  ${k.prefix}...  last used ${fmtDate(k.last_used_at)}${k.last_used_ip ? ` from ${k.last_used_ip}` : ''}  expires ${fmtDate(k.expires_at)}`)}`,
+      (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${describeScopes(k.scopes)}  ${k.prefix}...  last used ${fmtDate(k.last_used_at)}${k.last_used_ip ? ` from ${k.last_used_ip}` : ''}  expires ${fmtDate(k.expires_at)}  ${describeCalls(k.function_calls)}`)}`,
     );
   }));
 

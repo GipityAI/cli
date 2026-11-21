@@ -155,7 +155,11 @@ test('gipity key list asks for project keys; --user-keys asks for user keys and 
   mock.on('GET /projects/p_TestProj/api-keys?user_keys=1', { body: { data: [
     { short_guid: 'ak_user1234', name: 'Claude Code laptop', prefix: 'gip_USER', profile: 'agent', functions: ['status'],
       created_by_guid: 'u_alice123', created_by_name: 'Alice', last_used_at: '2026-01-02T00:00:00Z',
-      use_count: 7, rate_per_5min: 100, expires_at: '2026-03-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' },
+      use_count: 7, rate_per_5min: 100, expires_at: '2026-03-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z',
+      function_calls: [
+        { name: 'list_notes', calls: 5, refused: 0, last_called_at: '2026-01-02T00:00:00Z', last_status: 'ok' },
+        { name: 'add_note', calls: 1, refused: 1, last_called_at: '2026-01-02T00:00:00Z', last_status: 'INVALID_INPUT' },
+      ] },
   ] } });
 
   const plain = await fresh(['key', 'list']);
@@ -168,6 +172,7 @@ test('gipity key list asks for project keys; --user-keys asks for user keys and 
   assert.match(users.stdout, /ak_user1234 {2}agent {2}Claude Code laptop/);
   assert.match(users.stdout, /Alice \(u_alice123\)/);
   assert.match(users.stdout, /used 7x/);
+  assert.match(users.stdout, /calls: list_notes 5, add_note 1 \(1 refused\)/);
   assert.doesNotMatch(users.stdout, /ak_proj1234/);
   assert.doesNotMatch(users.stdout, /undefined/);
   assert.ok(mock.requests().some(r => r.url === '/projects/p_TestProj/api-keys?user_keys=1'));
@@ -178,6 +183,8 @@ test('gipity key list asks for project keys; --user-keys asks for user keys and 
   assert.equal(rows[0].profile, 'agent');
   assert.equal(rows[0].created_by_guid, 'u_alice123');
   assert.equal(rows[0].use_count, 7);
+  assert.deepEqual(rows[0].function_calls.map((c: { name: string; calls: number; refused: number }) => [c.name, c.calls, c.refused]),
+    [['list_notes', 5, 0], ['add_note', 1, 1]]);
 });
 
 test('gipity key list --user-keys with none points at the app-api-keys skill', async () => {
