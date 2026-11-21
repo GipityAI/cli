@@ -118,3 +118,27 @@ test('gipity file rm on a large folder needs --yes; with it the confirmed delete
   assert.match(ok.stdout, /Deleted folder: music \(12 files\)/);
   assert.ok(mock.requests().some((q) => q.url.includes('confirm=1')), 'sent confirm=1');
 });
+
+test('gipity file url passes --expires and --download to the server and prints the URL', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/files/url', { body: { data: {
+    url: 'https://a.gipity.ai/api/p_TestProj/files/fl_abc/serve?t=x&e=1900000000', file_guid: 'fl_abc', expires_at: '2030-03-17T17:46:40.000Z',
+  } } });
+  const r = await fresh(['file', 'url', 'docs/report.pdf', '--expires', '3600', '--download']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /serve\?t=x&e=1900000000/);
+  const req = mock.requests().find(q => q.url.includes('/files/url'));
+  const qs = new URL(req!.url, 'http://x').searchParams;
+  assert.equal(qs.get('path'), 'docs/report.pdf');
+  assert.equal(qs.get('expires'), '3600');
+  assert.equal(qs.get('download'), '1');
+});
+
+test('gipity file url without --expires asks for a permanent link', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/files/url', { body: { data: { url: 'https://a.gipity.ai/api/p_TestProj/files/fl_abc/serve?t=x', file_guid: 'fl_abc' } } });
+  const r = await fresh(['file', 'url', 'docs/report.pdf']);
+  assert.equal(r.status, 0, r.stderr);
+  const req = mock.requests().find(q => q.url.includes('/files/url'));
+  assert.equal(new URL(req!.url, 'http://x').searchParams.has('expires'), false);
+});

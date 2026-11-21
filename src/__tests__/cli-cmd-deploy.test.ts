@@ -161,6 +161,18 @@ test('gipity deploy names a private site under the Live URL', async () => {
   assert.match(r.stdout, /Pages: private: only you and project members/);
 });
 
+test('gipity deploy counts the public paths of a private site on the Pages line', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 3, totalBytes: 100, url: 'https://dev.gipity.ai/x/y/', target: 'dev', elapsedMs: 200, pageAccess: 'members',
+    pagePublicPaths: ['/docs/**', '/llms.txt'],
+    phases: [{ name: 'access', status: 'ok', summary: 'pages: members only (2 public paths) (public paths changed)' }],
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Pages: private: only you and project members \(Gipity sign-in\); 2 public paths open to anyone/);
+});
+
 test('gipity deploy prints no Pages line for a public site', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/deploy', { body: { data: {

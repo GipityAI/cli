@@ -50,18 +50,21 @@ fileCommand
 
 fileCommand
   .command('url <path>')
-  .description('Durable public URL for a project file - no deploy needed')
+  .description('Public URL for a project file - no deploy needed')
   .option('--download', 'URL forces a download (Content-Disposition: attachment)')
+  .option('--expires <seconds>', 'Link stops working after this many seconds (60 to 604800 = 7 days); default: never')
   .option('--json', 'Output as JSON')
   .addHelpText('after', `
 Reachable by browsers, GPU jobs, and external services the moment the file
 syncs; ideal for throwaway test fixtures (delete the file to revoke the link).
+The link redirects (302) to the file, so fetch it with curl -L.
 `)
   .action((path: string, opts) => run('Url', async () => {
     const { config } = await resolveProjectContext();
     const qs = new URLSearchParams({ path });
     if (opts.download) qs.set('download', '1');
-    const res = await get<{ data: { url: string; file_guid: string } }>(
+    if (opts.expires !== undefined) qs.set('expires', String(opts.expires));
+    const res = await get<{ data: { url: string; file_guid: string; expires_at?: string } }>(
       `/projects/${config.projectGuid}/files/url?${qs.toString()}`
     );
     if (opts.json) {
