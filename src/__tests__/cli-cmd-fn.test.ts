@@ -60,6 +60,27 @@ test('gipity fn list shows which schemas each function declares and read_only; -
   assert.equal(rows[2].input_schema, null);
 });
 
+test('gipity fn list shows the keys: lock; --json carries it', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/functions', { body: { data: [
+    { name: 'create_agent_key', version: 1, auth_level: 'user', timeout_ms: 5000, description: null, input_schema: null, output_schema: null, read_only: false, keys: 'none' },
+    { name: 'list_notes', version: 1, auth_level: 'user', timeout_ms: 5000, description: null, input_schema: null, output_schema: null, read_only: true, keys: ['agent', 'support'] },
+    { name: 'open', version: 1, auth_level: 'user', timeout_ms: 5000, description: null, input_schema: null, output_schema: null, read_only: false, keys: null },
+  ] } });
+  const r = await fresh(['fn', 'list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /create_agent_key.*keys=none/);
+  assert.match(r.stdout, /list_notes.*read-only\s+keys=agent,support/);
+  assert.doesNotMatch(r.stdout.split('\n').find(l => l.includes('open'))!, /keys=/);
+
+  const j = await fresh(['fn', 'list', '--json']);
+  assert.equal(j.status, 0, j.stderr);
+  const rows = JSON.parse(j.stdout);
+  assert.equal(rows[0].keys, 'none');
+  assert.deepEqual(rows[1].keys, ['agent', 'support']);
+  assert.equal(rows[2].keys, null);
+});
+
 test('gipity fn logs <name> shows status + duration + error_message', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/functions/hello/logs', { body: { data: [
