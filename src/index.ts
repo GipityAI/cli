@@ -14,6 +14,7 @@ import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { tokenCommand } from './commands/token.js';
 import { keyCommand } from './commands/key.js';
+import { mcpCommand } from './commands/mcp.js';
 import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { syncCommand } from './commands/sync.js';
@@ -154,7 +155,7 @@ program.enablePositionalOptions();
 // actually use them - orient, build, wire the backend, then everything else.
 const startGroup     = [statusCommand, initCommand, skillCommand, changelogCommand, projectCommand];
 const buildGroup     = [addCommand, removeCommand, brandCommand, saveCommand, loadCommand, deployCommand, envCommand, pageCommand, testCommand];
-const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, logsCommand, jobCommand, workflowCommand, approvalCommand, memoryCommand];
+const backendGroup   = [dbCommand, fnCommand, secretsCommand, keyCommand, mcpCommand, logsCommand, jobCommand, workflowCommand, approvalCommand, memoryCommand];
 const servicesGroup  = [serviceCommand, generateCommand, askCommand, notifyCommand, paymentsCommand, realtimeCommand, recordsCommand, rbacCommand, auditCommand, domainCommand, tokenCommand];
 const filesGroup     = [syncCommand, fileCommand, pushCommand, uploadCommand, storageCommand];
 const utilitiesGroup = [sandboxCommand, emailCommand, gmailCommand, locationCommand, textCommand, bugCommand];

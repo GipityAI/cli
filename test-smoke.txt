@@ -51,6 +51,7 @@ cli-cmd-location
 cli-cmd-login
 cli-cmd-logout
 cli-cmd-logs
+cli-cmd-mcp
 cli-cmd-memory
 cli-cmd-notify
 cli-cmd-page

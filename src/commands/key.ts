@@ -83,6 +83,8 @@ interface UserKeyInfo {
   rate_per_5min: number | null;
   expires_at: string | null;
   created_at: string;
+  /** The AI app that connected through OAuth (the app's MCP server), else null. */
+  oauth_client: string | null;
 }
 
 const fmtDate = (d: string | null): string => (d ? new Date(d).toLocaleDateString() : 'never');
@@ -191,7 +193,7 @@ keyCommand
         res.data,
         opts,
         'No user keys. People make them in your app (a function with services: [keys]; see gipity skill read app-api-keys).',
-        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}  ${muted(`${k.created_by_name ?? '(no name)'} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}`)}`,
+        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}${k.oauth_client ? muted(` (connected via ${k.oauth_client})`) : ''}  ${muted(`${k.created_by_name ?? '(no name)'} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}`)}`,
       );
       return;
     }
