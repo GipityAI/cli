@@ -45,6 +45,7 @@ listed with --user-keys and revoked the same way:
 
   gipity key list --user-keys
   gipity key revoke <ak_guid>
+  gipity key profiles          # the profiles that cap them
 
 Each listed key shows which functions it called and how often
 (calls: list_notes 12, add_note 3); --json has the full counts with the
@@ -94,6 +95,10 @@ interface UserKeyInfo {
   functions: string[];
   created_by_guid: string | null;
   created_by_name: string | null;
+  /** 'account' (a Gipity account) or 'app_user' (signed in to the app itself). */
+  created_by_kind: 'account' | 'app_user';
+  /** An app user's sign-in provider (guest, steam, google, ...), else null. */
+  created_by_provider: string | null;
   last_used_at: string | null;
   use_count: number;
   rate_per_5min: number | null;
@@ -102,6 +107,25 @@ interface UserKeyInfo {
   /** The AI app that connected through OAuth (the app's MCP server), else null. */
   oauth_client: string | null;
   function_calls: KeyFunctionCalls[];
+}
+
+/** A key profile as the app declares it (GET /projects/:guid/key-profiles). */
+interface KeyProfileInfo {
+  name: string;
+  summary: string | null;
+  functions: string[];
+  max_days: number;
+  max_keys: number;
+  rate_per_5min: number;
+  docs: 'public' | 'key';
+}
+
+/** Who made a user key, for listings: the display name, else what kind of
+ *  person it is (an app user's sign-in provider), never an email. */
+export function describeCreator(k: Pick<UserKeyInfo, 'created_by_name' | 'created_by_kind' | 'created_by_provider'>): string {
+  if (k.created_by_name) return k.created_by_name;
+  if (k.created_by_kind === 'app_user') return `${k.created_by_provider ?? 'app'} user`;
+  return '(no name)';
 }
 
 const fmtDate = (d: string | null): string => (d ? new Date(d).toLocaleDateString() : 'never');
@@ -216,7 +240,7 @@ keyCommand
         res.data,
         opts,
         'No user keys. People make them in your app (a function with services: [keys]; see gipity skill read app-api-keys).',
-        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}${k.oauth_client ? muted(` (connected via ${k.oauth_client})`) : ''}  ${muted(`${k.created_by_name ?? '(no name)'} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}  ${describeCalls(k.function_calls)}`)}`,
+        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}${k.oauth_client ? muted(` (connected via ${k.oauth_client})`) : ''}  ${muted(`${describeCreator(k)} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}  ${describeCalls(k.function_calls)}`)}`,
       );
       return;
     }
@@ -226,6 +250,21 @@ keyCommand
       opts,
       'No API keys. Mint one with: gipity key create "my script" --role editor',
       (k) => `${bold(k.short_guid)}  ${k.name}  ${muted(`${k.role}  ${describeScopes(k.scopes)}  ${k.prefix}...  last used ${fmtDate(k.last_used_at)}${k.last_used_ip ? ` from ${k.last_used_ip}` : ''}  expires ${fmtDate(k.expires_at)}  ${describeCalls(k.function_calls)}`)}`,
+    );
+  }));
+
+keyCommand
+  .command('profiles')
+  .description('List the key profiles this app declares (gipity.yaml key_profiles:), the ceiling on user keys and AI app connections')
+  .option(...PROJECT_OPTION)
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Profiles', async () => {
+    const res = await get<{ data: { profiles: KeyProfileInfo[] } }>(`/projects/${await projectGuidFor(opts)}/key-profiles`);
+    printList(
+      res.data.profiles,
+      opts,
+      'No key profiles. Declare key_profiles: in gipity.yaml and deploy (see gipity skill read app-agents).',
+      (p) => `${bold(p.name)}  ${p.summary ?? ''}  ${muted(`fn: ${p.functions.join(',')}  max ${p.max_days} days  ${p.max_keys} keys per person  ${p.rate_per_5min}/5min  docs: ${p.docs}`)}`,
     );
   }));
 
