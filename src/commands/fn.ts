@@ -18,7 +18,15 @@ fnCommand
     const res = await get<{ data: any[] }>(`/projects/${config.projectGuid}/functions`);
 
     printList(res.data, opts, 'No functions defined.', f => {
-      const line = `${bold(f.name)}  ${muted(`v${f.version}`)}  ${muted(f.auth_level)}  ${muted(`timeout=${f.timeout_ms}ms`)}`;
+      // Which declared schemas the function has (validated input, test-checked
+      // output) and whether it is marked read-only: what the generated
+      // openapi.json / llms.txt docs will show agents.
+      const schemas = [f.input_schema ? 'input' : null, f.output_schema ? 'output' : null].filter(Boolean);
+      const flags = [
+        schemas.length ? `schema=${schemas.join('+')}` : 'schema=none',
+        f.read_only ? 'read-only' : null,
+      ].filter(Boolean).join('  ');
+      const line = `${bold(f.name)}  ${muted(`v${f.version}`)}  ${muted(f.auth_level)}  ${muted(`timeout=${f.timeout_ms}ms`)}  ${muted(flags)}`;
       return f.description ? `${line}\n${muted(f.description)}` : line;
     });
     // The callable address is the deliverable for API-only apps - name it here

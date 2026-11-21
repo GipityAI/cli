@@ -35,6 +35,31 @@ test('gipity fn list shows functions with name/version/auth/timeout', async () =
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity fn list shows which schemas each function declares and read_only; --json carries them', async () => {
+  mock.reset();
+  const input = { type: 'object', properties: { since: { type: 'string' } }, required: ['since'] };
+  const output = { type: 'object' };
+  mock.on('GET /projects/p_TestProj/functions', { body: { data: [
+    { name: 'list_logs', version: 2, auth_level: 'user', timeout_ms: 5000, description: null, input_schema: input, output_schema: output, read_only: true },
+    { name: 'submit', version: 1, auth_level: 'user', timeout_ms: 5000, description: null, input_schema: input, output_schema: null, read_only: false },
+    { name: 'raw', version: 1, auth_level: 'public', timeout_ms: 5000, description: null, input_schema: null, output_schema: null, read_only: false },
+  ] } });
+  const r = await fresh(['fn', 'list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /list_logs.*schema=input\+output\s+read-only/);
+  assert.match(r.stdout, /submit.*schema=input(?!\+)/);
+  assert.doesNotMatch(r.stdout.split('\n').find(l => l.includes('submit'))!, /read-only/);
+  assert.match(r.stdout, /raw.*schema=none/);
+
+  const j = await fresh(['fn', 'list', '--json']);
+  assert.equal(j.status, 0, j.stderr);
+  const rows = JSON.parse(j.stdout);
+  assert.deepEqual(rows[0].input_schema, input);
+  assert.deepEqual(rows[0].output_schema, output);
+  assert.equal(rows[0].read_only, true);
+  assert.equal(rows[2].input_schema, null);
+});
+
 test('gipity fn logs <name> shows status + duration + error_message', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/functions/hello/logs', { body: { data: [
