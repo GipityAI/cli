@@ -9,21 +9,14 @@
  *
  * The `@file` / stdin forms exist because a base64 image easily blows past
  * ARG_MAX ("Argument list too long") when passed inline. `readFileSync` on the
- * path sidesteps the shell argument entirely.
+ * path sidesteps the shell argument entirely. Stdin is read to EOF
+ * asynchronously (see helpers/stdin.ts), so a piped body of any size arrives
+ * intact.
  */
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { guessMime } from '../upload.js';
-
-/** Read all of stdin synchronously (fd 0). Returns '' if stdin is a TTY. */
-function readStdin(): string {
-  if (process.stdin.isTTY) return '';
-  try {
-    return readFileSync(0, 'utf-8');
-  } catch {
-    return '';
-  }
-}
+import { readStreamToEnd } from './stdin.js';
 
 /**
  * Read a `--file field=@path` (or `field=path`) spec and return
@@ -61,8 +54,8 @@ export function readFileField(spec: string): [string, { data: string; media_type
  * merge into an array or scalar), which is the normal case for a function/job
  * request.
  */
-export function resolveBody(raw: string | undefined, fileSpecs?: string[]): unknown {
-  const body = resolveJsonBody(raw);
+export async function resolveBody(raw: string | undefined, fileSpecs?: string[]): Promise<unknown> {
+  const body = await resolveJsonBody(raw);
   if (!fileSpecs || fileSpecs.length === 0) return body;
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new Error('--file needs an object body to attach into (got a non-object JSON body).');
@@ -79,13 +72,13 @@ export function resolveBody(raw: string | undefined, fileSpecs?: string[]): unkn
  * Turn a raw body argument into a parsed JSON value.
  * `raw` is the positional body or the `--data` value; undefined => `{}`.
  */
-export function resolveJsonBody(raw: string | undefined): unknown {
+export async function resolveJsonBody(raw: string | undefined): Promise<unknown> {
   if (raw == null || raw === '') return {};
 
   let source: string;
   let origin: string;
   if (raw === '-' || raw === '@-') {
-    source = readStdin();
+    source = await readStreamToEnd();
     origin = 'stdin';
     if (source.trim() === '') {
       throw new Error('No JSON on stdin (pipe a body in, e.g. `cat body.json | gipity fn call foo -d -`).');

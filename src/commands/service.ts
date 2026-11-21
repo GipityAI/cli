@@ -93,7 +93,7 @@ serviceCommand
     if (opts.form && (bodyArg || opts.data || opts.file || opts.get)) {
       throw new Error('--form sends a multipart body, so it cannot be combined with a JSON body, --data, --file, or --get.');
     }
-    const body = opts.form ? resolveFormBody(opts.form) : resolveBody(bodyArg || opts.data, opts.file);
+    const body = opts.form ? resolveFormBody(opts.form) : await resolveBody(bodyArg || opts.data, opts.file);
 
     // Name the calling identity (stderr, so stdout stays parseable). An owner
     // call always succeeds regardless of billing mode, so without this line a

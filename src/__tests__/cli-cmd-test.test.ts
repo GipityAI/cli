@@ -321,3 +321,15 @@ test('the blank-id guard covers every identifier arg (job status, key revoke)', 
   assert.match(key.stderr, /argument 'short_guid' must not be empty/);
   assert.deepEqual(mock.requests(), []);
 });
+
+test('gipity test --env refuses with the reason instead of running against the env project (tests never use an env)', async () => {
+  mock.reset();
+  for (const args of [['test', '--no-sync', '--env', 'dev'], ['--env', 'dev', 'test', '--no-sync'], ['test', 'history', '--env', 'dev']]) {
+    const r = await fresh(args);
+    assert.equal(r.status, 1, `${args.join(' ')}: ${r.stdout}`);
+    assert.match(r.stderr, /gipity test does not take --env/);
+    assert.match(r.stderr, /throwaway database/);
+  }
+  // Refused before any request: no env lookup, no run kicked off on the env's project.
+  assert.equal(mock.requests().length, 0, JSON.stringify(mock.requests()));
+});

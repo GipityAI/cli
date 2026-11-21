@@ -8,7 +8,7 @@ import { brand, bold, muted, success, warning } from '../colors.js';
 import { formatSize } from '../utils.js';
 import { run } from '../helpers/index.js';
 import { withSpinner } from '../progress.js';
-import { readScriptFile, printPageAccessLine, type PageAccessInfo } from './page-eval.js';
+import { readScriptFile, printPageAccessLine, signInHint, type PageAccessInfo } from './page-eval.js';
 import { uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
 type Viewport = { width: number; height: number; deviceScaleFactor?: number; device?: string };
@@ -370,7 +370,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     }
     if (opts.file) {
       try {
-        actionScript = readScriptFile(opts.file);
+        actionScript = await readScriptFile(opts.file);
       } catch {
         throw new Error(opts.file === '-'
           ? "--file - reads the pre-capture script from stdin, but stdin was empty/unreadable - pipe it in, e.g. gipity page screenshot \"<url>\" --file - <<'EOF' ... EOF"
@@ -564,9 +564,12 @@ export const pageScreenshotCommand = new Command('screenshot')
       savedFiles.push(resolvePath(target));
     }
 
+    const authHint = signInHint({ authRequested: !!meta.auth?.requested, pageAccess: meta.pageAccess, finalUrl: meta.finalUrl }, 'capture');
+
     if (opts.json) {
       console.log(JSON.stringify({
         url,
+        ...(authHint ? { auth_hint: authHint } : {}),
         page: {
           title: meta.title,
           final_url: meta.finalUrl,
@@ -602,6 +605,7 @@ export const pageScreenshotCommand = new Command('screenshot')
       if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
       printAuthLine(meta.auth);
       printPageAccessLine(meta.pageAccess);
+      if (authHint) console.log(warning(authHint));
       printActionErrorLine(meta.actionError);
       if (s.viewport.device) console.log(`${label('Emulated device')} ${s.viewport.device} ${muted('(touch events, mobile user-agent)')}`);
       const sizePart = formatSize(s.screenshotSizeBytes) + (meta.full ? ' (full page)' : '');
@@ -618,6 +622,7 @@ export const pageScreenshotCommand = new Command('screenshot')
     if (meta.performance) console.log(`${label('Web page perf')} ${fmtPerformance(meta.performance)}`);
     printAuthLine(meta.auth);
     printPageAccessLine(meta.pageAccess);
+    if (authHint) console.log(warning(authHint));
     printActionErrorLine(meta.actionError);
 
     for (let i = 0; i < meta.screenshots.length; i++) {

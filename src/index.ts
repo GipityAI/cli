@@ -216,15 +216,35 @@ program
 // deploy creates the env on first use, and `env ...` always acts on the app.
 const SELF_ENV_COMMANDS = new Set(['deploy', 'env']);
 
+// Commands where an environment has no meaning, with why. Refused with that
+// reason rather than re-pointed: re-pointing `gipity test` at an env's project
+// found none of the app's tests there and looked like an empty suite.
+const NO_ENV_COMMANDS: Record<string, string> = {
+  test:
+    'gipity test does not take --env. Tests never run against an environment: every run uses your ' +
+    'working-tree source (functions, migrations, tests) in the app\'s own isolated test environment, ' +
+    'with a throwaway database built from your migrations and seed files, so no environment\'s data ' +
+    'or deployed code is involved and the result is the same for every env. Run `gipity test` without --env. ' +
+    'To check a deployed environment, use `gipity fn call <name> --env <name>` or `gipity page inspect` on its URL.',
+};
+
 program.hook('preAction', async (_thisCommand, actionCommand) => {
   const globalOpts = program.opts();
   if (globalOpts.apiBase) setApiBaseOverride(globalOpts.apiBase);
   // `--env <name>` before or after the subcommand (registered on every leaf
   // below, like -y): point this invocation's project at that environment.
-  const envName: string | undefined = actionCommand.opts().env ?? globalOpts.env;
+  // A group with its own action (`test`) also takes --env, so commander may
+  // park it on the group for `gipity test history --env dev`: read the nearest.
+  let envName: string | undefined;
+  for (let c: Command | null = actionCommand; c && envName === undefined; c = c.parent) envName = c.opts().env;
+  envName ??= globalOpts.env;
   setEnvOption(envName);
   let top: Command = actionCommand;
   while (top.parent && top.parent !== program) top = top.parent;
+  if (envName && NO_ENV_COMMANDS[top.name()]) {
+    console.error(NO_ENV_COMMANDS[top.name()]);
+    process.exit(1);
+  }
   if (envName && !SELF_ENV_COMMANDS.has(top.name())) await resolveEnvOverride(envName);
   refreshPrimersQuietly();
   // Honor `-y`/`--yes` whether it came before the subcommand (the global flag)
@@ -530,11 +550,13 @@ function enableYesEverywhere(cmd: Command): void {
 }
 enableYesEverywhere(program);
 
-// Same for `--env <name>`: accepted after any leaf command too.
+// Same for `--env <name>`: accepted after any leaf command too, and after a
+// group that runs an action of its own (`gipity test [path]`), which otherwise
+// rejected `gipity test --env dev` as an unknown option.
 function enableEnvEverywhere(cmd: Command): void {
   if (cmd.commands.length > 0) {
     for (const sub of cmd.commands) enableEnvEverywhere(sub);
-    return;
+    if (!(cmd as unknown as { _actionHandler?: unknown })._actionHandler || cmd === program) return;
   }
   if (!cmd.options.some(o => o.long === '--env')) {
     cmd.addOption(new Option('--env <name>', 'Act on an app environment (dev, staging, ...) instead of prod').hideHelp());

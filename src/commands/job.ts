@@ -33,7 +33,7 @@ jobCommand
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Submit', async () => {
     const config = requireConfig();
-    const input = resolveBody(bodyArg || opts.data, opts.file);
+    const input = await resolveBody(bodyArg || opts.data, opts.file);
     const body: Record<string, unknown> = { input };
     if (opts.idempotencyKey) body.idempotency_key = opts.idempotencyKey;
     const res = await post<{ data: any }>(

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCliAsync } from './helpers/spawn-cli.js';
+import { runCliAsync, CLI_ENTRY } from './helpers/spawn-cli.js';
 import { startMockServer, MockServer } from './helpers/mock-server.js';
 import { makeAuthedHome, makeProjectDir } from './helpers/test-home.js';
 
@@ -167,6 +167,31 @@ test('gipity fn call --body is accepted as an alias for --data', async () => {
   const post = reqs.find(q => q.method === 'POST' && q.url === '/api/p_TestProj/fn/hello');
   assert.ok(post, 'expected the call to POST');
   assert.deepEqual(post!.body, { name: 'world' });
+});
+
+test('gipity fn call -d @- reads a ~1 MB body piped from a slow writer to EOF (was cut off past the 64 KB pipe buffer)', async () => {
+  mock.reset();
+  mock.on('POST /api/p_TestProj/fn/ingest', { body: { data: { ok: true } } });
+  // ~1 MB JSON body. The writer is a separate process that sends it in 16 KB
+  // pieces with a pause between them, so the CLI sees a real pipe that runs dry
+  // mid-body: the shape that made the old single synchronous read stop short.
+  const big = { rows: Array.from({ length: 8000 }, (_, i) => ({ i, text: 'x'.repeat(120) })) };
+  const bodyFile = join(tmpdir(), `fn-stdin-${process.pid}.json`);
+  writeFileSync(bodyFile, JSON.stringify(big));
+  assert.ok(JSON.stringify(big).length > 1_000_000, 'test body should be over 1 MB');
+  const writer = `const b=require('fs').readFileSync(${JSON.stringify(bodyFile)});let o=0;` +
+    `(function n(){if(o>=b.length)return;process.stdout.write(b.subarray(o,o+16384));o+=16384;setTimeout(n,2);})();`;
+  const d = makeProjectDir({ apiBase: mock.apiBase });
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const r = await runCliAsync([], {
+    env: { HOME: home }, cwd: d, timeout: 60000,
+    shell: `${q(process.execPath)} -e ${q(writer)} | ${q(process.execPath)} ${q(CLI_ENTRY)} --api-base ${q(mock.apiBase)} fn call ingest -d @-`,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /No JSON on stdin/);
+  const post = mock.requests().find(x => x.method === 'POST' && x.url === '/api/p_TestProj/fn/ingest');
+  assert.ok(post, 'expected the call to POST');
+  assert.deepEqual(post!.body, big);
 });
 
 test('gipity fn call --file attaches a file as { data, media_type } matching the vision service shape (no manual base64 dance)', async () => {

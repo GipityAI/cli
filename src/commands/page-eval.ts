@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { Command, Option } from 'commander';
 import { post, get, ApiError } from '../api.js';
 import { brand, bold, muted, warning, success } from '../colors.js';
-import { run, parseDuration } from '../helpers/index.js';
+import { run, parseDuration, readStreamToEnd } from '../helpers/index.js';
 import { getAuth } from '../auth.js';
-import { resolveProjectContext } from '../config.js';
+import { resolveProjectContext, resolveApiBase } from '../config.js';
 import { createCheckpoint, restoreCheckpoint, resolveDatabase } from '../db-checkpoint.js';
 import { uploadPublicFixture, uploadCameraFeed, assertCameraFile, deleteFixture, HostedFixture } from '../page-fixtures.js';
 
@@ -220,14 +220,51 @@ export function capWaitForTimeoutMs(raw: string): number {
 
 /** Read a --file/--reload-file script. `-` means stdin, so an agent can pipe a
  *  heredoc straight in — `gipity page eval <url> --file - <<'EOF' … EOF` — with
- *  no throwaway tmp file to write and then clean up. readFileSync(0) drains fd 0
- *  (stdin) to EOF. Any other value is a path on disk. */
 /** Private app pages (gipity.yaml `access:`): what the server reports when the
  *  page belongs to a private site. Absent for a public site. */
 export type PageAccessInfo = { private: boolean; granted: boolean; note?: string };
 
 /** One line for a private site: whether the browser was let in as you. Shared
  *  by page inspect / eval / screenshot. Prints nothing for a public site. */
+/** True when `url` is a Gipity sign-in page: the Sign in with Gipity / app
+ *  sign-in page (`/api/auth/login`), its consent step, or the private-pages
+ *  gate (`/api/access/start`) on a Gipity host or the configured API host. A
+ *  signed-out browser lands there when a private site's edge gate or the app's
+ *  own code (Gipity.auth.signIn in redirect mode) sends it to sign in. */
+export function isGipitySignInUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  let u: URL;
+  try { u = new URL(url); } catch { return false; }
+  if (!/^\/api\/(auth\/(login|consent)|access\/start)\/?$/.test(u.pathname)) return false;
+  const host = u.hostname.toLowerCase();
+  if (host === 'gipity.ai' || host.endsWith('.gipity.ai')) return true;
+  try { return u.host === new URL(resolveApiBase()).host; } catch { return false; }
+}
+
+/** The `--auth` nudge for a signed-out run that hit a sign-in wall, or null.
+ *  Two signals, both reported by the server, never guessed from page text:
+ *   - the browser ended on a Gipity sign-in page (isGipitySignInUrl), or
+ *   - the site is private (members-only) and the edge let the browser in as
+ *     you, but without --auth the app's own code sees no signed-in user, so a
+ *     members-only app renders its sign-in screen.
+ *  Nothing for a private site you can't view: --auth can't fix that (the
+ *  access note already says to ask the owner). `verb` reads as "run" for eval,
+ *  "capture" for screenshot. */
+export function signInHint(
+  opts: { authRequested: boolean; pageAccess?: PageAccessInfo; finalUrl?: string | null },
+  verb: 'run' | 'capture',
+): string | null {
+  if (opts.authRequested) return null;
+  if (opts.pageAccess?.private && !opts.pageAccess.granted) return null;
+  if (isGipitySignInUrl(opts.finalUrl)) {
+    return `This page needs sign-in: the browser ended on the Gipity sign-in page. Add --auth to ${verb} signed in as you.`;
+  }
+  if (opts.pageAccess?.private) {
+    return `This is a members-only site and this ${verb} was signed out, so the app sees no signed-in user and likely shows its sign-in screen. Add --auth to ${verb} signed in as you.`;
+  }
+  return null;
+}
+
 export function printPageAccessLine(pa: PageAccessInfo | undefined): void {
   if (!pa?.private) return;
   console.log(pa.granted
@@ -235,8 +272,17 @@ export function printPageAccessLine(pa: PageAccessInfo | undefined): void {
     : `${warning('Private pages: no access')}${pa.note ? `: ${pa.note}` : ''}`);
 }
 
-export function readScriptFile(pathArg: string): string {
-  return readFileSync(pathArg === '-' ? 0 : pathArg, 'utf8');
+/** Read a --file/--reload-file script. `-` means stdin, so an agent can pipe a
+ *  heredoc straight in (`gipity page eval <url> --file - <<'EOF' ... EOF`) with
+ *  no throwaway tmp file. Stdin is read to EOF (helpers/stdin.ts), so a large
+ *  piped script arrives whole. Any other value is a path on disk. */
+export async function readScriptFile(pathArg: string): Promise<string> {
+  if (pathArg === '-') {
+    const s = await readStreamToEnd();
+    if (s === '') throw new Error('empty stdin');
+    return s;
+  }
+  return readFileSync(pathArg, 'utf8');
 }
 
 /** True when `s` is an expression (`document.title`, an IIFE) rather than a
@@ -614,7 +660,7 @@ export const pageEvalCommand = new Command('eval')
     let expr = exprArg as string;
     if (opts.file) {
       try {
-        expr = readScriptFile(opts.file);
+        expr = await readScriptFile(opts.file);
       } catch {
         pageEvalCommand.error(opts.file === '-'
           ? 'error: --file - reads the script from stdin, but stdin was empty/unreadable - pipe it in, e.g. gipity page eval "<url>" --file - <<\'EOF\' ... EOF'
@@ -630,7 +676,7 @@ export const pageEvalCommand = new Command('eval')
     let reloadExpr: string | undefined = opts.reload;
     if (opts.reloadFile) {
       try {
-        reloadExpr = readScriptFile(opts.reloadFile);
+        reloadExpr = await readScriptFile(opts.reloadFile);
       } catch {
         pageEvalCommand.error(`error: Cannot read file: ${opts.reloadFile}`);
       }
@@ -859,6 +905,8 @@ export const pageEvalCommand = new Command('eval')
       // raise --timeout" is guaranteed-wasted advice against a looped still.
       const emptyHint = camera ? EVAL_CAMERA_EMPTY_HINT : EVAL_EMPTY_STATE_HINT;
 
+      const authHint = signInHint({ authRequested: !!d.auth?.requested, pageAccess: d.pageAccess, finalUrl: d.url }, 'run');
+
       if (opts.json) {
         // A cut value inside the JSON is easy to miss (a base64 image decodes to
         // exactly 12288 bytes and looks like a corrupt file), so say it on stderr.
@@ -869,6 +917,7 @@ export const pageEvalCommand = new Command('eval')
           ...(reload ? { reloadResult: reload.result } : {}),
           ...(noValue ? { hint: EVAL_NO_VALUE_HINT } : {}),
           ...(emptyState ? { hint: emptyHint } : {}),
+          ...(authHint ? { authHint } : {}),
         }));
         return;
       }
@@ -911,6 +960,7 @@ export const pageEvalCommand = new Command('eval')
         console.log(muted('Auth: anonymous visitor (signed out; pass --auth to run signed in as you)'));
       }
       printPageAccessLine(d.pageAccess);
+      if (authHint) console.log(warning(authHint));
       if (camera) console.log(`${muted('Camera:')} ${camera.name} ${muted('(played as the webcam feed; getUserMedia resolves)')}`);
       if (hosted.length) console.log(`${muted('Fixtures:')} ${hosted.map((h) => h.name).join(', ')}`);
       console.error(opts.file ? `${muted('Script:')} ${opts.file === '-' ? '(stdin)' : opts.file}` : `${muted('Expression:')} ${summarizeExpr(expr)}`);

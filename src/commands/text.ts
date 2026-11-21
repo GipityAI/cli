@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { run } from '../helpers/command.js';
+import { readStreamToEnd } from '../helpers/stdin.js';
 import { error as clrError, bold, dim, brand } from '../colors.js';
 import {
   analyzeText,
@@ -12,15 +13,11 @@ import {
 } from '../helpers/text-analysis.js';
 
 /** Read text from --file, a positional arg, or stdin (in that precedence). */
-function resolveInput(args: string[], opts: { file?: string }): string {
+async function resolveInput(args: string[], opts: { file?: string }): Promise<string> {
   if (opts.file) return readFileSync(opts.file, 'utf-8');
   if (args.length) return args.join(' ');
   // No arg → read stdin (supports `echo … | gipity text analyze`).
-  try {
-    return readFileSync(0, 'utf-8');
-  } catch {
-    return '';
-  }
+  return readStreamToEnd();
 }
 
 function formatProfile(a: ReturnType<typeof analyzeText>): string {
@@ -90,7 +87,7 @@ const analyzeCommand = new Command('analyze')
   .option('--json', 'Output as JSON')
   .action((args: string[], opts) =>
     run('Text analyze', async () => {
-      const text = resolveInput(args, opts);
+      const text = await resolveInput(args, opts);
       if (text === '' && !opts.file) {
         console.error(
           clrError('No text. Pass it as an argument, pipe via stdin, or use --file.'),

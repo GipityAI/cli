@@ -11,7 +11,7 @@ import {
   summarizeExpr, evalWorkBudgetMs, pollEvalResult, evalTimingLine, CAMERA_DEFAULT_WAIT_MS, slowRenderMessage,
   capScriptBudgetMs, budgetOverrunHint, navigationAbortHint, isEmptyStateResult,
   EVAL_SCRIPT_BUDGET_MS, EVAL_SCRIPT_BUDGET_CAMERA_MS, EVAL_SCRIPT_BUDGET_MAX_MS,
-  EVAL_SCRIPT_BUDGET_MIN_MS,
+  EVAL_SCRIPT_BUDGET_MIN_MS, signInHint, isGipitySignInUrl,
 } from '../commands/page-eval.js';
 import { assertLocalAsset } from '../page-fixtures.js';
 import { parseAtSpecs, buildHarness, JOIN_ALLOWANCE_MS, PAUSED_SAMPLE, observeErrorHint } from '../commands/page-test.js';
@@ -2199,4 +2199,79 @@ test('page screenshot: a too-tall viewport points at --full', async () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr + r.stdout, /Viewport out of range: 1440x2600/);
   assert.match(r.stderr + r.stdout, /add --full \(e\.g\. --viewport 1440x900 --full\)/);
+});
+
+// ── sign-in wall hint: a signed-out eval/screenshot that hit sign-in names --auth ──
+
+const SIGN_IN_URL = 'https://a.gipity.ai/api/auth/login?app=p_Members&permissions=1&return=https%3A%2F%2Fapp.gipity.ai%2Facme%2Fmembers%2F';
+
+test('isGipitySignInUrl matches the Gipity sign-in, consent and access-gate pages only', () => {
+  assert.equal(isGipitySignInUrl(SIGN_IN_URL), true);
+  assert.equal(isGipitySignInUrl('https://a.gipity.ai/api/auth/consent?app=p_X'), true);
+  assert.equal(isGipitySignInUrl('https://a.gipity.ai/api/access/start?u=x'), true);
+  assert.equal(isGipitySignInUrl('https://app.gipity.ai/acme/members/'), false);
+  assert.equal(isGipitySignInUrl('https://evil.example/api/auth/login'), false);
+  assert.equal(isGipitySignInUrl('https://a.gipity.ai/api/auth/me'), false);
+  assert.equal(isGipitySignInUrl(null), false);
+  assert.equal(isGipitySignInUrl('not a url'), false);
+});
+
+test('signInHint: sign-in page or a granted private site when signed out; nothing with --auth or a denied site', () => {
+  assert.match(signInHint({ authRequested: false, finalUrl: SIGN_IN_URL }, 'run')!, /needs sign-in.*--auth to run signed in as you/);
+  assert.match(signInHint({ authRequested: false, pageAccess: { private: true, granted: true } }, 'capture')!, /members-only site.*--auth to capture signed in as you/);
+  assert.equal(signInHint({ authRequested: true, finalUrl: SIGN_IN_URL, pageAccess: { private: true, granted: true } }, 'run'), null);
+  assert.equal(signInHint({ authRequested: false, finalUrl: SIGN_IN_URL, pageAccess: { private: true, granted: false } }, 'run'), null);
+  assert.equal(signInHint({ authRequested: false, finalUrl: 'https://app.gipity.ai/acme/site/' }, 'run'), null);
+});
+
+test('gipity page eval on a members-only site without --auth hints at --auth (text and --json)', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-1', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-1', { body: { data: {
+    status: 'done', url: 'https://app.gipity.ai/acme/members/', result: '"Sign in"', truncated: false,
+    pageAccess: { private: true, granted: true },
+  } } });
+  const r = await run(['page', 'eval', 'https://app.gipity.ai/acme/members/', 'document.title']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /members-only site.*Add --auth to run signed in as you/);
+  const j = await run(['page', 'eval', 'https://app.gipity.ai/acme/members/', 'document.title', '--json']);
+  assert.equal(j.status, 0, j.stderr);
+  assert.match(JSON.parse(j.stdout.trim()).authHint, /Add --auth to run signed in as you/);
+});
+
+test('gipity page eval that ended on the Gipity sign-in page hints at --auth; a public page does not', async () => {
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-1', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-1', { body: { data: {
+    status: 'done', url: SIGN_IN_URL, result: '"Sign in"', truncated: false,
+  } } });
+  const r = await run(['page', 'eval', 'https://app.gipity.ai/acme/members/', 'document.title']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /This page needs sign-in.*Add --auth to run signed in as you/);
+
+  mock.reset();
+  mock.on('POST /tools/browser/eval', { body: { data: { evalJobId: 'job-1', status: 'queued' } } });
+  mock.on('GET /tools/browser/eval/job-1', { body: { data: {
+    status: 'done', url: 'https://example.com', result: '"Example"', truncated: false,
+  } } });
+  const p = await run(['page', 'eval', 'https://example.com', 'document.title', '--json']);
+  assert.equal(p.status, 0, p.stderr);
+  assert.equal(JSON.parse(p.stdout.trim()).authHint, undefined);
+});
+
+test('gipity page screenshot that landed on the sign-in page hints at --auth (text and --json); --auth runs do not', async () => {
+  mock.reset();
+  await mockScreenshot({ finalUrl: SIGN_IN_URL, title: 'Sign in' });
+  const r = await run(['page', 'screenshot', 'https://app.gipity.ai/acme/members/', '-o', join(home, 'gate.png')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /This page needs sign-in.*Add --auth to capture signed in as you/);
+  const j = await run(['page', 'screenshot', 'https://app.gipity.ai/acme/members/', '-o', join(home, 'gate.png'), '--json']);
+  assert.equal(j.status, 0, j.stderr);
+  assert.match(JSON.parse(j.stdout.trim()).auth_hint, /Add --auth to capture signed in as you/);
+
+  mock.reset();
+  await mockScreenshot({ pageAccess: { private: true, granted: true }, auth: { requested: true, established: true } });
+  const a = await run(['page', 'screenshot', 'https://app.gipity.ai/acme/members/', '-o', join(home, 'gate.png'), '--auth', '--json']);
+  assert.equal(a.status, 0, a.stderr);
+  assert.equal(JSON.parse(a.stdout.trim()).auth_hint, undefined);
 });

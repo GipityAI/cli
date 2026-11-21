@@ -98,7 +98,7 @@ fnCommand
   .option('--json', 'Output as JSON')
   .action((name: string, bodyArg: string | undefined, opts) => run('Call', async () => {
     const config = requireConfig();
-    const body = resolveBody(bodyArg || opts.data, opts.file);
+    const body = await resolveBody(bodyArg || opts.data, opts.file);
     const path = `/api/${config.projectGuid}/fn/${encodeURIComponent(name)}`;
     // Name the calling identity (stderr, so stdout stays parseable). Without
     // this, a "test the anonymous path" call silently runs authenticated as
