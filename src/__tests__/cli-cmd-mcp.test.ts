@@ -22,7 +22,7 @@ function fresh(args: string[]) {
 }
 
 const ON = {
-  on: true, url: 'https://a.gipity.ai/api/p_TestProj/mcp', off_reason: null, name: 'ECU Tuner', profile: 'agent', instructions: null,
+  on: true, url: 'https://a.gipity.ai/api/p_TestProj/mcp', api_url: 'https://a.gipity.ai/api/p_TestProj/mcp', custom_domain: null, off_reason: null, name: 'ECU Tuner', profile: 'agent', instructions: null,
   tools: [
     { name: 'list_logs', description: 'Recent logs', read_only: true },
     { name: 'submit_plan', description: null, read_only: false },
@@ -41,6 +41,16 @@ test('gipity mcp shows the URL, profile, tools and how to connect', async () => 
   assert.match(r.stdout, /claude mcp add --transport http ecu-tuner https:\/\/a\.gipity\.ai\/api\/p_TestProj\/mcp/);
   assert.match(r.stdout, /ChatGPT/);
   assert.doesNotMatch(r.stdout, /undefined|null/);
+});
+
+test('gipity mcp shows the custom domain URL first and the API host URL as secondary', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/mcp', { body: { data: { ...ON, url: 'https://mcp.tunerloop.example', custom_domain: 'mcp.tunerloop.example' } } });
+  const r = await fresh(['mcp']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /URL\s+https:\/\/mcp\.tunerloop\.example/);
+  assert.match(r.stdout, /Also\s+https:\/\/a\.gipity\.ai\/api\/p_TestProj\/mcp/);
+  assert.match(r.stdout, /claude mcp add --transport http ecu-tuner https:\/\/mcp\.tunerloop\.example/);
 });
 
 test('gipity mcp --json returns the status plus the connect commands', async () => {

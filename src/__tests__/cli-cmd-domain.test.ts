@@ -18,12 +18,13 @@ function fresh(args: string[]) {
 test('gipity domain list shows project-scoped domains', async () => {
   mock.reset();
   mock.on('GET /projects/p_TestProj/domains', { body: { data: [
-    { short_guid: 'dom_Aaa00001', domain: 'app.example.com', status: 'active', verified_at: '2026-05-01T00:00:00Z', created_at: '2026-04-01T00:00:00Z' },
+    { short_guid: 'dom_Aaa00001', domain: 'app.example.com', status: 'active', kind: 'site', env: 'prod', verified_at: '2026-05-01T00:00:00Z', created_at: '2026-04-01T00:00:00Z' },
+    { short_guid: 'dom_Mcp00001', domain: 'mcp.example.com', status: 'active', kind: 'mcp', env: 'dev', verified_at: '2026-05-01T00:00:00Z', created_at: '2026-04-01T00:00:00Z' },
   ] } });
   const r = await fresh(['domain', 'list']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /app\.example\.com/);
-  assert.match(r.stdout, /active/);
+  assert.match(r.stdout, /app\.example\.com\s+site\s+env prod\s+active/);
+  assert.match(r.stdout, /mcp\.example\.com\s+mcp\s+env dev\s+active/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
@@ -31,8 +32,8 @@ test('gipity domain list --all groups by project with count/limit', async () => 
   mock.reset();
   mock.on('GET /users/me/domains', { body: { data: {
     domains: [
-      { shortGuid: 'dom_Aaa00001', domain: 'app.example.com', status: 'active', projectName: 'Test', projectSlug: 'test-project', createdAt: '2026-04-01T00:00:00Z' },
-      { shortGuid: 'dom_Bbb00002', domain: 'docs.other.io',  status: 'pending', projectName: 'Other', projectSlug: 'other',        createdAt: '2026-04-15T00:00:00Z' },
+      { shortGuid: 'dom_Aaa00001', domain: 'app.example.com', status: 'active', kind: 'site', projectName: 'Test', projectSlug: 'test-project', createdAt: '2026-04-01T00:00:00Z' },
+      { shortGuid: 'dom_Bbb00002', domain: 'docs.other.io',  status: 'pending', kind: 'mcp', projectName: 'Other', projectSlug: 'other',        createdAt: '2026-04-15T00:00:00Z' },
     ],
     count: 2, limit: 10,
   } } });
@@ -48,7 +49,7 @@ test('gipity domain list --all groups by project with count/limit', async () => 
 test('gipity domain add <name> prints DNS instructions', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/domains', { body: { data: {
-    domain: { short_guid: 'dom_Newdom001', domain: 'app.example.com', status: 'pending', verified_at: null, created_at: '2026-05-01T00:00:00Z' },
+    domain: { short_guid: 'dom_Newdom001', domain: 'app.example.com', status: 'pending', kind: 'site', verified_at: null, created_at: '2026-05-01T00:00:00Z' },
     instructions: { type: 'CNAME', name: 'app.example.com', target: 'custom.gipity.ai', note: 'Add this record to your DNS provider.' },
   } } });
   const r = await fresh(['domain', 'add', 'app.example.com']);
@@ -57,12 +58,37 @@ test('gipity domain add <name> prints DNS instructions', async () => {
   assert.match(r.stdout, /Type:\s+CNAME/);
   assert.match(r.stdout, /Target:\s+custom\.gipity\.ai/);
   assert.doesNotMatch(r.stdout, /undefined/);
+  assert.deepEqual(mock.requests().find(q => q.method === 'POST')?.body, { domain: 'app.example.com', kind: 'site' });
+});
+
+test('gipity domain add <host> --mcp asks for an MCP domain and says how people connect', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/domains', { body: { data: {
+    domain: { short_guid: 'dom_Mcpdom01', domain: 'mcp.example.com', status: 'pending', kind: 'mcp', verified_at: null, created_at: '2026-05-01T00:00:00Z' },
+    instructions: { type: 'CNAME', name: 'mcp', target: 'custom.gipity.ai', note: 'Add a CNAME record.', connect: 'After verify, people connect Claude or ChatGPT to https://mcp.example.com' },
+  } } });
+  const r = await fresh(['domain', 'add', 'mcp.example.com', '--mcp']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(mock.requests().find(q => q.method === 'POST')?.body, { domain: 'mcp.example.com', kind: 'mcp' });
+  assert.match(r.stdout, /connect Claude or ChatGPT to https:\/\/mcp\.example\.com/);
+});
+
+test('gipity domain verify on an MCP domain prints the MCP URL and the redeploy hint', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/domains/dom_Mcpdom01/verify', { body: { data: {
+    domain: { short_guid: 'dom_Mcpdom01', domain: 'mcp.example.com', status: 'active', kind: 'mcp', verified_at: '2026-05-01T00:00:00Z', created_at: '2026-04-01T00:00:00Z' },
+    alreadyActive: false,
+  } } });
+  const r = await fresh(['domain', 'verify', 'dom_Mcpdom01']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /MCP server: https:\/\/mcp\.example\.com/);
+  assert.match(r.stdout, /Redeploy/);
 });
 
 test('gipity domain verify <guid> activates the domain', async () => {
   mock.reset();
   mock.on('POST /projects/p_TestProj/domains/dom_Newdom001/verify', { body: { data: {
-    domain: { short_guid: 'dom_Newdom001', domain: 'app.example.com', status: 'active', verified_at: '2026-05-01T00:00:00Z', created_at: '2026-04-01T00:00:00Z' },
+    domain: { short_guid: 'dom_Newdom001', domain: 'app.example.com', status: 'active', kind: 'site', verified_at: '2026-05-01T00:00:00Z', created_at: '2026-04-01T00:00:00Z' },
     alreadyActive: false,
   } } });
   const r = await fresh(['domain', 'verify', 'dom_Newdom001']);

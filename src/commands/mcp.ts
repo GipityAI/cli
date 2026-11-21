@@ -12,7 +12,11 @@ import { run, PROJECT_OPTION, projectGuidFor } from '../helpers/index.js';
 
 interface McpStatus {
   on: boolean;
+  /** The URL people connect with: the MCP custom domain when one is active. */
   url: string;
+  /** The API host URL (always valid for its own connections). */
+  api_url: string;
+  custom_domain: string | null;
   off_reason: string | null;
   name: string | null;
   profile: string | null;
@@ -40,6 +44,7 @@ Turn it on with a top-level block in gipity.yaml, then deploy:
     name: My App        # optional, shown when people connect
 
 Each environment has its own server: gipity mcp --env dev.
+Serve it at your own domain: gipity domain add mcp.example.com --mcp [--env dev].
 People connect from Claude or ChatGPT with the URL and sign in to your app.
 Details: gipity skill read app-agents`)
   .action((opts) => run('MCP', async () => {
@@ -57,6 +62,7 @@ Details: gipity skill read app-agents`)
     }
     console.log(success(`MCP server: on`));
     console.log(`URL      ${bold(status.url)}`);
+    if (status.custom_domain) console.log(`Also     ${muted(status.api_url)}  ${muted('(the API host address; connections made there keep working)')}`);
     console.log(`Name     ${status.name ?? ''}`);
     console.log(`Profile  ${status.profile ?? ''} (${status.tools.length} tool${status.tools.length === 1 ? '' : 's'})`);
     for (const t of status.tools) {

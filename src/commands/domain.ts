@@ -8,6 +8,10 @@ interface DomainData {
   short_guid: string;
   domain: string;
   status: string;
+  /** 'site' serves the environment's pages; 'mcp' its MCP server. */
+  kind: 'site' | 'mcp';
+  /** The environment the domain targets (list only): prod or the env's name. */
+  env?: string;
   verified_at: string | null;
   created_at: string;
 }
@@ -16,6 +20,7 @@ interface AccountDomainEntry {
   shortGuid: string;
   domain: string;
   status: string;
+  kind: 'site' | 'mcp';
   projectName: string | null;
   projectSlug: string | null;
   createdAt: string;
@@ -30,7 +35,7 @@ interface AccountDomainsResponse {
 interface AddDomainResponse {
   data: {
     domain: DomainData;
-    instructions: { type: string; name: string; target: string; note: string };
+    instructions: { type: string; name: string; target: string; note: string; connect?: string };
   };
 }
 
@@ -46,6 +51,7 @@ export const domainCommand = new Command('domain')
   .argument('[action]', 'list | add | verify | remove')
   .argument('[value]', 'domain name (for add) or domain ID (for verify/remove)')
   .option('--all', 'List domains across all projects')
+  .option('--mcp', "add: serve this environment's MCP server at the domain (people connect Claude or ChatGPT to https://<domain>) instead of its pages")
   .option('--json', 'Output as JSON')
   .action((action: string | undefined, value: string | undefined, opts) => run('Domain', async () => {
     const sub = (action || 'list').toLowerCase();
@@ -83,14 +89,15 @@ export const domainCommand = new Command('domain')
             first = false;
             console.log(brand(label));
             for (const d of doms) {
-              console.log(`${d.domain}  ${muted(d.status)}  ${muted(`[${d.shortGuid}]`)}`);
+              console.log(`${d.domain}  ${d.kind}  ${muted(d.status)}  ${muted(`[${d.shortGuid}]`)}`);
             }
           }
         } else {
           const config = requireConfig();
           const res = await get<{ data: DomainData[] }>(`/projects/${config.projectGuid}/domains`);
+          // Every domain of the app, each with what it serves and the environment it targets.
           printList(res.data, opts, 'No custom domains configured.', d =>
-            `${d.domain}  ${muted(d.status)}  ${muted(`[${d.short_guid}]`)}`
+            `${d.domain}  ${d.kind}  ${muted(`env ${d.env ?? 'prod'}`)}  ${muted(d.status)}  ${muted(`[${d.short_guid}]`)}`
           );
         }
         break;
@@ -99,10 +106,10 @@ export const domainCommand = new Command('domain')
       case 'add': {
         const config = requireConfig();
         if (!value) {
-          console.error(clrError('Usage: gipity domain add <domain.com>'));
+          console.error(clrError('Usage: gipity domain add <domain.com> [--mcp] [--env <name>]'));
           process.exit(1);
         }
-        const res = await post<AddDomainResponse>(`/projects/${config.projectGuid}/domains`, { domain: value });
+        const res = await post<AddDomainResponse>(`/projects/${config.projectGuid}/domains`, { domain: value, kind: opts.mcp ? 'mcp' : 'site' });
         const data = res.data;
         if (opts.json) {
           console.log(JSON.stringify(data));
@@ -117,6 +124,7 @@ export const domainCommand = new Command('domain')
             console.log('');
             console.log(data.instructions.note);
           }
+          if (data.instructions.connect) console.log(data.instructions.connect);
           console.log('');
           console.log(muted(`Then run: gipity domain verify ${data.domain.short_guid}`));
         }
@@ -137,7 +145,12 @@ export const domainCommand = new Command('domain')
           console.log(`Domain "${data.domain.domain}" is already active.`);
         } else {
           console.log(success(`Domain "${data.domain.domain}" verified and active!`));
-          console.log(`Live at: ${success(`https://${data.domain.domain}`)}`);
+          if (data.domain.kind === 'mcp') {
+            console.log(`MCP server: ${success(`https://${data.domain.domain}`)}`);
+            console.log(muted('Redeploy this environment so Gipity.app.mcpUrl, {{APP_MCP_URL}} and llms.txt show the new address.'));
+          } else {
+            console.log(`Live at: ${success(`https://${data.domain.domain}`)}`);
+          }
         }
         break;
       }
@@ -169,6 +182,7 @@ export const domainCommand = new Command('domain')
         console.log(`${brand('gipity domain list')}              ${muted('List project domains')}`);
         console.log(`${brand('gipity domain list --all')}        ${muted('List all domains across projects')}`);
         console.log(`${brand('gipity domain add <domain.com>')}  ${muted('Add a custom domain (requires project)')}`);
+        console.log(`${brand('gipity domain add <host> --mcp')}  ${muted("Serve this environment's MCP server at the domain (with --env <name> for another env)")}`);
         console.log(`${brand('gipity domain verify <guid>')}     ${muted('Verify DNS and activate (requires project)')}`);
         console.log(`${brand('gipity domain remove <guid>')}     ${muted('Remove a custom domain')}`);
     }
