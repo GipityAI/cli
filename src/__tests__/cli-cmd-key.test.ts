@@ -145,3 +145,45 @@ test('gipity key list shows each key\'s scopes', async () => {
   assert.match(r.stdout, /fn: send-command {2}tables: logs:read/);
   assert.match(r.stdout, /all access/);
 });
+
+test('gipity key list asks for project keys; --user-keys asks for user keys and shows the person, never an email', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/api-keys', { body: { data: [
+    { short_guid: 'ak_proj1234', name: 'cron', prefix: 'gip_CRON', role: 'editor', scopes: null,
+      last_used_at: null, expires_at: null, created_at: '2026-01-01T00:00:00Z' },
+  ] } });
+  mock.on('GET /projects/p_TestProj/api-keys?user_keys=1', { body: { data: [
+    { short_guid: 'ak_user1234', name: 'Claude Code laptop', prefix: 'gip_USER', profile: 'agent', functions: ['status'],
+      created_by_guid: 'u_alice123', created_by_name: 'Alice', last_used_at: '2026-01-02T00:00:00Z',
+      use_count: 7, rate_per_5min: 100, expires_at: '2026-03-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' },
+  ] } });
+
+  const plain = await fresh(['key', 'list']);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.match(plain.stdout, /ak_proj1234/);
+  assert.doesNotMatch(plain.stdout, /ak_user1234/);
+
+  const users = await fresh(['key', 'list', '--user-keys']);
+  assert.equal(users.status, 0, users.stderr);
+  assert.match(users.stdout, /ak_user1234 {2}agent {2}Claude Code laptop/);
+  assert.match(users.stdout, /Alice \(u_alice123\)/);
+  assert.match(users.stdout, /used 7x/);
+  assert.doesNotMatch(users.stdout, /ak_proj1234/);
+  assert.doesNotMatch(users.stdout, /undefined/);
+  assert.ok(mock.requests().some(r => r.url === '/projects/p_TestProj/api-keys?user_keys=1'));
+
+  const json = await fresh(['key', 'list', '--user-keys', '--json']);
+  const rows = JSON.parse(json.stdout.trim());
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].profile, 'agent');
+  assert.equal(rows[0].created_by_guid, 'u_alice123');
+  assert.equal(rows[0].use_count, 7);
+});
+
+test('gipity key list --user-keys with none points at the app-api-keys skill', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_TestProj/api-keys?user_keys=1', { body: { data: [] } });
+  const r = await fresh(['key', 'list', '--user-keys']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /app-api-keys/);
+});

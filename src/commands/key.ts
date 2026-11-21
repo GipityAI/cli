@@ -39,6 +39,13 @@ Inside a function the caller shows up as ctx.auth.via === 'api_key' with
 ctx.auth.apiKeyName set to the key's name - stamp that on rows to tell
 script-written entries from hand-entered ones. Never build your own key table.
 
+Keys your app's users make for their own AI (user keys, declared with
+key_profiles: in gipity.yaml and made in the app with the keys service) are
+listed with --user-keys and revoked the same way:
+
+  gipity key list --user-keys
+  gipity key revoke <ak_guid>
+
 Account-level tokens that run the CLI headlessly are a different thing: see
 gipity token --help.`);
 
@@ -58,6 +65,22 @@ interface KeyInfo {
   scopes: KeyScopes | null;
   last_used_at: string | null;
   last_used_ip: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+/** A key a person made in the app for their own AI (GET ...?user_keys=1). */
+interface UserKeyInfo {
+  short_guid: string;
+  name: string;
+  prefix: string;
+  profile: string;
+  functions: string[];
+  created_by_guid: string | null;
+  created_by_name: string | null;
+  last_used_at: string | null;
+  use_count: number;
+  rate_per_5min: number | null;
   expires_at: string | null;
   created_at: string;
 }
@@ -157,10 +180,22 @@ keyCommand
   .command('list')
   .alias('ls')
   .description('List this project\'s API keys (values are never shown again)')
+  .option('--user-keys', 'List the keys people made in the app for their own AI instead of project keys')
   .option(...PROJECT_OPTION)
   .option('--json', 'Output as JSON')
   .action((opts) => run('List', async () => {
-    const res = await get<{ data: KeyInfo[] }>(`/projects/${await projectGuidFor(opts)}/api-keys`);
+    const guid = await projectGuidFor(opts);
+    if (opts.userKeys) {
+      const res = await get<{ data: UserKeyInfo[] }>(`/projects/${guid}/api-keys?user_keys=1`);
+      printList(
+        res.data,
+        opts,
+        'No user keys. People make them in your app (a function with services: [keys]; see gipity skill read app-api-keys).',
+        (k) => `${bold(k.short_guid)}  ${k.profile}  ${k.name}  ${muted(`${k.created_by_name ?? '(no name)'} (${k.created_by_guid ?? '-'})  last used ${fmtDate(k.last_used_at)}  used ${k.use_count}x  expires ${fmtDate(k.expires_at)}`)}`,
+      );
+      return;
+    }
+    const res = await get<{ data: KeyInfo[] }>(`/projects/${guid}/api-keys`);
     printList(
       res.data,
       opts,
@@ -172,7 +207,7 @@ keyCommand
 keyCommand
   .command('revoke <short_guid>')
   .alias('rm')
-  .description('Revoke a project API key (instant, irreversible)')
+  .description('Revoke a project API key or a user key (instant, irreversible)')
   .option(...PROJECT_OPTION)
   .option('--json', 'Output as JSON')
   .action((shortGuid: string, opts) => run('Revoke', async () => {
