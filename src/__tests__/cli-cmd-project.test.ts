@@ -71,6 +71,15 @@ test('gipity project info shows fields from /projects/:guid', async () => {
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
+test('gipity project info prints the server-named address of an app on its own origin', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0', { body: { data: { ...PROJ_A, site_url: 'https://alpha--acme.gipity.app/', shared_url: 'https://app.gipity.ai/acme/alpha/' } } });
+  const r = await inProject(['project', 'info']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Live:\s+https:\/\/alpha--acme\.gipity\.app\//);
+  assert.match(r.stdout, /Also:\s+https:\/\/app\.gipity\.ai\/acme\/alpha\//);
+});
+
 const AUTH_STATUS = {
   auth_mode: 'gipity', unique_player_names: false, email_code: true,
   providers: [

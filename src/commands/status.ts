@@ -12,12 +12,22 @@ import { pageAccessLabel } from './deploy.js';
 
 type PageAccess = 'public' | 'members' | 'app-users';
 
-/** Who may load this project's deployed pages, or null when it can't be read
- *  right now (not logged in, API slow or unreachable). Capped like probeAuth. */
-async function probePageAccess(projectGuid: string): Promise<PageAccess | null> {
+interface ProjectProbe {
+  /** Who may load this project's deployed pages. */
+  pageAccess: PageAccess | null;
+  /** The site's address as the server names it: its own origin for an app on
+   *  it (`gipity project hosting own`), else the shared-host URL. */
+  siteUrl: string | null;
+  /** The shared-host URL, which serves the same files. */
+  sharedUrl: string | null;
+}
+
+/** What the server says about this project's site, or null when it can't be
+ *  read right now (not logged in, API slow or unreachable). Capped like probeAuth. */
+async function probeProject(projectGuid: string): Promise<ProjectProbe | null> {
   const timeout = new Promise<null>(res => setTimeout(() => res(null), 5000).unref?.());
-  const call = get<{ data: { page_access?: PageAccess } }>(`/projects/${projectGuid}`).then(
-    (res) => res.data?.page_access ?? null,
+  const call = get<{ data: { page_access?: PageAccess; site_url?: string; shared_url?: string } }>(`/projects/${projectGuid}`).then(
+    (res) => ({ pageAccess: res.data?.page_access ?? null, siteUrl: res.data?.site_url ?? null, sharedUrl: res.data?.shared_url ?? null }),
     () => null,
   );
   return Promise.race([call, timeout]);
@@ -101,9 +111,9 @@ export const statusCommand = new Command('status')
     // now go out. Skipped entirely (existsSync short-circuit) when the queue
     // is empty, which is the common case, so this stays a no-op most runs.
     const queueDelivered = (auth && !sessionExpired()) ? await flushBugQueue().catch(() => 0) : 0;
-    const [probe, pageAccess] = await Promise.all([
+    const [probe, project] = await Promise.all([
       probeAuth(!!auth),
-      config && (auth || usingEnvToken()) ? probePageAccess(config.projectGuid) : Promise.resolve(null),
+      config && (auth || usingEnvToken()) ? probeProject(config.projectGuid) : Promise.resolve(null),
     ]);
     // RBAC lets a project be shared to a collaborator whose own account
     // legitimately differs from the project owner's - so this is advisory,
@@ -111,6 +121,11 @@ export const statusCommand = new Command('status')
     // returned an account to compare against config.accountSlug.
     const accountMismatch = probe.state === 'ok' && !!config && !!probe.account && probe.account !== config.accountSlug;
     const apiBaseInUse = resolveApiBase();
+    const pageAccess = project?.pageAccess ?? null;
+    // The server's answer wins (an app on its own origin has an address the
+    // config can't derive); offline, the shared-host URL from config.
+    const url = config ? (project?.siteUrl ?? liveUrl(config)) : null;
+    const alsoUrl = project?.siteUrl && project.sharedUrl && project.sharedUrl !== project.siteUrl ? project.sharedUrl : null;
 
     if (opts.json) {
       console.log(JSON.stringify({
@@ -120,7 +135,8 @@ export const statusCommand = new Command('status')
           account: config.accountSlug,
           apiBase: config.apiBase,
           apiBaseInUse,
-          url: liveUrl(config),
+          url,
+          ...(alsoUrl ? { sharedUrl: alsoUrl } : {}),
           ...(config.env ? { env: config.env.name } : {}),
           ...(pageAccess ? { pageAccess } : {}),
         } : null,
@@ -148,7 +164,8 @@ export const statusCommand = new Command('status')
       console.log(`${muted('Project:')} ${brand(config.projectSlug)} ${muted(`(${config.projectGuid})`)}`);
       console.log(`${muted('Account:')} ${config.accountSlug}`);
       if (config.env) console.log(`${muted('Env:')} ${config.env.name}`);
-      console.log(`${muted('Live:')} ${liveUrl(config)}`);
+      console.log(`${muted('Live:')} ${url}`);
+      if (alsoUrl) console.log(`${muted('Also:')} ${alsoUrl}`);
       if (pageAccess && pageAccess !== 'public') console.log(`${muted('Pages:')} ${pageAccessLabel(pageAccess)}`);
       console.log(`${muted('API:')} ${config.apiBase}`);
       // apiBase is only what THIS project recorded - resolveApiBase() is what

@@ -24,6 +24,10 @@ interface ProjectData {
   auth_mode: AuthMode;
   unique_player_names: boolean;
   created_at: string;
+  /** The site's address: its own origin for an app on it, else the shared-host URL. */
+  site_url?: string;
+  /** The shared-host URL, which serves the same files. */
+  shared_url?: string;
 }
 
 export const projectCommand = new Command('project')
@@ -192,7 +196,8 @@ projectCommand
       console.log(`Name:    ${p.name}`);
       console.log(`Slug:    ${p.slug}`);
       console.log(`GUID:    ${p.short_guid}`);
-      console.log(`Live:    ${liveUrl(config)}`);
+      console.log(`Live:    ${p.site_url ?? liveUrl(config)}`);
+      if (p.site_url && p.shared_url && p.shared_url !== p.site_url) console.log(`Also:    ${p.shared_url}`);
       console.log(`Created: ${new Date(p.created_at).toLocaleDateString()}`);
       console.log(`Sign-in: ${p.auth_mode}`);
       if (p.description) console.log(`Desc:    ${p.description}`);

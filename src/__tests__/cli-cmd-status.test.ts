@@ -112,3 +112,35 @@ test('gipity status shows when the site is private, in text and --json', async (
   const j = await runCliAsync(['--api-base', mock.apiBase, 'status', '--json'], { env: { HOME: home }, cwd: dir });
   assert.equal(JSON.parse(j.stdout).project.pageAccess, 'app-users');
 });
+
+test('gipity status prints the server-named address of an app on its own origin, and the shared URL as Also', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'acme' } } });
+  mock.on('GET /projects/p_TestProj', { body: { data: {
+    page_access: 'public', site_url: 'https://test-project--acme.gipity.app/', shared_url: 'https://app.gipity.ai/acme/test-project/',
+  } } });
+  const home = makeAuthedHome();
+  const dir = makeProjectDir({ accountSlug: 'acme', apiBase: mock.apiBase });
+
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'status'], { env: { HOME: home }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Live:\s+https:\/\/test-project--acme\.gipity\.app\//);
+  assert.match(r.stdout, /Also:\s+https:\/\/app\.gipity\.ai\/acme\/test-project\//);
+
+  const j = await runCliAsync(['--api-base', mock.apiBase, 'status', '--json'], { env: { HOME: home }, cwd: dir });
+  const json = JSON.parse(j.stdout);
+  assert.equal(json.project.url, 'https://test-project--acme.gipity.app/');
+  assert.equal(json.project.sharedUrl, 'https://app.gipity.ai/acme/test-project/');
+});
+
+test('gipity status of a shared-host app prints one Live URL and no Also', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'acme' } } });
+  mock.on('GET /projects/p_TestProj', { body: { data: {
+    page_access: 'public', site_url: 'https://app.gipity.ai/acme/test-project/', shared_url: 'https://app.gipity.ai/acme/test-project/',
+  } } });
+  const r = await runCliAsync(['--api-base', mock.apiBase, 'status'], { env: { HOME: makeAuthedHome() }, cwd: makeProjectDir({ accountSlug: 'acme', apiBase: mock.apiBase }) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Live:\s+https:\/\/app\.gipity\.ai\/acme\/test-project\//);
+  assert.doesNotMatch(r.stdout, /Also:/);
+});

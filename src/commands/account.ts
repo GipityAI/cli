@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { get, patch } from '../api.js';
+import { del, get, getAccountSlug, patch } from '../api.js';
 import { bold, brand, dim, muted } from '../colors.js';
 import { run } from '../helpers/index.js';
 import { confirm } from '../utils.js';
@@ -35,7 +35,7 @@ function renderState(s: NsfwState): void {
 
 export const accountCommand = new Command('account')
   .description('Account settings')
-  .addHelpText('after', '\nAccount-level settings for your Gipity account, e.g. `gipity account nsfw status`, `gipity account passkeys`.');
+  .addHelpText('after', '\nAccount-level settings for your Gipity account, e.g. `gipity account nsfw status`, `gipity account passkeys`, `gipity account delete`.');
 
 const nsfwCommand = accountCommand
   .command('nsfw')
@@ -99,4 +99,30 @@ accountCommand
       console.log(`  ${p.label ?? 'Passkey'}  ${muted(`fingerprint ${p.fingerprint}, added ${p.createdAt.slice(0, 10)}, ${used}`)}`);
     }
     console.log(muted(`Add or remove passkeys and change the setting in a browser: ${s.manageUrl}`));
+  }));
+
+// Deleting the account is CLI-only: Monitor (a hosted page) can't, so no page
+// can ever close an account. The account name must be typed back (or passed
+// as --confirm), so neither a person nor an agent deletes it by accident. The
+// server refuses an API token (GIPITY_TOKEN): this needs a `gipity login` session.
+accountCommand
+  .command('delete')
+  .description('Delete your Gipity account and everything in it (cannot be undone)')
+  .option('--confirm <account>', 'Your account name, to confirm without a prompt')
+  .option('--json', 'Output as JSON')
+  .action((opts) => run('Account', async () => {
+    const slug = await getAccountSlug();
+    let typed: string | undefined = opts.confirm;
+    if (typed === undefined) {
+      if (!process.stdin.isTTY) throw new Error('Pass --confirm <your account name> to delete the account without a prompt.');
+      console.log(`This deletes every project, file, database, function, workflow and secret on ${bold(slug)}. It cannot be undone.`);
+      const { createInterface } = await import('node:readline/promises');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      typed = (await rl.question(`Type ${slug} to confirm: `)).trim();
+      rl.close();
+    }
+    if (typed !== slug) throw new Error("The account name didn't match. Nothing was deleted.");
+    await del('/users/me');
+    if (opts.json) { console.log(JSON.stringify({ deleted: true, account: slug })); return; }
+    console.log(`Deleted account ${bold(slug)}.`);
   }));

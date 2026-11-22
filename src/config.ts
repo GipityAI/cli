@@ -240,13 +240,14 @@ export async function resolveProjectContext(opts?: { projectOverride?: string })
   };
 }
 
-/** The canonical live URL for a deployed project. This is THE place the
- *  dev/prod URL convention lives - every command that tells the user (or an
- *  agent) where their app is (`deploy`, `status`, `project info`) derives it
- *  here, so nothing ever has to reconstruct `dev.gipity.ai/<account>/<slug>/`
- *  by hand or guess a subdomain like `<slug>.gipity.app` (which doesn't
- *  resolve). Mirrors the server's deploy URL; `deploy` itself prints the
- *  server-authoritative URL, the read-only commands derive it from config. */
+/** The shared-host live URL for a deployed project. This is THE place the
+ *  dev/prod shared-host URL convention lives, so nothing ever has to
+ *  reconstruct `dev.gipity.ai/<account>/<slug>/` by hand. An app on its own
+ *  origin (`gipity project hosting own`) has another address
+ *  (`https://<slug>--<account>.gipity.app/`, with fallbacks only the server
+ *  knows), so `deploy`, `status` and `project info` print the server's
+ *  `url` / `site_url` and use this only when the server can't be asked. The
+ *  shared-host URL serves the same files either way. */
 export function liveUrl(
   config: Pick<GipityConfig, 'accountSlug' | 'projectSlug' | 'env'>,
   env: string = config.env?.name ?? PROD_ENV,

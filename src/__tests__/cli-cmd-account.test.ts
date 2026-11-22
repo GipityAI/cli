@@ -97,3 +97,30 @@ test('gipity account passkeys lists sign-in passkeys, the require setting and wh
   assert.match(r.stdout, /https:\/\/a\.gipity\.ai\/auth\/passkeys/);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
+
+const acct = (args: string[]) => runCliAsync(['--api-base', mock.apiBase, 'account', ...args], { env: { HOME: home } });
+
+test('gipity account delete --confirm <account> deletes the account', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'bob' } } });
+  mock.on('DELETE /users/me', { body: { data: { deleted: true } } });
+  const r = await acct(['delete', '--confirm', 'bob', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { deleted: true, account: 'bob' });
+  assert.equal(mock.requests().filter((q) => q.method === 'DELETE').length, 1);
+});
+
+test('gipity account delete with the wrong name, or no --confirm and no terminal, deletes nothing', async () => {
+  mock.reset();
+  mock.on('GET /users/me', { body: { data: { accountSlug: 'bob' } } });
+  mock.on('DELETE /users/me', { body: { data: { deleted: true } } });
+  const wrong = await acct(['delete', '--confirm', 'alice']);
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr + wrong.stdout, /didn't match/);
+  assert.doesNotMatch(wrong.stderr + wrong.stdout, /bob/);
+  const none = await acct(['delete']);
+  assert.notEqual(none.status, 0);
+  assert.match(none.stderr + none.stdout, /--confirm <your account name>/);
+  assert.doesNotMatch(none.stderr + none.stdout, /bob/);
+  assert.equal(mock.requests().filter((q) => q.method === 'DELETE').length, 0);
+});

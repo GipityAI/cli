@@ -183,3 +183,18 @@ test('gipity deploy prints no Pages line for a public site', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /Pages:/);
 });
+
+test('gipity deploy of an app on its own origin prints the own URL, and the shared URL as Also', async () => {
+  mock.reset();
+  mock.on('POST /projects/p_TestProj/deploy', { body: { data: {
+    fileCount: 1, totalBytes: 10,
+    url: 'https://test-project--test.dev.gipity.app/',
+    sharedUrl: 'https://dev.gipity.ai/test/test-project/',
+    env: 'dev', appGuid: 'p_TestProj', created: false, elapsedMs: 100, batch: 1,
+    phases: [{ name: 'files', status: 'ok', summary: '1 files uploaded' }],
+  } } });
+  const r = await fresh(['deploy', 'dev', '--no-sync']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Live: https:\/\/test-project--test\.dev\.gipity\.app\//);
+  assert.match(r.stdout, /Also: https:\/\/dev\.gipity\.ai\/test\/test-project\//);
+});

@@ -107,6 +107,8 @@ export const deployCommand = new Command('deploy')
         phases?: Array<{ name: string; status: string; summary: string; elapsedMs?: number }>;
         warning?: string;
         customDomains?: string[];
+        /** The shared-host URL, when `url` is the app's own origin. */
+        sharedUrl?: string;
         skippedFiles?: string[];
         examples?: string[];
         /** Who may load the deployed pages (gipity.yaml `access:`). */
@@ -223,6 +225,8 @@ export const deployCommand = new Command('deploy')
         // - to open it, inspect it, or report it. Always surface it so nobody
         // has to reconstruct the URL convention or guess a subdomain.
         if (d.url) console.log(`${muted('Live:')} ${brand(d.url)}`);
+        // An app on its own origin: the shared-host URL still serves the same files.
+        if (d.sharedUrl) console.log(`${muted('Also:')} ${d.sharedUrl}`);
         if (d.pageAccess && d.pageAccess !== 'public') console.log(`${muted('Pages:')} ${pageAccessLabel(d.pageAccess, d.pagePublicPaths?.length ?? 0)}`);
         // Functions are served from the API host, NOT the static Live URL -
         // for an API-only app the endpoint address IS the deliverable, so name
