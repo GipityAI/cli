@@ -549,3 +549,30 @@ test('writeYamlAuthMode appends an auth block, then replaces it, keeping the res
   assert.match(twice, /^auth:\n  mode: gipity\n/m);
   assert.match(twice, /- name: files\n      type: static/);
 });
+
+const HOSTING = { hosting_origin: 'shared', own_host: 'alpha--steve.gipity.app', env_hosts: { dev: 'alpha--steve.dev.gipity.app' } };
+
+test('gipity project hosting shows the switch and own hosts, sets own|shared, and refuses junk', async () => {
+  mock.reset();
+  mock.on('GET /projects/p_ProjA00n0/hosting', { body: { data: HOSTING } });
+  const shown = await inProject(['project', 'hosting']);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /Hosting: shared/);
+  assert.match(shown.stdout, /Own host: https:\/\/alpha--steve\.gipity\.app\//);
+  assert.match(shown.stdout, /dev: https:\/\/alpha--steve\.dev\.gipity\.app\//);
+
+  mock.on('PUT /projects/p_ProjA00n0/hosting', { body: { data: { ...HOSTING, hosting_origin: 'own', changed: true } } });
+  const set = await inProject(['project', 'hosting', 'own']);
+  assert.equal(set.status, 0, set.stderr);
+  assert.match(set.stdout, /Hosting set to "own"\. Deploy again/);
+  const put = mock.requests().find(c => c.method === 'PUT' && c.url === '/projects/p_ProjA00n0/hosting');
+  assert.deepEqual(put?.body, { hosting_origin: 'own' });
+
+  const json = await inProject(['project', 'hosting', '--json']);
+  assert.equal(json.status, 0, json.stderr);
+  assert.deepEqual(JSON.parse(json.stdout), HOSTING);
+
+  const bad = await inProject(['project', 'hosting', 'mine']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /Unknown mode "mine"/);
+});

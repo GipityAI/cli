@@ -13,6 +13,7 @@ import * as relayState from '../relay/state.js';
 
 import { registerAuthCommand, type AuthMode } from './project-auth.js';
 import { registerUsersCommand } from './project-users.js';
+import { registerHostingCommand } from './project-hosting.js';
 
 interface ProjectData {
   short_guid: string;
@@ -200,3 +201,4 @@ projectCommand
 
 registerAuthCommand(projectCommand);
 registerUsersCommand(projectCommand);
+registerHostingCommand(projectCommand);
