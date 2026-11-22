@@ -150,6 +150,7 @@ export const domainCommand = new Command('domain')
             console.log(muted('Redeploy this environment so Gipity.app.mcpUrl, {{APP_MCP_URL}} and llms.txt show the new address.'));
           } else {
             console.log(`Live at: ${success(`https://${data.domain.domain}`)}`);
+            console.log(muted('Redeploy this environment once so sign-in on this domain is first-party (works in every browser).'));
           }
         }
         break;

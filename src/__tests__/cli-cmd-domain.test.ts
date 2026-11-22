@@ -95,6 +95,7 @@ test('gipity domain verify <guid> activates the domain', async () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /verified and active/);
   assert.match(r.stdout, /https:\/\/app\.example\.com/);
+  assert.match(r.stdout, /Redeploy this environment once so sign-in on this domain is first-party/);
 });
 
 test('gipity domain remove <guid> deletes the domain', async () => {
