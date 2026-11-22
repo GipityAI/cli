@@ -71,21 +71,21 @@ export const IMAGE_GEMINI_SIZE_IDS = [
   '4K',
 ] as const;
 
-export const IMAGE_MODELS_DOC = `openai: gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image. gemini: gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
+export const IMAGE_MODELS_DOC = `openai: gpt-image-2.6-flare, gpt-image-2.6-sunburst, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2. bfl: flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image, flux-3-image-klein. gemini: gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
 
-export const IMAGE_MODELS_TABLE = `  openai  gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst
-  bfl     flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image
+export const IMAGE_MODELS_TABLE = `  openai  gpt-image-2.6-flare, gpt-image-2.6-sunburst, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2
+  bfl     flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image, flux-3-image-klein
   gemini  gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image`;
 
-export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst\`
-- **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image\`
+export const IMAGE_PROVIDERS_BULLET = `- **OpenAI**: \`gpt-image-2.6-flare, gpt-image-2.6-sunburst, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2\`
+- **BFL/Flux**: \`flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image, flux-3-image-klein\`
 - **Gemini/Nano Banana**: \`gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image\``;
 
 export const IMAGE_PROVIDERS_LIST = `openai, bfl, gemini`;
 
 export const IMAGE_PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  'openai': `OpenAI (gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst)`,
-  'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image)`,
+  'openai': `OpenAI (gpt-image-2.6-flare, gpt-image-2.6-sunburst, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2)`,
+  'bfl': `BFL/Flux (flux-2-pro, flux-2-flex, flux-2-max, flux-2-klein-9b, flux-2-klein-4b, flux-3-image, flux-3-image-klein)`,
   'gemini': `Gemini/Nano Banana (gemini-nano-banana-2.1, gemini-3.1-flash-lite-image, gemini-2.5-flash-image, gemini-3.1-flash-image, gemini-3-pro-image)`,
 };
 
@@ -102,7 +102,7 @@ export const IMAGE_QUALITY_IDS = [
   'auto',
 ] as const;
 
-export const IMAGE_TIER_ALIASES_DOC = `fast (gemini/gemini-3.1-flash-lite-image), standard (openai/gpt-image-2.5-flare), high (bfl/flux-2-pro), ultra (bfl/flux-2-max)`;
+export const IMAGE_TIER_ALIASES_DOC = `fast (gemini/gemini-3.1-flash-lite-image), standard (openai/gpt-image-2.6-flare), high (bfl/flux-2-pro), ultra (bfl/flux-2-max)`;
 
 export const IMAGE_TIER_ALIAS_IDS = [
   'fast',
@@ -111,13 +111,13 @@ export const IMAGE_TIER_ALIAS_IDS = [
   'ultra',
 ] as const;
 
-export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-6-luna (cheapest, 1M context), gpt-6.1-sol (balanced). Anthropic: claude-haiku-5-5 (cheapest, 1M context). Gemini: gemini-3.1-flash-lite (cheapest), gemini-3.5-flash-lite (1M context)`;
+export const LLM_DEFAULT_MODELS_DOC = `OpenAI: gpt-6-luna (cheapest, 1M context), gpt-6.2-sol (balanced). Anthropic: claude-haiku-5-5 (cheapest, 1M context). Gemini: gemini-3.1-flash-lite (cheapest), gemini-3.5-flash-lite (1M context)`;
 
 export const LLM_PROVIDERS_LIST = `anthropic, openai, gemini, openrouter, gipity`;
 
 export const OPENAI_TTS_VOICES_DOC = `alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse`;
 
-export const TRANSCRIBE_PROVIDERS_DOC = `elevenlabs (default, Scribe v2, word timestamps), openai (GPT Transcribe; diarization via GPT-4o Transcribe Diarize)`;
+export const TRANSCRIBE_PROVIDERS_DOC = `elevenlabs (default, Scribe v3, word timestamps), openai (GPT Transcribe; diarization via GPT-4o Transcribe Diarize)`;
 
 export const TTS_MODELS_DOC = `elevenlabs: eleven_flash_v2_5 (default), eleven_v4_turbo, eleven_v4. openai: gpt-4o-mini-tts (default). gemini: gemini-3.8-flash-lite-tts (default), gemini-3.8-flash-tts`;
 
